@@ -39,9 +39,8 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         "--model_name",
         type=str,
         required=model_name_required,
-        choices=["Qwen/Qwen3-0.6B", "Qwen/Qwen3-4B", "Qwen/Qwen3-14B"],
         default=defaults.get("model_name"),
-        help="Model choices to use for experiments (e.g. 'Qwen/Qwen3-14B').",
+        help="Model identifier to use for experiments (e.g. 'Qwen/Qwen3-0.6B', 'Qwen/Qwen2.5-7B-Instruct').",
     )
     parser.add_argument(
         "--max_samples",
@@ -157,6 +156,46 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         help="Target GPU memory utilization for vLLM",
     )
 
+    # Intervention harness options
+    parser.add_argument(
+        "--intervention",
+        action="store_true",
+        default=defaults.get("intervention", False),
+        help="Enable latent communication intervention experiment harness (own, cross, zero).",
+    )
+    parser.add_argument(
+        "--intervention_conditions",
+        type=str,
+        default=defaults.get("intervention_conditions", "own,cross,zero"),
+        help="Comma-separated conditions for intervention: 'own', 'cross', 'zero'.",
+    )
+    parser.add_argument(
+        "--cross_policy",
+        type=str,
+        choices=["shift_1", "derangement"],
+        default=defaults.get("cross_policy", "shift_1"),
+        help="Deterministic pairing policy for cross-condition.",
+    )
+    parser.add_argument(
+        "--zero_mode",
+        type=str,
+        choices=["none", "zeros"],
+        default=defaults.get("zero_mode", "none"),
+        help="Representation of zero context: 'none' (past_key_values=None) or 'zeros' (zeroed cache tensors).",
+    )
+    parser.add_argument(
+        "--save_raw_cache",
+        action="store_true",
+        default=defaults.get("save_raw_cache", False),
+        help="Persist raw latent KV cache tensors to .cache/latent_interventions/ locally.",
+    )
+    parser.add_argument(
+        "--tracking_experiment_name",
+        type=str,
+        default=defaults.get("tracking_experiment_name", "latentmas_intervention"),
+        help="Experiment name for MLflow tracking.",
+    )
+
     return parser
 
 
@@ -187,5 +226,10 @@ def parse_args(args=None) -> argparse.Namespace:
     if parsed.method == "latent_mas" and parsed.use_vllm:
         parsed.use_second_HF_model = True
         parsed.enable_prefix_caching = True
+
+    if isinstance(parsed.intervention_conditions, str):
+        parsed.intervention_conditions = [
+            c.strip() for c in parsed.intervention_conditions.split(",") if c.strip()
+        ]
 
     return parsed

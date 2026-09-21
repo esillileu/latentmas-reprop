@@ -11,8 +11,10 @@ class CacheLayer(StrEnum):
     MODELS_REALIGN = "models/realign"
     EVALUATION = "evaluation"
     EVALUATION_RUNS = "evaluation/runs"
+    EVALUATION_INTERVENTIONS = "evaluation/interventions"
     DATASETS = "datasets"
     RUNTIME = "runtime"
+    LATENT_INTERVENTIONS = "latent_interventions"
 
 
 class CachePort(ABC):

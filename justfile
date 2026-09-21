@@ -8,6 +8,10 @@ default:
 run *args:
     uv run python -m src.run {{args}}
 
+# Run latent communication intervention experiment
+run-intervention *args:
+    uv run python -m src.run --intervention {{args}}
+
 # Run test suite
 test *args:
     uv run pytest {{args}}
