@@ -16,10 +16,20 @@ class ExperimentTrackerPort(ABC):
         """Start a new experiment tracking run."""
         raise NotImplementedError
 
+    def log_param(self, key: str, value: Any) -> None:
+        """Log a single parameter."""
+        self.log_params({key: value})
+
     @abstractmethod
     def log_params(self, params: dict[str, Any]) -> None:
         """Log parameter dictionary."""
         raise NotImplementedError
+
+    def log_metric(
+        self, key: str, value: float | int, step: int | None = None
+    ) -> None:
+        """Log a single evaluation metric."""
+        self.log_metrics({key: value}, step=step)
 
     @abstractmethod
     def log_metrics(
