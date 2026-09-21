@@ -47,8 +47,7 @@ Thanks to the Hexagonal Architecture, extensions are made by implementing ports 
 ### 3.1 Adding a New Dataset Adapter
 1. Define a loader function in [`src/latentmas_reprop/infrastructure/datasets/loaders.py`](file:///home/esillileu/projects/latentmas-reprop/src/latentmas_reprop/infrastructure/datasets/loaders.py) returning a list of `ProblemSample`:
    ```python
-   def load_my_dataset(split: str = "test") -> list[ProblemSample]:
-       ...
+   def load_my_dataset(split: str = "test") -> list[ProblemSample]: ...
    ```
 2. Register the loader in [`src/latentmas_reprop/infrastructure/datasets/registry.py`](file:///home/esillileu/projects/latentmas-reprop/src/latentmas_reprop/infrastructure/datasets/registry.py):
    ```python
@@ -59,11 +58,9 @@ Thanks to the Hexagonal Architecture, extensions are made by implementing ports 
 Implement an evaluator adhering to [`EvaluatorPort`](file:///home/esillileu/projects/latentmas-reprop/src/latentmas_reprop/domain/ports/evaluator_port.py):
 ```python
 class MyCustomEvaluator(EvaluatorPort):
-    def extract_answer(self, text: str) -> str | None:
-        ...
+    def extract_answer(self, text: str) -> str | None: ...
 
-    def evaluate(self, prediction: str | None, ground_truth: str) -> bool:
-        ...
+    def evaluate(self, prediction: str | None, ground_truth: str) -> bool: ...
 ```
 
 ### 3.3 Adding a New Method

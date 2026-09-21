@@ -27,3 +27,8 @@ format *args:
 # Clean execution cache
 clean-cache:
     rm -rf .cache/
+
+# Launch local MLflow UI pointing to SQLite backend
+mlflow-ui *args:
+    uv run mlflow ui --backend-store-uri sqlite:///.cache/mlflow.db --default-artifact-root .cache/mlflow_artifacts {{args}}
+
