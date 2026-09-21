@@ -2,10 +2,10 @@ method: latent_mas
 model_name: Qwen/Qwen3-0.6B
 task: gsm8k
 prompt: sequential
-max_samples: 5
+max_samples: 30
 generate_bs: 1
 latent_steps: 4
-max_new_tokens: 256
+max_new_tokens: 4096
 temperature: 0.6
 top_p: 0.95
 device: cuda
