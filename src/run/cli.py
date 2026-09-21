@@ -22,7 +22,7 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         type=str,
         default=None,
         metavar="CONFIG",
-        help="Path or name of YAML config file in configs/ (e.g. -c latent_mas_gsm8k)",
+        help="Path or name of YAML config file in configs/ (e.g. -c lm_q30.6_gsm8k)",
     )
 
     # Core args for experiments

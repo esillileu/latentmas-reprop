@@ -53,8 +53,8 @@ def test_parse_args_baseline():
 
 
 def test_parse_args_config_preset():
-    # Load defaults from configs/latent_mas_gsm8k.yaml using --config
-    args = parse_args(["--config", "latent_mas_gsm8k"])
+    # Load defaults from configs/lm_q30.6_gsm8k.yaml using --config
+    args = parse_args(["--config", "lm_q30.6_gsm8k"])
     assert args.method == "latent_mas"
     assert args.model_name == "Qwen/Qwen3-0.6B"
     assert args.task == "gsm8k"
@@ -68,7 +68,7 @@ def test_parse_args_config_with_override():
     args = parse_args(
         [
             "-c",
-            "latent_mas_gsm8k",
+            "lm_q30.6_gsm8k",
             "--max_samples",
             "20",
             "--temperature",
@@ -83,7 +83,7 @@ def test_parse_args_config_with_override():
 
 def test_parse_args_template_alias():
     # Verify --template alias still works
-    args = parse_args(["--template", "latent_mas_gsm8k"])
+    args = parse_args(["--template", "lm_q30.6_gsm8k"])
     assert args.method == "latent_mas"
 
 
