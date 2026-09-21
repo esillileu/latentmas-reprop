@@ -11,7 +11,6 @@ top_p: 0.95
 device: cuda
 seed: 42
 intervention: true
-intervention_conditions: "own,cross,zero"
+intervention_conditions: "own,cross,drop,zero"
 cross_policy: shift_1
-zero_mode: none
 tracking_experiment_name: latentmas_intervention_7b

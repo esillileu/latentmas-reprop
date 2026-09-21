@@ -114,8 +114,8 @@ class ExperimentTrackerPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def end_run(self) -> None:
-        """End the current tracking run."""
+    def end_run(self, status: str = "FINISHED") -> None:
+        """End the current tracking run with the specified status."""
         raise NotImplementedError
 
     @contextmanager

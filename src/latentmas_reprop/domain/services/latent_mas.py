@@ -66,21 +66,13 @@ class LatentMASMethod:
             return None
 
         # Modern Transformers DynamicCache support
-        if Cache is not None and isinstance(past_kv, Cache):
-            if hasattr(past_kv, "crop"):
-                cur_len = _past_length(past_kv)
-                tokens_to_remove = max(0, cur_len - tokens_to_keep)
-                past_kv.crop(tokens_to_remove)
-                return past_kv
-            if hasattr(past_kv, "to_legacy_cache") and hasattr(
-                past_kv.__class__, "from_legacy_cache"
-            ):
-                legacy = past_kv.to_legacy_cache()
-                trimmed_legacy = tuple(
-                    tuple(self._slice_tensor(t, tokens_to_keep) for t in layer)
-                    for layer in legacy
-                )
-                return past_kv.__class__.from_legacy_cache(trimmed_legacy)
+        if hasattr(past_kv, "layers"):
+            for layer in past_kv.layers:
+                if hasattr(layer, "keys") and torch.is_tensor(layer.keys):
+                    layer.keys = self._slice_tensor(layer.keys, tokens_to_keep)
+                if hasattr(layer, "values") and torch.is_tensor(layer.values):
+                    layer.values = self._slice_tensor(layer.values, tokens_to_keep)
+            return past_kv
 
         trimmed_layers = []
         for layer in past_kv:
@@ -308,6 +300,7 @@ class LatentMASMethod:
                     "raw_prediction": final_text,
                     "agents": agent_traces[idx],
                     "correct": ok,
+                    "error_msg": error_msg,
                 }
             )
         return results
@@ -519,7 +512,7 @@ class LatentMASMethod:
         for idx, item in enumerate(items):
             final_text = final_texts[idx]
             gold = item.get("gold", "")
-            pred, ok, _ = self.evaluator.evaluate(self.task, final_text, gold)
+            pred, ok, error_msg = self.evaluator.evaluate(self.task, final_text, gold)
             results.append(
                 {
                     "question": item["question"],
@@ -529,6 +522,7 @@ class LatentMASMethod:
                     "raw_prediction": final_text,
                     "agents": agent_traces[idx],
                     "correct": ok,
+                    "error_msg": error_msg,
                 }
             )
         return results

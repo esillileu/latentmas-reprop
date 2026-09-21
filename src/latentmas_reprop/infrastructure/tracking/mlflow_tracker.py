@@ -200,9 +200,9 @@ class MLflowTracker(ExperimentTrackerPort):
     def log_dict(self, dictionary: dict[str, Any], artifact_file: str) -> None:
         mlflow.log_dict(dictionary, artifact_file)
 
-    def end_run(self) -> None:
+    def end_run(self, status: str = "FINISHED") -> None:
         if mlflow.active_run() is not None:
-            mlflow.end_run()
+            mlflow.end_run(status=status)
         self._active_run = None
 
     @contextmanager
