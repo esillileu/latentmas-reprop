@@ -69,6 +69,44 @@ class PathResolver:
         """Assets directory."""
         return self._root / "assets"
 
+    @property
+    def templates_dir(self) -> Path:
+        """YAML configuration templates directory."""
+        path = self._root / "templates"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def resolve_config_path(self, config_path: str | Path) -> Path:
+        """Resolve a configuration/template path.
+
+        Checks:
+        1. Exact path or relative to repo root
+        2. Inside templates/ directory
+        3. Inside templates/ with .yaml extension
+        4. Inside templates/ with .yml extension
+        """
+        p = Path(config_path)
+        if p.is_file():
+            return p.resolve()
+
+        resolved = self.resolve(p)
+        if resolved.is_file():
+            return resolved
+
+        candidate = self.templates_dir / p
+        if candidate.is_file():
+            return candidate.resolve()
+
+        candidate_yaml = self.templates_dir / f"{p.name}.yaml"
+        if candidate_yaml.is_file():
+            return candidate_yaml.resolve()
+
+        candidate_yml = self.templates_dir / f"{p.name}.yml"
+        if candidate_yml.is_file():
+            return candidate_yml.resolve()
+
+        return resolved
+
     def resolve(self, path: str | Path) -> Path:
         """Resolve any relative path against repository root, or return absolute path."""
         p = Path(path)

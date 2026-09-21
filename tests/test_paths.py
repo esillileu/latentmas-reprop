@@ -1,4 +1,3 @@
-
 from latentmas_reprop.infrastructure.paths import PathResolver, get_path_resolver
 
 
@@ -31,3 +30,11 @@ def test_path_resolver_relative_resolution():
     resolved = resolver.resolve("data/medqa.json")
     assert resolved == resolver.medqa_json_path
     assert resolved.is_absolute()
+
+
+def test_path_resolver_templates():
+    resolver = get_path_resolver()
+    assert resolver.templates_dir.is_dir()
+    resolved = resolver.resolve_config_path("latent_mas_gsm8k")
+    assert resolved.is_file()
+    assert resolved.name == "latent_mas_gsm8k.yaml"
