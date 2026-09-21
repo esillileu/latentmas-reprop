@@ -55,7 +55,9 @@ def test_latent_mas_regression_path():
 
     # Run split two-step execution
     past_kv, traces = method.build_latent_contexts([item])
-    res_split = method.decode_with_context([item], past_kv=past_kv, initial_traces=traces)
+    res_split = method.decode_with_context(
+        [item], past_kv=past_kv, initial_traces=traces
+    )
 
     assert len(res_direct) == 1
     assert len(res_split) == 1

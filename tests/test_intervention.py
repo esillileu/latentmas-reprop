@@ -109,3 +109,36 @@ def test_sample_intervention_record():
     assert d["source_sample_id"] == "sample_1"
     assert d["condition"] == "cross"
     assert d["correct"] is True
+
+
+def test_compute_mcnemar_test():
+    from latentmas_reprop.application.intervention_use_case import compute_mcnemar_test
+
+    # Concordant / empty discordant
+    res_zero = compute_mcnemar_test(0, 0)
+    assert res_zero["discordant_pairs"] == 0
+    assert res_zero["p_value"] == 1.0
+
+    # Symmetric discordant pairs
+    res_sym = compute_mcnemar_test(5, 5)
+    assert res_sym["discordant_pairs"] == 10
+    assert res_sym["p_value"] == 1.0
+
+    # Asymmetric discordant pairs
+    res_asym = compute_mcnemar_test(10, 0)
+    assert res_asym["discordant_pairs"] == 10
+    assert res_asym["p_value"] < 0.01
+
+
+def test_get_kv_sequence_length():
+    from latentmas_reprop.application.intervention_use_case import (
+        get_kv_sequence_length,
+    )
+
+    assert get_kv_sequence_length(None) == 0
+
+    cache = DynamicCache()
+    k = torch.ones(1, 2, 4, 8)
+    v = torch.ones(1, 2, 4, 8)
+    cache.update(k, v, 0)
+    assert get_kv_sequence_length(cache) == 4

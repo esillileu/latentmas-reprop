@@ -95,9 +95,7 @@ class LatentMASMethod:
         return tuple(trimmed_layers)
 
     @torch.no_grad()
-    def build_latent_contexts(
-        self, items: list[dict]
-    ) -> tuple[Any, list[list[dict]]]:
+    def build_latent_contexts(self, items: list[dict]) -> tuple[Any, list[list[dict]]]:
         """Forward non-judger agents to construct latent communication KV cache (past_kv).
 
         Returns:
@@ -174,9 +172,7 @@ class LatentMASMethod:
             if self.sequential_info_only or self.latent_only:
                 new_past_len = _past_length(past_kv)
                 tokens_added = new_past_len - prev_past_len
-                tokens_to_keep = (
-                    self.latent_steps if self.latent_only else tokens_added
-                )
+                tokens_to_keep = self.latent_steps if self.latent_only else tokens_added
                 past_kv = self._truncate_past(past_kv, tokens_to_keep)
 
             for idx in range(batch_size):

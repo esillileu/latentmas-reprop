@@ -165,12 +165,21 @@ class InterventionMetrics:
     n_zero_correct: int
     runtime_total: float = 0.0
     runtime_per_sample: float = 0.0
+    runtime_own: float = 0.0
+    runtime_cross: float = 0.0
+    runtime_zero: float = 0.0
+    paired_transitions: dict[str, int] = field(default_factory=dict)
+    mcnemar_tests: dict[str, Any] = field(default_factory=dict)
+    max_new_tokens: int = 0
+    tokens_generated_mean: dict[str, float] = field(default_factory=dict)
+    tokens_generated_max: dict[str, int] = field(default_factory=dict)
+    truncation_rate: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def to_mlflow_metrics(self) -> dict[str, float]:
-        return {
+        metrics = {
             "accuracy/own": self.accuracy_own,
             "accuracy/cross": self.accuracy_cross,
             "accuracy/zero": self.accuracy_zero,
@@ -184,4 +193,16 @@ class InterventionMetrics:
             "n_zero_correct": float(self.n_zero_correct),
             "runtime_total": round(self.runtime_total, 4),
             "runtime_per_sample": round(self.runtime_per_sample, 4),
+            "runtime/own": round(self.runtime_own, 4),
+            "runtime/cross": round(self.runtime_cross, 4),
+            "runtime/zero": round(self.runtime_zero, 4),
         }
+        if self.max_new_tokens > 0:
+            metrics["max_new_tokens"] = float(self.max_new_tokens)
+        for cond, val in self.tokens_generated_mean.items():
+            metrics[f"tokens_mean/{cond}"] = float(val)
+        for cond, val in self.tokens_generated_max.items():
+            metrics[f"tokens_max/{cond}"] = float(val)
+        for cond, val in self.truncation_rate.items():
+            metrics[f"truncation_rate/{cond}"] = float(val)
+        return metrics
