@@ -7,7 +7,9 @@ import numpy as np
 import torch
 
 from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
+from latentmas_reprop.application.intervention_use_case import InterventionUseCase
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
+from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
 
 def set_seed(seed: int) -> None:
@@ -34,6 +36,16 @@ def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
     device = auto_device(args.device)
 
     model = ModelWrapper(args.model_name, device, use_vllm=args.use_vllm, args=args)
+
+    if getattr(args, "intervention", False):
+        tracker = MLflowTracker()
+        intervention_use_case = InterventionUseCase(tracker_port=tracker)
+        metrics, records = intervention_use_case.execute(model, args)
+        metrics_dict = metrics.to_dict()
+        print("\n==================== Intervention Summary ====================")
+        print(json.dumps(metrics_dict, ensure_ascii=False, indent=2))
+        return metrics_dict, [r.to_dict() for r in records]
+
     use_case = BenchmarkUseCase()
 
     metrics, preds = use_case.execute(model, args)
