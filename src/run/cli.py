@@ -13,15 +13,16 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         description="LatentMAS / TextMAS / Baseline Multi-Agent Benchmark Runner"
     )
 
-    # Configuration template / YAML preset
+    # Configuration / YAML preset
     parser.add_argument(
-        "--config",
         "-c",
+        "--config",
         "--template",
         dest="config_path",
         type=str,
         default=None,
-        help="Path or name of YAML config/template file (e.g. 'latent_mas_gsm8k' or 'templates/latent_mas_gsm8k.yaml').",
+        metavar="CONFIG",
+        help="Path or name of YAML config file in configs/ (e.g. -c latent_mas_gsm8k)",
     )
 
     # Core args for experiments
@@ -173,7 +174,7 @@ def parse_args(args=None) -> argparse.Namespace:
         config_file = resolver.resolve_config_path(pre_args.config_path)
         if not config_file.is_file():
             raise FileNotFoundError(
-                f"Configuration template file not found: {pre_args.config_path} (resolved to {config_file})"
+                f"Configuration file not found: {pre_args.config_path} (resolved to {config_file})"
             )
         with open(config_file, encoding="utf-8") as f:
             loaded = yaml.safe_load(f)

@@ -70,20 +70,25 @@ class PathResolver:
         return self._root / "assets"
 
     @property
-    def templates_dir(self) -> Path:
-        """YAML configuration templates directory."""
-        path = self._root / "templates"
+    def configs_dir(self) -> Path:
+        """YAML configuration directory."""
+        path = self._root / "configs"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    @property
+    def templates_dir(self) -> Path:
+        """Deprecated alias for configs_dir."""
+        return self.configs_dir
+
     def resolve_config_path(self, config_path: str | Path) -> Path:
-        """Resolve a configuration/template path.
+        """Resolve a configuration path.
 
         Checks:
         1. Exact path or relative to repo root
-        2. Inside templates/ directory
-        3. Inside templates/ with .yaml extension
-        4. Inside templates/ with .yml extension
+        2. Inside configs/ directory
+        3. Inside configs/ with .yaml extension
+        4. Inside configs/ with .yml extension
         """
         p = Path(config_path)
         if p.is_file():
@@ -93,15 +98,15 @@ class PathResolver:
         if resolved.is_file():
             return resolved
 
-        candidate = self.templates_dir / p
+        candidate = self.configs_dir / p
         if candidate.is_file():
             return candidate.resolve()
 
-        candidate_yaml = self.templates_dir / f"{p.name}.yaml"
+        candidate_yaml = self.configs_dir / f"{p.name}.yaml"
         if candidate_yaml.is_file():
             return candidate_yaml.resolve()
 
-        candidate_yml = self.templates_dir / f"{p.name}.yml"
+        candidate_yml = self.configs_dir / f"{p.name}.yml"
         if candidate_yml.is_file():
             return candidate_yml.resolve()
 

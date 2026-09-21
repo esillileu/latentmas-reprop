@@ -32,9 +32,9 @@ def test_path_resolver_relative_resolution():
     assert resolved.is_absolute()
 
 
-def test_path_resolver_templates():
+def test_path_resolver_configs():
     resolver = get_path_resolver()
-    assert resolver.templates_dir.is_dir()
+    assert resolver.configs_dir.is_dir()
     resolved = resolver.resolve_config_path("latent_mas_gsm8k")
     assert resolved.is_file()
     assert resolved.name == "latent_mas_gsm8k.yaml"

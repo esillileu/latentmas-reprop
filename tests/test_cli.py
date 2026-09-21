@@ -52,9 +52,9 @@ def test_parse_args_baseline():
     assert args.model_name == "Qwen/Qwen3-0.6B"
 
 
-def test_parse_args_template_preset():
-    # Load defaults from templates/latent_mas_gsm8k.yaml
-    args = parse_args(["--template", "latent_mas_gsm8k"])
+def test_parse_args_config_preset():
+    # Load defaults from configs/latent_mas_gsm8k.yaml using --config
+    args = parse_args(["--config", "latent_mas_gsm8k"])
     assert args.method == "latent_mas"
     assert args.model_name == "Qwen/Qwen3-0.6B"
     assert args.task == "gsm8k"
@@ -63,8 +63,8 @@ def test_parse_args_template_preset():
     assert args.latent_steps == 4
 
 
-def test_parse_args_template_with_override():
-    # Override max_samples and temperature
+def test_parse_args_config_with_override():
+    # Override max_samples and temperature using -c
     args = parse_args(
         [
             "-c",
@@ -81,6 +81,12 @@ def test_parse_args_template_with_override():
     assert args.latent_steps == 4
 
 
-def test_parse_args_template_not_found():
+def test_parse_args_template_alias():
+    # Verify --template alias still works
+    args = parse_args(["--template", "latent_mas_gsm8k"])
+    assert args.method == "latent_mas"
+
+
+def test_parse_args_config_not_found():
     with pytest.raises(FileNotFoundError):
         parse_args(["--config", "non_existent_preset_file"])

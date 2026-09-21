@@ -4,7 +4,7 @@
 default:
     @just --list
 
-# Run multi-agent benchmark with options or YAML template
+# Run multi-agent benchmark with options or YAML config
 run *args:
     uv run python -m src.run {{args}}
 
