@@ -1,5 +1,14 @@
 from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from typing import Any
+
+
+class InterventionCondition(StrEnum):
+    """Intervention conditions for latent communication ablation."""
+
+    OWN = "own"
+    CROSS = "cross"
+    ZERO = "zero"
 
 
 @dataclass
@@ -113,3 +122,66 @@ class BenchmarkMetrics:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class SampleInterventionRecord:
+    """Structured sample-level result for latent intervention experiments."""
+
+    sample_id: str | int
+    source_sample_id: str | int | None
+    condition: str  # "own", "cross", "zero"
+    question: str
+    gold: str | None
+    prediction: str | None
+    raw_prediction: str
+    correct: bool
+    model: str
+    task: str
+    latent_steps: int
+    seed: int
+    latency: float | None = None
+    generated_tokens: int | None = None
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class InterventionMetrics:
+    """Aggregate metrics across intervention conditions."""
+
+    accuracy_own: float
+    accuracy_cross: float
+    accuracy_zero: float
+    answer_change_rate_cross: float
+    answer_change_rate_zero: float
+    accuracy_delta_own_cross: float
+    accuracy_delta_own_zero: float
+    n_samples: int
+    n_own_correct: int
+    n_cross_correct: int
+    n_zero_correct: int
+    runtime_total: float = 0.0
+    runtime_per_sample: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def to_mlflow_metrics(self) -> dict[str, float]:
+        return {
+            "accuracy/own": self.accuracy_own,
+            "accuracy/cross": self.accuracy_cross,
+            "accuracy/zero": self.accuracy_zero,
+            "answer_change_rate/cross": self.answer_change_rate_cross,
+            "answer_change_rate/zero": self.answer_change_rate_zero,
+            "accuracy_delta/own_cross": self.accuracy_delta_own_cross,
+            "accuracy_delta/own_zero": self.accuracy_delta_own_zero,
+            "n_samples": float(self.n_samples),
+            "n_own_correct": float(self.n_own_correct),
+            "n_cross_correct": float(self.n_cross_correct),
+            "n_zero_correct": float(self.n_zero_correct),
+            "runtime_total": round(self.runtime_total, 4),
+            "runtime_per_sample": round(self.runtime_per_sample, 4),
+        }
