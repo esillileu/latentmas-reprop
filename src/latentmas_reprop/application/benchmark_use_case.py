@@ -126,7 +126,9 @@ class BenchmarkUseCase:
             progress.update(len(results))
         return processed, preds
 
-    def execute(self, model: ModelWrapper, args: Any) -> tuple[BenchmarkMetrics, list[dict]]:
+    def execute(
+        self, model: ModelWrapper, args: Any
+    ) -> tuple[BenchmarkMetrics, list[dict]]:
         method = self.create_method(model, args)
         start_time = time.time()
 
@@ -145,7 +147,10 @@ class BenchmarkUseCase:
             if processed >= args.max_samples:
                 break
             batch.append(item)
-            if len(batch) == args.generate_bs or processed + len(batch) == args.max_samples:
+            if (
+                len(batch) == args.generate_bs
+                or processed + len(batch) == args.max_samples
+            ):
                 processed, preds = self.process_batch(
                     method,
                     batch,
@@ -183,7 +188,9 @@ class BenchmarkUseCase:
             accuracy=acc,
             correct=correct,
             total_time_sec=round(total_time, 4),
-            time_per_sample_sec=round(total_time / args.max_samples, 4) if args.max_samples > 0 else 0.0,
+            time_per_sample_sec=round(total_time / args.max_samples, 4)
+            if args.max_samples > 0
+            else 0.0,
         )
 
         # Cache run results to root .cache/evaluation/runs/

@@ -75,9 +75,10 @@ class ModelWrapper(ModelPort):
             gpu_util = float(getattr(args, "gpu_memory_utilization", 0.9))
 
             print(f"[vLLM] Using vLLM backend for model {model_name}")
-            if getattr(args, "enable_prefix_caching", False) and getattr(
-                args, "method", ""
-            ) == "latent_mas":
+            if (
+                getattr(args, "enable_prefix_caching", False)
+                and getattr(args, "method", "") == "latent_mas"
+            ):
                 self.vllm_engine = LLM(
                     model=model_name,
                     tensor_parallel_size=tp_size,
@@ -127,9 +128,7 @@ class ModelWrapper(ModelPort):
         with torch.no_grad():
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
-                dtype=(
-                    torch.bfloat16 if torch.cuda.is_available() else torch.float32
-                ),
+                dtype=(torch.bfloat16 if torch.cuda.is_available() else torch.float32),
             )
         if len(self.tokenizer) != self.model.get_input_embeddings().weight.shape[0]:
             self.model.resize_token_embeddings(len(self.tokenizer))
@@ -285,13 +284,17 @@ class ModelWrapper(ModelPort):
 
         # Check persistent execution cache at .cache/models/realign/
         sanitized_model = self.model_name.replace("/", "_").replace("\\", "_")
-        realign_flag = "realigned" if getattr(args, "latent_space_realign", False) else "identity"
+        realign_flag = (
+            "realigned" if getattr(args, "latent_space_realign", False) else "identity"
+        )
         cache_filename = f"{sanitized_model}_{realign_flag}_realign.pt"
 
         if self.cache_manager.exists(CacheLayer.MODELS_REALIGN, cache_filename):
             try:
                 cached_data = self.cache_manager.load_torch(
-                    CacheLayer.MODELS_REALIGN, cache_filename, map_location=target_device
+                    CacheLayer.MODELS_REALIGN,
+                    cache_filename,
+                    map_location=target_device,
                 )
                 matrix = cached_data["matrix"].to(target_device)
                 target_norm = cached_data["target_norm"].to(target_device)

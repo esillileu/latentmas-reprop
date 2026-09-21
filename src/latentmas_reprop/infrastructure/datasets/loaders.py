@@ -203,9 +203,7 @@ def load_medqa(
     resolver = path_resolver or get_path_resolver()
     medqa_file = str(resolver.medqa_json_path)
 
-    ds = load_dataset(
-        "json", data_files=medqa_file, split="train", cache_dir=cache_dir
-    )
+    ds = load_dataset("json", data_files=medqa_file, split="train", cache_dir=cache_dir)
     for item in ds:
         question = item["query"]
         raw_answer = str(item["answer"])

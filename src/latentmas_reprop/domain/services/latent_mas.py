@@ -60,9 +60,7 @@ class LatentMASMethod:
         start = tensor.shape[-2] - keep
         return tensor[..., start:, :].contiguous()
 
-    def _truncate_past(
-        self, past_kv: Any, tokens_to_keep: int
-    ) -> Any:
+    def _truncate_past(self, past_kv: Any, tokens_to_keep: int) -> Any:
         if past_kv is None or tokens_to_keep <= 0:
             return None
 
@@ -73,7 +71,9 @@ class LatentMASMethod:
                 tokens_to_remove = max(0, cur_len - tokens_to_keep)
                 past_kv.crop(tokens_to_remove)
                 return past_kv
-            if hasattr(past_kv, "to_legacy_cache") and hasattr(past_kv.__class__, "from_legacy_cache"):
+            if hasattr(past_kv, "to_legacy_cache") and hasattr(
+                past_kv.__class__, "from_legacy_cache"
+            ):
                 legacy = past_kv.to_legacy_cache()
                 trimmed_legacy = tuple(
                     tuple(self._slice_tensor(t, tokens_to_keep) for t in layer)
@@ -173,15 +173,17 @@ class LatentMASMethod:
                 for idx in range(batch_size):
                     mask = wrapped_mask[idx].bool()
                     trimmed_ids = wrapped_ids[idx][mask].to("cpu").tolist()
-                    agent_traces[idx].append({
-                        "name": agent.name,
-                        "role": agent.role,
-                        "input": wrapped_prompts[idx],
-                        "input_ids": trimmed_ids,
-                        "input_tokens": wrapped_tokens_batch[idx],
-                        "latent_steps": self.latent_steps,
-                        "output": "",
-                    })
+                    agent_traces[idx].append(
+                        {
+                            "name": agent.name,
+                            "role": agent.role,
+                            "input": wrapped_prompts[idx],
+                            "input_ids": trimmed_ids,
+                            "input_tokens": wrapped_tokens_batch[idx],
+                            "latent_steps": self.latent_steps,
+                            "output": "",
+                        }
+                    )
             else:
                 past_for_decoding = past_kv if self.latent_steps > 0 else None
 
@@ -217,14 +219,16 @@ class LatentMASMethod:
                     final_texts[idx] = final_text
                     mask = judger_mask[idx].bool()
                     trimmed_ids = judger_ids[idx][mask].to("cpu").tolist()
-                    agent_traces[idx].append({
-                        "name": agent.name,
-                        "role": agent.role,
-                        "input": judger_prompts[idx],
-                        "input_ids": trimmed_ids,
-                        "input_tokens": judger_tokens_batch[idx],
-                        "output": final_text,
-                    })
+                    agent_traces[idx].append(
+                        {
+                            "name": agent.name,
+                            "role": agent.role,
+                            "input": judger_prompts[idx],
+                            "input_ids": trimmed_ids,
+                            "input_tokens": judger_tokens_batch[idx],
+                            "output": final_text,
+                        }
+                    )
 
         results: list[dict] = []
         for idx, item in enumerate(items):
@@ -237,15 +241,17 @@ class LatentMASMethod:
                 print(f"Question {idx}")
                 print(f"error_msg: {error_msg}")
 
-            results.append({
-                "question": item["question"],
-                "gold": gold,
-                "solution": item["solution"],
-                "prediction": pred,
-                "raw_prediction": final_text,
-                "agents": agent_traces[idx],
-                "correct": ok,
-            })
+            results.append(
+                {
+                    "question": item["question"],
+                    "gold": gold,
+                    "solution": item["solution"],
+                    "prediction": pred,
+                    "raw_prediction": final_text,
+                    "agents": agent_traces[idx],
+                    "correct": ok,
+                }
+            )
         return results
 
     def run_batch_vllm(self, items: list[dict]) -> list[dict]:
@@ -353,15 +359,17 @@ class LatentMASMethod:
                 for idx in range(batch_size):
                     mask = wrapped_mask[idx].bool()
                     trimmed_ids = wrapped_ids[idx][mask].to("cpu").tolist()
-                    agent_traces[idx].append({
-                        "name": agent.name,
-                        "role": agent.role,
-                        "input": wrapped_prompts[idx],
-                        "input_ids": trimmed_ids,
-                        "input_tokens": wrapped_tokens_batch[idx],
-                        "latent_steps": self.latent_steps,
-                        "output": "",
-                    })
+                    agent_traces[idx].append(
+                        {
+                            "name": agent.name,
+                            "role": agent.role,
+                            "input": wrapped_prompts[idx],
+                            "input_ids": trimmed_ids,
+                            "input_tokens": wrapped_tokens_batch[idx],
+                            "latent_steps": self.latent_steps,
+                            "output": "",
+                        }
+                    )
             else:
                 past_embedding = torch.cat(embedding_record, dim=1).to(self.vllm_device)
 
@@ -378,8 +386,7 @@ class LatentMASMethod:
                 )
                 judger_encoded = judger_encoded["input_ids"].to(self.model.HF_device)
                 curr_prompt_emb = (
-                    self.model
-                    .embedding_layer(judger_encoded)
+                    self.model.embedding_layer(judger_encoded)
                     .squeeze(0)
                     .to(self.vllm_device)
                 )
@@ -410,13 +417,15 @@ class LatentMASMethod:
                     whole_prompt_emb_list.append(combined)
 
                 max_len = max(x.shape[0] for x in whole_prompt_emb_list)
-                whole_prompt_emb = torch.stack([
-                    torch.cat(
-                        [x, torch.zeros(max_len - x.shape[0], H, device=x.device)],
-                        dim=0,
-                    )
-                    for x in whole_prompt_emb_list
-                ])
+                whole_prompt_emb = torch.stack(
+                    [
+                        torch.cat(
+                            [x, torch.zeros(max_len - x.shape[0], H, device=x.device)],
+                            dim=0,
+                        )
+                        for x in whole_prompt_emb_list
+                    ]
+                )
 
                 prompt_embeds_list = [
                     {"prompt_embeds": embeds} for embeds in whole_prompt_emb
@@ -432,27 +441,31 @@ class LatentMASMethod:
                 for idx in range(batch_size):
                     text_out = generated_texts[idx].strip()
                     final_texts[idx] = text_out
-                    agent_traces[idx].append({
-                        "name": agent.name,
-                        "role": agent.role,
-                        "input": judger_prompts[idx],
-                        "output": text_out,
-                    })
+                    agent_traces[idx].append(
+                        {
+                            "name": agent.name,
+                            "role": agent.role,
+                            "input": judger_prompts[idx],
+                            "output": text_out,
+                        }
+                    )
 
         results: list[dict] = []
         for idx, item in enumerate(items):
             final_text = final_texts[idx]
             gold = item.get("gold", "")
             pred, ok, _ = self.evaluator.evaluate(self.task, final_text, gold)
-            results.append({
-                "question": item["question"],
-                "gold": gold,
-                "solution": item["solution"],
-                "prediction": pred,
-                "raw_prediction": final_text,
-                "agents": agent_traces[idx],
-                "correct": ok,
-            })
+            results.append(
+                {
+                    "question": item["question"],
+                    "gold": gold,
+                    "solution": item["solution"],
+                    "prediction": pred,
+                    "raw_prediction": final_text,
+                    "agents": agent_traces[idx],
+                    "correct": ok,
+                }
+            )
         return results
 
     def run_item(self, item: dict) -> dict:

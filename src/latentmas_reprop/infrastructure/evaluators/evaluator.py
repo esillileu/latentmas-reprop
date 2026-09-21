@@ -99,7 +99,11 @@ class StandardEvaluator(EvaluatorPort):
         # GSM8K, ARC, GPQA, MedQA, Winogrande, etc.
         pred = normalize_answer(extract_gsm8k_answer(raw_prediction))
         gold_norm = normalize_answer(gold) if gold is not None else None
-        ok = (pred == gold_norm) if (pred is not None and gold_norm is not None) else False
+        ok = (
+            (pred == gold_norm)
+            if (pred is not None and gold_norm is not None)
+            else False
+        )
         return pred, ok, None
 
 
