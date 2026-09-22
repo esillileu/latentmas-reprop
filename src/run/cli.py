@@ -60,6 +60,7 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
             "mbppplus",
             "humanevalplus",
             "medqa",
+            "secret_digit",
         ],
         default=defaults.get("task", "gsm8k"),
         help="Dataset/task to evaluate. Controls which loader is used.",
@@ -196,6 +197,34 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         help="Experiment name for MLflow tracking.",
     )
 
+    # Receiver acquisition options
+    parser.add_argument(
+        "--acquisition",
+        action="store_true",
+        default=defaults.get("acquisition", False),
+        help="Run the secret-digit receiver acquisition experiment.",
+    )
+    parser.add_argument(
+        "--context_modes",
+        type=str,
+        default=defaults.get("context_modes", "full,latent_only"),
+    )
+    parser.add_argument(
+        "--acquisition_conditions",
+        type=str,
+        default=defaults.get("acquisition_conditions", "own,cross,drop"),
+    )
+    parser.add_argument(
+        "--acquisition_cross_policy",
+        type=str,
+        default=defaults.get("acquisition_cross_policy", "different_digit_shift_v1"),
+    )
+    parser.add_argument(
+        "--save_hidden_states",
+        action="store_true",
+        default=defaults.get("save_hidden_states", False),
+    )
+
     return parser
 
 
@@ -231,5 +260,38 @@ def parse_args(args=None) -> argparse.Namespace:
         parsed.intervention_conditions = [
             c.strip() for c in parsed.intervention_conditions.split(",") if c.strip()
         ]
+
+    def normalize_csv(name: str, allowed: set[str]) -> list[str]:
+        raw = getattr(parsed, name)
+        values = [value.strip() for value in raw.split(",") if value.strip()]
+        if len(values) != len(set(values)):
+            parser.error(f"--{name} contains duplicate values")
+        unknown = set(values) - allowed
+        if unknown or not values:
+            parser.error(f"--{name} contains invalid values: {sorted(unknown)}")
+        return values
+
+    parsed.context_modes = normalize_csv("context_modes", {"full", "latent_only"})
+    parsed.acquisition_conditions = normalize_csv(
+        "acquisition_conditions", {"own", "cross", "drop"}
+    )
+    if parsed.intervention and parsed.acquisition:
+        parser.error("--intervention and --acquisition are mutually exclusive")
+    if parsed.acquisition:
+        if parsed.method != "latent_mas" or parsed.task != "secret_digit":
+            parser.error(
+                "--acquisition requires --method latent_mas --task secret_digit"
+            )
+        if parsed.use_vllm or parsed.latent_steps <= 0:
+            parser.error("--acquisition requires transformers and --latent_steps > 0")
+        if parsed.acquisition_cross_policy != "different_digit_shift_v1":
+            parser.error("unsupported --acquisition_cross_policy")
+        if parsed.tracking_experiment_name != "latentmas_receiver_acquisition":
+            parser.error(
+                "--acquisition requires --tracking_experiment_name "
+                "latentmas_receiver_acquisition"
+            )
+        if "cross" in parsed.acquisition_conditions and parsed.max_samples < 2:
+            parser.error("cross acquisition requires at least two samples")
 
     return parsed

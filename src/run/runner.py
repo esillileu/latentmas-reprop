@@ -8,6 +8,9 @@ import torch
 
 from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
 from latentmas_reprop.application.intervention_use_case import InterventionUseCase
+from latentmas_reprop.application.receiver_acquisition_use_case import (
+    ReceiverAcquisitionUseCase,
+)
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
@@ -36,6 +39,15 @@ def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
     device = auto_device(args.device)
 
     model = ModelWrapper(args.model_name, device, use_vllm=args.use_vllm, args=args)
+
+    if getattr(args, "acquisition", False):
+        tracker = MLflowTracker()
+        use_case = ReceiverAcquisitionUseCase(tracker_port=tracker)
+        metrics, records = use_case.execute(model, args)
+        metrics_dict = metrics.to_dict()
+        print("\n================ Receiver Acquisition Summary ================")
+        print(json.dumps(metrics_dict, ensure_ascii=False, indent=2))
+        return metrics_dict, [record.to_dict() for record in records]
 
     if getattr(args, "intervention", False):
         tracker = MLflowTracker()

@@ -50,6 +50,11 @@ A YAML configuration can define any argument accepted by `src/run/cli.py`:
 | `seed` | `int` | `42` | Random seed for reproducibility |
 | `use_vllm` | `bool` | `false` | Use vLLM backend for faster generation |
 
+Receiver acquisition additionally accepts `acquisition`, `context_modes`,
+`acquisition_conditions`, `acquisition_cross_policy`, `save_hidden_states`, and
+`save_raw_cache`. The canonical preset is `lm_q30.6_secret_digit.yaml`; it requires
+`task: secret_digit`, the transformers backend, and a positive `latent_steps` value.
+
 ---
 
 ## 3. Example Presets

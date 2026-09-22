@@ -54,6 +54,19 @@ just run -c bs_q30.6_gsm8k
 
 ## 3. Overriding Configuration Options
 
+### Receiver acquisition
+
+The synthetic secret-digit experiment uses the transformers KV cache and next-token
+logits directly:
+
+```bash
+just run-acquisition -c lm_q30.6_secret_digit
+```
+
+Its default matrix is `full,latent_only` × `own,cross`, plus one `drop` forward per
+sample. Override subsets with `--context_modes` and `--acquisition_conditions`.
+Hidden states and raw sender caches are only persisted when explicitly enabled.
+
 Any option defined in a config file can be overridden directly from the command line:
 
 ```bash
@@ -96,6 +109,8 @@ just --list
 | Command | Description |
 |---|---|
 | `just run <options>` | Execute benchmark runner (`uv run python -m src.run <args>`) |
+| `just run-intervention <options>` | Execute the latent-cache intervention harness |
+| `just run-acquisition <options>` | Execute secret-digit receiver acquisition |
 | `just test` | Run the complete pytest test suite |
 | `just lint` | Run Ruff linter checks |
 | `just format` | Format code using Ruff formatter |

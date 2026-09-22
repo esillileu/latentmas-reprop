@@ -43,6 +43,16 @@ just run -c tm_q30.6_gsm8k
 just run -c bs_q30.6_gsm8k
 ```
 
+Run the secret-digit receiver acquisition experiment (transformers backend only):
+
+```bash
+just run-acquisition -c lm_q30.6_secret_digit
+```
+
+This records full-cache, latent-only, cross-sender, and no-cache next-token digit
+probabilities without generating text. Raw KV caches and receiver hidden states are
+opt-in via `--save_raw_cache` and `--save_hidden_states`.
+
 ### 3. Developer Commands
 ```bash
 just test        # Run test suite
