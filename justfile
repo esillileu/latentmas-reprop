@@ -20,9 +20,10 @@ run-acquisition *args:
 test *args:
     uv run pytest {{args}}
 
-# Run ruff linter
+# Run linters (ruff + flck)
 lint *args:
     uv run ruff check {{args}}
+    flck
 
 # Run ruff code formatter
 format *args:

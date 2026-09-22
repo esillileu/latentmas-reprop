@@ -9,6 +9,5 @@ __pycache__/
 dist/
 build/
 .env
-.envrc
 mlruns/
 *.db
