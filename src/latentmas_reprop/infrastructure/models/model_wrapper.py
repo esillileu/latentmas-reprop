@@ -5,7 +5,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from ...domain.ports.cache_port import CacheLayer
-from ...domain.ports.model_port import ModelPort, NextTokenState
+from ...domain.ports.model_port import LatentRolloutState, ModelPort, NextTokenState
 from ...domain.services.kv_cache import get_past_kv_sequence_length
 from ..cache.manager import ExecutionCacheManager, get_cache_manager
 
@@ -127,12 +127,18 @@ class ModelWrapper(ModelPort):
             self._ensure_latent_realign_matrix(self.model, self.device, args)
 
     def render_chat(
-        self, messages: list[dict], add_generation_prompt: bool = True
+        self,
+        messages: list[dict],
+        add_generation_prompt: bool = True,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> str:
         tpl = getattr(self.tokenizer, "chat_template", None)
         if tpl:
             return self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=add_generation_prompt
+                messages,
+                tokenize=False,
+                add_generation_prompt=add_generation_prompt,
+                **(chat_template_kwargs or {}),
             )
         segments = []
         for message in messages:
@@ -164,11 +170,16 @@ class ModelWrapper(ModelPort):
         self,
         batch_messages: list[list[dict]],
         add_generation_prompt: bool = True,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> tuple[list[str], torch.Tensor, torch.Tensor, list[list[str]]]:
         prompts: list[str] = []
         for messages in batch_messages:
             prompts.append(
-                self.render_chat(messages, add_generation_prompt=add_generation_prompt)
+                self.render_chat(
+                    messages,
+                    add_generation_prompt=add_generation_prompt,
+                    chat_template_kwargs=chat_template_kwargs,
+                )
             )
         encoded = self.tokenizer(
             prompts,
@@ -392,6 +403,7 @@ class ModelWrapper(ModelPort):
         *,
         past_key_values: Any = None,
         output_hidden_states: bool = False,
+        position_start: int | None = None,
     ) -> NextTokenState:
         if self.use_vllm:
             raise RuntimeError(
@@ -410,10 +422,23 @@ class ModelWrapper(ModelPort):
                     device=attention_mask.device,
                 )
                 attention_mask = torch.cat((prefix, attention_mask), dim=-1)
+        position_ids = None
+        if position_start is not None:
+            position_ids = (
+                torch.arange(
+                    position_start,
+                    position_start + input_ids.shape[1],
+                    device=input_ids.device,
+                    dtype=torch.long,
+                )
+                .unsqueeze(0)
+                .expand(input_ids.shape[0], -1)
+            )
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            position_ids=position_ids,
             use_cache=False,
             output_hidden_states=output_hidden_states,
             return_dict=True,
@@ -434,6 +459,37 @@ class ModelWrapper(ModelPort):
         latent_steps: int,
         past_key_values: Any = None,
     ) -> Any:
+        return self._generate_latent_rollout(
+            input_ids,
+            attention_mask,
+            latent_steps=latent_steps,
+            past_key_values=past_key_values,
+        ).past_key_values
+
+    @torch.no_grad()
+    def generate_latent_batch_with_states(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        *,
+        latent_steps: int,
+        past_key_values: Any = None,
+    ) -> LatentRolloutState:
+        return self._generate_latent_rollout(
+            input_ids,
+            attention_mask,
+            latent_steps=latent_steps,
+            past_key_values=past_key_values,
+        )
+
+    def _generate_latent_rollout(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        *,
+        latent_steps: int,
+        past_key_values: Any = None,
+    ) -> LatentRolloutState:
         if input_ids.dim() != 2:
             raise ValueError("input_ids must be 2D with shape [batch, seq_len]")
 
@@ -462,12 +518,15 @@ class ModelWrapper(ModelPort):
         )
         past = outputs.past_key_values
 
-        outputs.hidden_states[0][:, -1, :]
         last_hidden = outputs.hidden_states[-1][:, -1, :]
+        hidden_steps: list[torch.Tensor] = []
+        latent_steps_output: list[torch.Tensor] = []
 
         for _ in range(latent_steps):
+            hidden_steps.append(last_hidden.detach())
             source_model = self.HF_model if hasattr(self, "HF_model") else self.model
             latent_vec = self._apply_latent_realignment(last_hidden, source_model)
+            latent_steps_output.append(latent_vec.detach())
             latent_embed = latent_vec.unsqueeze(1)
 
             past_len = get_past_kv_sequence_length(past)
@@ -487,7 +546,18 @@ class ModelWrapper(ModelPort):
             past = outputs.past_key_values
             last_hidden = outputs.hidden_states[-1][:, -1, :]
 
-        return past
+        batch_size = input_ids.shape[0]
+        hidden_size = last_hidden.shape[-1]
+        empty = last_hidden.new_empty((batch_size, 0, hidden_size))
+        return LatentRolloutState(
+            past_key_values=past,
+            hidden_pre_realign=torch.stack(hidden_steps, dim=1)
+            if hidden_steps
+            else empty,
+            latent_post_realign=torch.stack(latent_steps_output, dim=1)
+            if latent_steps_output
+            else empty.clone(),
+        )
 
     @torch.no_grad()
     def generate_latent_batch_hidden_state(

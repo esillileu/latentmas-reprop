@@ -105,6 +105,30 @@ def truncate_past_kv(past_kv: Any, tokens_to_keep: int) -> Any:
     )
 
 
+def retain_past_kv_prefix(past_kv: Any, tokens_to_keep: int) -> Any:
+    """Keep the first cache positions; DynamicCache is mutated in place."""
+    if past_kv is None or tokens_to_keep <= 0:
+        return None
+
+    def prefix(tensor: torch.Tensor) -> torch.Tensor:
+        keep = min(tokens_to_keep, tensor.shape[-2])
+        return tensor[..., :keep, :].contiguous()
+
+    if hasattr(past_kv, "layers"):
+        for layer in past_kv.layers:
+            if torch.is_tensor(getattr(layer, "keys", None)):
+                layer.keys = prefix(layer.keys)
+            if torch.is_tensor(getattr(layer, "values", None)):
+                layer.values = prefix(layer.values)
+        return past_kv
+    return tuple(
+        tuple(prefix(t) if torch.is_tensor(t) else t for t in layer)
+        if isinstance(layer, (list, tuple))
+        else (prefix(layer) if torch.is_tensor(layer) else layer)
+        for layer in past_kv
+    )
+
+
 def create_zero_past_kv(past_kv: Any) -> Any:
     cloned = clone_past_kv(past_kv)
     if cloned is None:
