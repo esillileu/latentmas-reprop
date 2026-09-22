@@ -153,14 +153,9 @@ class ReceiverAcquisitionUseCase:
                 args,
                 samples,
                 cross_indices,
-                modes,
-                conditions,
-                receiver_prompts[0],
                 receiver_ids,
                 receiver_mask,
                 mapping,
-                git_hash,
-                self.cache_port,
                 self.tracker_port,
             )
             probe_result: SenderProbeResult | None = None

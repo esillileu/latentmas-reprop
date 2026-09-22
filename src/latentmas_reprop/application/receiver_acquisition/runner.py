@@ -101,7 +101,7 @@ def run_acquisition_loop(
             for condition in args.acquisition_conditions:
                 if condition == "cross" and cross is None:
                     continue
-                source = cross if condition == "cross" else None
+                source = cross if condition == "cross" else target
                 modes = (
                     ["none"]
                     if condition in {"drop", "drop_position_matched"}

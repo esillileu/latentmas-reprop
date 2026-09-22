@@ -145,6 +145,18 @@ def forward_receiver_observation(
             scored = score_digit_logits(
                 state.logits, mapping, source.digit if source else None, target.digit
             )
+            top_values, top_ids = torch.topk(
+                torch.log_softmax(state.logits[0].float(), dim=-1), k=5
+            )
+            scored["top_token_candidates"] = [
+                {
+                    "token_id": int(token_id),
+                    "token": model.tokenizer.convert_ids_to_tokens(int(token_id)),
+                    "text": model.tokenizer.decode([int(token_id)]),
+                    "probability": float(value.exp().item()),
+                }
+                for value, token_id in zip(top_values, top_ids, strict=True)
+            ]
             if span is not None:
                 span.set_outputs(
                     scored
@@ -162,6 +174,7 @@ def forward_receiver_observation(
     empty = {
         "candidate_probabilities": {},
         "candidate_log_probabilities": {},
+        "top_token_candidates": [],
         "candidate_mass": 0.0,
         "predicted_digit": None,
         "source_probability": None,
