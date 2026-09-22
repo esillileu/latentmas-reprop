@@ -1,6 +1,26 @@
 import os
+import subprocess
 from pathlib import Path
 from typing import Final
+
+
+def get_git_commit_hash(repo_dir: Path | None = None) -> str:
+    """Safely obtain current git commit hash, or return 'unknown'."""
+    try:
+        cmd = ["git", "rev-parse", "HEAD"]
+        cwd = str(repo_dir) if repo_dir else None
+        res = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode == 0:
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
 
 
 class PathResolver:
@@ -33,6 +53,10 @@ class PathResolver:
     def root(self) -> Path:
         """Repository root path."""
         return self._root
+
+    def get_git_commit_hash(self) -> str:
+        """Git commit hash of repository."""
+        return get_git_commit_hash(self._root)
 
     @property
     def cache_dir(self) -> Path:
