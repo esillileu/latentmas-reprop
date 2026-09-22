@@ -26,22 +26,26 @@ from ..domain.services.kv_cache import (
     get_past_kv_num_layers,
     get_past_kv_sequence_length,
     move_past_kv,
+    retain_past_kv_prefix,
     truncate_past_kv,
 )
 from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.models.model_wrapper import ModelWrapper
 from ..infrastructure.tracking.mlflow_tracker import get_git_commit_hash
+from .sender_latent_probe import SenderProbeResult, run_sender_latent_probe
 
 SENDER_PROMPT_TEMPLATE_VERSION = "secret_digit_sender_v1"
-RECEIVER_PROMPT_TEMPLATE_VERSION = "secret_digit_receiver_v1"
+RECEIVER_PROMPT_TEMPLATE_VERSION = "secret_digit_receiver_v2"
 CROSS_PAIRING_POLICY = "different_digit_shift_v1"
 SENDER_PROMPT_TEMPLATE = (
     "Memorize the secret digit {digit}. Communicate this digit through your internal "
     "state. Do not explain or output anything else."
 )
 RECEIVER_PROMPT = (
-    "Read the sender's internal state. Reply with the single secret digit."
+    "Identify the secret digit from the sender's internal state. "
+    "Your answer must have exactly this form: The number is <digit>"
 )
+RECEIVER_ANSWER_PREFIX = "The number is "
 CANDIDATE_DIGITS = tuple(str(i) for i in range(10))
 
 
@@ -51,6 +55,16 @@ class SecretDigitSample:
     sample_index: int
     sample_key: str
     digit: int
+
+
+@dataclass(frozen=True)
+class SenderCacheBundle:
+    full: Any
+    prompt_only: Any
+    latent_only: Any
+    prompt_len: int
+    full_len: int
+    build_latency_sec: float
 
 
 def generate_secret_digit_samples(
@@ -104,13 +118,14 @@ def build_receiver_messages() -> list[dict[str, str]]:
 def validate_digit_candidates(
     model: ModelWrapper, rendered_prompt: str
 ) -> dict[str, Any]:
-    prefix = model.tokenizer(rendered_prompt, add_special_tokens=False)["input_ids"]
+    scoring_prompt = rendered_prompt + RECEIVER_ANSWER_PREFIX
+    prefix = model.tokenizer(scoring_prompt, add_special_tokens=False)["input_ids"]
     mapping: dict[str, Any] = {}
     token_ids: list[int] = []
     for candidate in CANDIDATE_DIGITS:
         standalone = model.tokenize_text(candidate).detach().cpu().reshape(-1).tolist()
         contextual = model.tokenizer(
-            rendered_prompt + candidate, add_special_tokens=False
+            scoring_prompt + candidate, add_special_tokens=False
         )["input_ids"]
         prefix_ok = contextual[: len(prefix)] == prefix
         suffix = contextual[len(prefix) :] if prefix_ok else []
@@ -130,8 +145,31 @@ def validate_digit_candidates(
         }
     if len(set(token_ids)) != len(token_ids):
         raise ValueError("digit candidates do not map to unique contextual token IDs")
+    variants: dict[str, Any] = {}
+    for digit in CANDIDATE_DIGITS:
+        variants[digit] = {}
+        for label, candidate in (("plain", digit), ("space_prefixed", f" {digit}")):
+            standalone = model.tokenizer(candidate, add_special_tokens=False)[
+                "input_ids"
+            ]
+            contextual = model.tokenizer(
+                scoring_prompt + candidate, add_special_tokens=False
+            )["input_ids"]
+            prefix_ok = contextual[: len(prefix)] == prefix
+            variants[digit][label] = {
+                "text": candidate,
+                "standalone_token_ids": [int(token_id) for token_id in standalone],
+                "contextual_token_ids": [
+                    int(token_id) for token_id in contextual[len(prefix) :]
+                ]
+                if prefix_ok
+                else [],
+                "prefix_unchanged": prefix_ok,
+            }
     return {
         "candidates": mapping,
+        "candidate_variants": variants,
+        "answer_prefix": RECEIVER_ANSWER_PREFIX,
         "mapping_unique": True,
         "rendered_receiver_prompt_hash": hashlib.sha256(
             rendered_prompt.encode("utf-8")
@@ -265,7 +303,17 @@ def aggregate_receiver_records(
         }
     drops = {r.sample_index: r for r in successful if r.condition == "drop"}
     deltas: dict[str, float] = {}
-    for cell in ("full/own", "full/cross", "latent_only/own", "latent_only/cross"):
+    comparable_cells = (
+        "full/own",
+        "full/cross",
+        "prompt_only/own",
+        "prompt_only/cross",
+        "latent_only/own",
+        "latent_only/cross",
+        "latent_only_position_fixed/own",
+        "latent_only_position_fixed/cross",
+    )
+    for cell in comparable_cells:
         values = [
             r.source_probability
             - drops[r.sample_index].candidate_probabilities[str(r.source_digit)]
@@ -278,10 +326,20 @@ def aggregate_receiver_records(
             deltas[cell] = mean(values)
     cross_follow = {
         mode: cells.get(f"{mode}/cross", {}).get("content_follow_accuracy", 0.0) or 0.0
-        for mode in ("full", "latent_only")
+        for mode in (
+            "full",
+            "prompt_only",
+            "latent_only",
+            "latent_only_position_fixed",
+        )
     }
     cross_retention = {}
-    for mode in ("full", "latent_only"):
+    for mode in (
+        "full",
+        "prompt_only",
+        "latent_only",
+        "latent_only_position_fixed",
+    ):
         vals = [
             r.target_retained
             for r in successful
@@ -289,9 +347,69 @@ def aggregate_receiver_records(
         ]
         cross_retention[mode] = mean(vals) if vals else 0.0
     drop_records = list(drops.values())
+    carrier_comparison: dict[str, dict[str, float]] = {}
+    for carrier in ("full", "prompt_only", "latent_only"):
+        carrier_records = [
+            record
+            for record in successful
+            if record.context_mode == carrier and record.condition == "own"
+        ]
+        if carrier_records:
+            carrier_comparison[carrier] = {
+                "source_follow_accuracy": mean(
+                    record.content_follow_correct for record in carrier_records
+                ),
+                "source_probability_mean": mean(
+                    record.source_probability for record in carrier_records
+                ),
+            }
+    if drop_records:
+        carrier_comparison["drop"] = {
+            "source_follow_accuracy": mean(
+                record.target_retained for record in drop_records
+            ),
+            "source_probability_mean": mean(
+                record.target_probability for record in drop_records
+            ),
+        }
+    position_matched_drop_records = [
+        record
+        for record in successful
+        if record.condition == "drop_position_matched"
+    ]
+    if position_matched_drop_records:
+        carrier_comparison["drop_position_matched"] = {
+            "source_follow_accuracy": mean(
+                record.target_retained for record in position_matched_drop_records
+            ),
+            "source_probability_mean": mean(
+                record.target_probability for record in position_matched_drop_records
+            ),
+        }
+    carrier_deltas: dict[str, float] = {}
+    carrier_probability = {
+        carrier: values["source_probability_mean"]
+        for carrier, values in carrier_comparison.items()
+    }
+    for left, right in (
+        ("full", "drop"),
+        ("prompt_only", "drop"),
+        ("latent_only", "drop"),
+        ("full", "prompt_only"),
+        ("full", "latent_only"),
+    ):
+        if left in carrier_probability and right in carrier_probability:
+            carrier_deltas[f"{left}_minus_{right}"] = (
+                carrier_probability[left] - carrier_probability[right]
+            )
     lengths: dict[str, dict[str, float]] = {}
     sizes: dict[str, dict[str, float]] = {}
-    for mode in ("full", "latent_only"):
+    for mode in (
+        "full",
+        "prompt_only",
+        "latent_only",
+        "latent_only_position_fixed",
+    ):
         group = [r for r in successful if r.context_mode == mode and r.cache_present]
         if group:
             seqs = [r.cache_sequence_length for r in group]
@@ -332,6 +450,8 @@ def aggregate_receiver_records(
         },
         cache_sequence_length_stats=lengths,
         cache_bytes_stats=sizes,
+        carrier_comparison=carrier_comparison,
+        carrier_probability_deltas=carrier_deltas,
     )
 
 
@@ -374,9 +494,18 @@ class ReceiverAcquisitionUseCase:
             )
         try:
             receiver_prompts, receiver_ids, receiver_mask, _ = model.prepare_chat_batch(
-                [build_receiver_messages()], add_generation_prompt=True
+                [build_receiver_messages()],
+                add_generation_prompt=True,
+                chat_template_kwargs={"enable_thinking": False},
             )
             mapping = validate_digit_candidates(model, receiver_prompts[0])
+            scoring_input = model.tokenizer(
+                receiver_prompts[0] + RECEIVER_ANSWER_PREFIX,
+                return_tensors="pt",
+                add_special_tokens=False,
+            )
+            receiver_ids = scoring_input["input_ids"].to(model.device)
+            receiver_mask = scoring_input["attention_mask"].to(model.device)
             if self.tracker_port:
                 self.tracker_port.log_params(
                     {
@@ -392,6 +521,7 @@ class ReceiverAcquisitionUseCase:
                         ),
                         "device": str(model.device),
                         "context_modes": ",".join(modes),
+                        "carrier_modes": ",".join(modes),
                         "acquisition_conditions": ",".join(conditions),
                         "candidate_digits": ",".join(CANDIDATE_DIGITS),
                         "cross_pairing_policy": CROSS_PAIRING_POLICY,
@@ -403,6 +533,11 @@ class ReceiverAcquisitionUseCase:
                         "save_hidden_states": bool(args.save_hidden_states),
                         "save_raw_cache": bool(args.save_raw_cache),
                         "latent_space_realign": bool(args.latent_space_realign),
+                        "probe_sender_latents": bool(args.probe_sender_latents),
+                        "probe_prompt_templates": args.probe_prompt_templates,
+                        "probe_train_template_fraction": args.probe_train_template_fraction,
+                        "probe_epochs": args.probe_epochs,
+                        "save_latent_states": bool(args.save_latent_states),
                     }
                 )
                 self.tracker_port.log_dict(
@@ -421,9 +556,15 @@ class ReceiverAcquisitionUseCase:
                 mapping,
                 git_hash,
             )
+            probe_result: SenderProbeResult | None = None
+            if args.probe_sender_latents:
+                probe_result = run_sender_latent_probe(model, args)
             cells_per_sample = len(modes) * sum(
                 condition in {"own", "cross"} for condition in conditions
-            ) + (1 if "drop" in conditions else 0)
+            ) + sum(
+                condition in {"drop", "drop_position_matched"}
+                for condition in conditions
+            )
             metrics = aggregate_receiver_records(
                 records,
                 len(samples),
@@ -431,7 +572,24 @@ class ReceiverAcquisitionUseCase:
                 time.perf_counter() - start,
                 context_runtime,
             )
-            self._log_artifacts(args, records, metrics, mapping, hidden)
+            if probe_result is not None:
+                metrics.probe_metrics = dict(probe_result.summary["metrics"])
+            metrics.research_matrix = {
+                "carrier_source_follow_accuracy": {
+                    carrier: values["source_follow_accuracy"]
+                    for carrier, values in metrics.carrier_comparison.items()
+                },
+                "carrier_source_probability_mean": {
+                    carrier: values["source_probability_mean"]
+                    for carrier, values in metrics.carrier_comparison.items()
+                },
+                "carrier_probability_deltas": metrics.carrier_probability_deltas,
+                "probe_accuracy_by_step": metrics.probe_metrics,
+                "chance_probe_accuracy": 0.1,
+            }
+            self._log_artifacts(
+                args, records, metrics, mapping, hidden, probe_result
+            )
             if self.tracker_port:
                 self.tracker_port.log_metrics(metrics.to_mlflow_metrics())
                 self.tracker_port.flush_traces()
@@ -467,7 +625,7 @@ class ReceiverAcquisitionUseCase:
 
     def _build_cache(
         self, model: ModelWrapper, args: Any, sample: SecretDigitSample
-    ) -> tuple[Any, Any, dict[str, Any]]:
+    ) -> SenderCacheBundle:
         _, ids, mask, _ = model.prepare_chat_batch(
             [build_sender_messages(sample.digit)], add_generation_prompt=True
         )
@@ -476,22 +634,26 @@ class ReceiverAcquisitionUseCase:
             ids, attention_mask=mask, latent_steps=args.latent_steps
         )
         latency = time.perf_counter() - started
-        expected = int(mask.sum().item()) + args.latent_steps
+        prompt_len = int(mask.sum().item())
+        expected = prompt_len + args.latent_steps
         if get_past_kv_sequence_length(full) != expected:
             raise RuntimeError(
                 f"sender cache length mismatch: expected {expected}, got {get_past_kv_sequence_length(full)}"
             )
         full = move_past_kv(full, "cpu")
         latent = truncate_past_kv(clone_past_kv(full), args.latent_steps)
+        prompt = retain_past_kv_prefix(clone_past_kv(full), prompt_len)
         if get_past_kv_sequence_length(latent) != args.latent_steps:
             raise RuntimeError("latent-only cache length mismatch")
-        return (
-            full,
-            latent,
-            {
-                "sender_prompt_tokens": int(mask.sum().item()),
-                "build_latency_sec": latency,
-            },
+        if get_past_kv_sequence_length(prompt) != prompt_len:
+            raise RuntimeError("prompt-only cache length mismatch")
+        return SenderCacheBundle(
+            full=full,
+            prompt_only=prompt,
+            latent_only=latent,
+            prompt_len=prompt_len,
+            full_len=expected,
+            build_latency_sec=latency,
         )
 
     def _run(
@@ -508,7 +670,7 @@ class ReceiverAcquisitionUseCase:
         mapping,
         git_hash,
     ):
-        stores: dict[int, tuple[Any, Any, dict[str, Any]]] = {}
+        stores: dict[int, SenderCacheBundle] = {}
         records: list[ReceiverAcquisitionRecord] = []
         hidden: dict[str, tuple[torch.Tensor, ...]] = {}
         context_runtime = 0.0
@@ -564,31 +726,39 @@ class ReceiverAcquisitionUseCase:
                             stores[source_index] = self._build_cache(
                                 model, args, samples[source_index]
                             )
-                            context_runtime += stores[source_index][2][
-                                "build_latency_sec"
-                            ]
+                            context_runtime += stores[source_index].build_latency_sec
                             if args.save_raw_cache:
                                 safe_model = args.model_name.replace("/", "_")
                                 self.cache_port.save_torch(
                                     CacheLayer.LATENT_RECEIVER_ACQUISITION,
                                     f"{safe_model}_{samples[source_index].sample_id}_full.pt",
-                                    stores[source_index][0],
+                                    stores[source_index].full,
                                 )
                                 self.cache_port.save_torch(
                                     CacheLayer.LATENT_RECEIVER_ACQUISITION,
                                     f"{safe_model}_{samples[source_index].sample_id}_latent_only.pt",
-                                    stores[source_index][1],
+                                    stores[source_index].latent_only,
                                 )
-                        full, latent, meta = stores[source_index]
+                                self.cache_port.save_torch(
+                                    CacheLayer.LATENT_RECEIVER_ACQUISITION,
+                                    f"{safe_model}_{samples[source_index].sample_id}_prompt_only.pt",
+                                    stores[source_index].prompt_only,
+                                )
+                        bundle = stores[source_index]
                         build_outputs.append(
                             {
                                 "sample_id": samples[source_index].sample_id,
                                 "reused": reused,
-                                "full_length": get_past_kv_sequence_length(full),
-                                "latent_only_length": get_past_kv_sequence_length(
-                                    latent
-                                ),
-                                **meta,
+                                "full_length": bundle.full_len,
+                                "prompt_only_length": bundle.prompt_len,
+                                "latent_only_length": args.latent_steps,
+                                "prompt_position_range": [0, bundle.prompt_len],
+                                "latent_position_range": [
+                                    bundle.prompt_len,
+                                    bundle.full_len,
+                                ],
+                                "receiver_position_start": bundle.full_len,
+                                "build_latency_sec": bundle.build_latency_sec,
                             }
                         )
                     if span is not None:
@@ -597,7 +767,14 @@ class ReceiverAcquisitionUseCase:
                     for condition in (c for c in conditions if c in {"own", "cross"}):
                         source = target if condition == "own" else cross
                         assert source is not None
-                        cache = stores[source.sample_index][0 if mode == "full" else 1]
+                        bundle = stores[source.sample_index]
+                        cache = {
+                            "full": bundle.full,
+                            "prompt_only": bundle.prompt_only,
+                            "latent_only": bundle.latent_only,
+                            "latent_only_position_fixed": bundle.latent_only,
+                            "latent_only_compact_debug": bundle.latent_only,
+                        }[mode]
                         record, state_hidden = self._forward(
                             model,
                             args,
@@ -609,28 +786,35 @@ class ReceiverAcquisitionUseCase:
                             receiver_ids,
                             receiver_mask,
                             mapping,
+                            bundle.full_len,
                         )
                         records.append(record)
                         if state_hidden is not None:
                             hidden[f"{target.sample_id}/{mode}/{condition}"] = tuple(
                                 t.cpu() for t in state_hidden
                             )
-                if "drop" in conditions:
+                for drop_condition in (
+                    condition
+                    for condition in conditions
+                    if condition in {"drop", "drop_position_matched"}
+                ):
+                    target_bundle = stores[index]
                     record, state_hidden = self._forward(
                         model,
                         args,
                         target,
-                        None,
+                        target,
                         "none",
-                        "drop",
+                        drop_condition,
                         None,
                         receiver_ids,
                         receiver_mask,
                         mapping,
+                        target_bundle.full_len,
                     )
                     records.append(record)
                     if state_hidden is not None:
-                        hidden[f"{target.sample_id}/drop"] = tuple(
+                        hidden[f"{target.sample_id}/{drop_condition}"] = tuple(
                             t.cpu() for t in state_hidden
                         )
                 sample_records = [r for r in records if r.sample_index == index]
@@ -683,6 +867,7 @@ class ReceiverAcquisitionUseCase:
         receiver_ids,
         receiver_mask,
         mapping,
+        original_full_seq_len,
     ):
         span_ctx = (
             self.tracker_port.start_span(
@@ -709,6 +894,25 @@ class ReceiverAcquisitionUseCase:
             if cache is not None
             else None
         )
+        retained_tail_len = get_past_kv_sequence_length(cache)
+        position_fixed = mode in {
+            "full",
+            "prompt_only",
+            "latent_only",
+            "latent_only_position_fixed",
+        } or condition == "drop_position_matched"
+        receiver_position_start = (
+            original_full_seq_len if position_fixed else retained_tail_len
+        )
+        if mode in {"latent_only", "latent_only_position_fixed", "latent_only_compact_debug"}:
+            retained_start = original_full_seq_len - retained_tail_len
+            retained_end = original_full_seq_len
+        elif mode in {"full", "prompt_only"}:
+            retained_start = 0
+            retained_end = retained_tail_len
+        else:
+            retained_start = None
+            retained_end = None
         with span_ctx as span:
             try:
                 state = model.forward_next_token_batch(
@@ -716,6 +920,7 @@ class ReceiverAcquisitionUseCase:
                     receiver_mask,
                     past_key_values=cache_for_forward,
                     output_hidden_states=args.save_hidden_states,
+                    position_start=receiver_position_start if position_fixed else None,
                 )
                 state_hidden = state.hidden_states
                 scored = score_digit_logits(
@@ -724,11 +929,28 @@ class ReceiverAcquisitionUseCase:
                     source.digit if source else None,
                     target.digit,
                 )
+                top_values, top_ids = torch.topk(
+                    torch.log_softmax(state.logits[0].float(), dim=-1), k=5
+                )
+                scored["top_token_candidates"] = [
+                    {
+                        "token_id": int(token_id),
+                        "token": model.tokenizer.convert_ids_to_tokens(int(token_id)),
+                        "text": model.tokenizer.decode([int(token_id)]),
+                        "probability": float(value.exp().item()),
+                    }
+                    for value, token_id in zip(top_values, top_ids, strict=True)
+                ]
                 if span is not None:
                     span.set_outputs(
                         scored
                         | {
                             "cache_sequence_length": get_past_kv_sequence_length(cache),
+                            "original_full_seq_len": original_full_seq_len,
+                            "retained_tail_len": retained_tail_len,
+                            "retained_tail_start_position": retained_start,
+                            "retained_original_position_end": retained_end,
+                            "receiver_position_start": receiver_position_start,
                             "latency_sec": time.perf_counter() - started,
                         }
                     )
@@ -741,6 +963,7 @@ class ReceiverAcquisitionUseCase:
         empty = {
             "candidate_probabilities": {},
             "candidate_log_probabilities": {},
+            "top_token_candidates": [],
             "candidate_mass": 0.0,
             "predicted_digit": None,
             "source_probability": None,
@@ -776,6 +999,11 @@ class ReceiverAcquisitionUseCase:
             cache_bytes=estimate_past_kv_bytes(cache),
             num_layers=get_past_kv_num_layers(cache),
             cache_dtype=get_past_kv_dtype(cache),
+            original_full_seq_len=original_full_seq_len,
+            retained_tail_len=retained_tail_len,
+            retained_tail_start_position=retained_start,
+            retained_original_position_end=retained_end,
+            receiver_position_start=receiver_position_start,
             receiver_prompt_tokens=int(receiver_mask.sum().item()),
             latency_sec=latency,
             error=error,
@@ -786,7 +1014,15 @@ class ReceiverAcquisitionUseCase:
             latent_steps=args.latent_steps,
         ), state_hidden
 
-    def _log_artifacts(self, args, records, metrics, mapping, hidden):
+    def _log_artifacts(
+        self,
+        args,
+        records,
+        metrics,
+        mapping,
+        hidden,
+        probe_result: SenderProbeResult | None,
+    ):
         data = [record.to_dict() for record in records]
         self.cache_port.save_json(
             CacheLayer.EVALUATION_RECEIVER_ACQUISITION, "sample_results.json", data
@@ -823,3 +1059,34 @@ class ReceiverAcquisitionUseCase:
                     hidden,
                 )
                 self.tracker_port.log_artifact(hidden_path, "states")
+        if probe_result is not None:
+            self._log_probe_artifacts(args, probe_result)
+
+    def _log_probe_artifacts(
+        self, args: Any, probe_result: SenderProbeResult
+    ) -> None:
+        state_payload = {
+            **probe_result.states,
+            "metadata": probe_result.metadata,
+        }
+        if args.save_latent_states:
+            state_path = self.cache_port.save_torch(
+                CacheLayer.EVALUATION_RECEIVER_ACQUISITION,
+                "sender_latent_states.pt",
+                state_payload,
+            )
+            if self.tracker_port:
+                self.tracker_port.log_artifact(state_path, "probe")
+        if self.tracker_port:
+            self.tracker_port.log_param("analysis_stage", "carrier_probe")
+            self.tracker_port.log_dict(
+                probe_result.split, "probe/probe_split.json"
+            )
+            self.tracker_port.log_dict(
+                probe_result.summary, "probe/probe_summary.json"
+            )
+            for name, matrix in probe_result.confusion_matrices.items():
+                self.tracker_port.log_dict(
+                    {"labels": list(range(10)), "matrix": matrix},
+                    f"probe/confusion_matrix_{name}.json",
+                )

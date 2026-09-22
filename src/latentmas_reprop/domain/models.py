@@ -284,6 +284,7 @@ class ReceiverAcquisitionRecord:
     condition: str
     candidate_probabilities: dict[str, float]
     candidate_log_probabilities: dict[str, float]
+    top_token_candidates: list[dict[str, Any]]
     candidate_mass: float
     predicted_digit: int | None
     source_probability: float | None
@@ -300,6 +301,11 @@ class ReceiverAcquisitionRecord:
     cache_bytes: int
     num_layers: int
     cache_dtype: str | None
+    original_full_seq_len: int
+    retained_tail_len: int
+    retained_tail_start_position: int | None
+    retained_original_position_end: int | None
+    receiver_position_start: int
     receiver_prompt_tokens: int
     latency_sec: float | None
     error: str | None
@@ -335,8 +341,13 @@ class ReceiverAcquisitionMetrics:
         default_factory=dict
     )
     cache_bytes_stats: dict[str, dict[str, float]] = field(default_factory=dict)
+    carrier_comparison: dict[str, dict[str, float]] = field(default_factory=dict)
+    carrier_probability_deltas: dict[str, float] = field(default_factory=dict)
+    probe_metrics: dict[str, float] = field(default_factory=dict)
+    research_matrix: dict[str, Any] = field(default_factory=dict)
     method_note: str = (
-        "latent-only retains tail KV positions without rebasing their rotary positions"
+        "carrier KV rotations are retained; canonical receiver positions start at "
+        "the original full cache length"
     )
 
     def to_dict(self) -> dict[str, Any]:
@@ -393,4 +404,11 @@ class ReceiverAcquisitionMetrics:
         for mode, stats in self.cache_bytes_stats.items():
             for name, value in stats.items():
                 result[f"cache/{mode}/bytes_{name}"] = value
+        for carrier, values in self.carrier_comparison.items():
+            for name, value in values.items():
+                result[f"carrier/{carrier}/{name}"] = value
+                result[f"{carrier}/{name}"] = value
+        for comparison, value in self.carrier_probability_deltas.items():
+            result[f"carrier_delta/{comparison}"] = value
+        result.update(self.probe_metrics)
         return result
