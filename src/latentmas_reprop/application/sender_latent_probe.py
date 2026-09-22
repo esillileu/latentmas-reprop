@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from ..infrastructure.models.model_wrapper import ModelWrapper
 
@@ -95,29 +96,35 @@ def run_sender_latent_probe(model: ModelWrapper, args: Any) -> SenderProbeResult
     post_states: list[torch.Tensor] = []
     labels: list[int] = []
     metadata: list[dict[str, Any]] = []
-    for template_index, template in enumerate(templates):
-        for digit in range(10):
-            messages = [[{"role": "user", "content": template.format(digit=digit)}]]
-            _, input_ids, attention_mask, _ = model.prepare_chat_batch(
-                messages, add_generation_prompt=True
-            )
-            rollout = model.generate_latent_batch_with_states(
-                input_ids,
-                attention_mask=attention_mask,
-                latent_steps=args.latent_steps,
-            )
-            pre_states.append(rollout.hidden_pre_realign[0].detach().cpu())
-            post_states.append(rollout.latent_post_realign[0].detach().cpu())
-            labels.append(digit)
-            metadata.append(
-                {
-                    "state_index": len(metadata),
-                    "template_index": template_index,
-                    "template": template,
-                    "digit": digit,
-                    "split": "train" if template_index in train_templates else "test",
-                }
-            )
+    probe_inputs = [
+        (template_index, template, digit)
+        for template_index, template in enumerate(templates)
+        for digit in range(10)
+    ]
+    for template_index, template, digit in tqdm(
+        probe_inputs, desc="Collecting sender latent states", unit="state"
+    ):
+        messages = [[{"role": "user", "content": template.format(digit=digit)}]]
+        _, input_ids, attention_mask, _ = model.prepare_chat_batch(
+            messages, add_generation_prompt=True
+        )
+        rollout = model.generate_latent_batch_with_states(
+            input_ids,
+            attention_mask=attention_mask,
+            latent_steps=args.latent_steps,
+        )
+        pre_states.append(rollout.hidden_pre_realign[0].detach().cpu())
+        post_states.append(rollout.latent_post_realign[0].detach().cpu())
+        labels.append(digit)
+        metadata.append(
+            {
+                "state_index": len(metadata),
+                "template_index": template_index,
+                "template": template,
+                "digit": digit,
+                "split": "train" if template_index in train_templates else "test",
+            }
+        )
 
     states = {
         "hidden_pre_realign": torch.stack(pre_states),
@@ -135,22 +142,28 @@ def run_sender_latent_probe(model: ModelWrapper, args: Any) -> SenderProbeResult
     )
     metrics: dict[str, float] = {}
     confusion_matrices: dict[str, list[list[int]]] = {}
-    for representation, tensor in states.items():
+    probe_jobs = [
+        (representation, tensor, step)
+        for representation, tensor in states.items()
+        for step in range(args.latent_steps)
+    ]
+    for representation, tensor, step in tqdm(
+        probe_jobs, desc="Training sender linear probes", unit="probe"
+    ):
         metric_name = (
             "pre_realign" if representation == "hidden_pre_realign" else "post_realign"
         )
-        for step in range(args.latent_steps):
-            accuracy, confusion = _fit_linear_probe(
-                tensor[:, step, :],
-                label_tensor,
-                train_mask,
-                test_mask,
-                seed=args.seed + step,
-                epochs=int(args.probe_epochs),
-            )
-            key = f"probe/{metric_name}/step_{step + 1}/accuracy"
-            metrics[key] = accuracy
-            confusion_matrices[f"{metric_name}_step_{step + 1}"] = confusion
+        accuracy, confusion = _fit_linear_probe(
+            tensor[:, step, :],
+            label_tensor,
+            train_mask,
+            test_mask,
+            seed=args.seed + step,
+            epochs=int(args.probe_epochs),
+        )
+        key = f"probe/{metric_name}/step_{step + 1}/accuracy"
+        metrics[key] = accuracy
+        confusion_matrices[f"{metric_name}_step_{step + 1}"] = confusion
     split = {
         "seed": args.seed,
         "train_template_indices": sorted(train_templates),

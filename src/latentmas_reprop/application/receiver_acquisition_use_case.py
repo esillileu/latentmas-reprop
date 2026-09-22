@@ -11,6 +11,7 @@ from statistics import mean
 from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from ..domain.models import (
     ReceiverAcquisitionMetrics,
@@ -674,7 +675,9 @@ class ReceiverAcquisitionUseCase:
         records: list[ReceiverAcquisitionRecord] = []
         hidden: dict[str, tuple[torch.Tensor, ...]] = {}
         context_runtime = 0.0
-        for index, target in enumerate(samples):
+        for index, target in enumerate(
+            tqdm(samples, desc="Receiver carrier acquisition", unit="sample")
+        ):
             cross = samples[cross_indices[index]] if "cross" in conditions else None
             trace = (
                 self.tracker_port.start_sample_trace(
