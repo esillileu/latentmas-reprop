@@ -368,8 +368,8 @@ class ReceiverAcquisitionUseCase:
                     "task": args.task,
                     "method": args.method,
                     "git_commit": git_hash,
-                    "seed": args.seed,
-                    "latent_steps": args.latent_steps,
+                    "seed": str(args.seed),
+                    "latent_steps": str(args.latent_steps),
                 },
             )
         try:

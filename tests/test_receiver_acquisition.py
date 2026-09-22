@@ -1,9 +1,12 @@
 """CPU-only tests for the secret-digit receiver acquisition protocol."""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
 from latentmas_reprop.application.receiver_acquisition_use_case import (
+    ReceiverAcquisitionUseCase,
     aggregate_receiver_records,
     build_receiver_messages,
     generate_secret_digit_samples,
@@ -18,6 +21,24 @@ from latentmas_reprop.domain.services.kv_cache import (
     truncate_past_kv,
 )
 from run.cli import parse_args
+
+
+class _Tracker:
+    def __init__(self):
+        self.tags = None
+
+    def start_run(self, *, tags, **_kwargs):
+        self.tags = tags
+        raise RuntimeError("stop after run creation")
+
+    def log_params(self, _params):
+        pass
+
+    def log_dict(self, *_args, **_kwargs):
+        pass
+
+    def end_run(self, *_args, **_kwargs):
+        pass
 
 
 def test_secret_digit_samples_are_deterministic_balanced_and_seeded():
@@ -155,6 +176,8 @@ def test_metrics_pair_source_probability_against_same_sample_drop():
     assert metrics.to_mlflow_metrics()["prob_delta/full/own_vs_drop"] == pytest.approx(
         0.5
     )
+    assert "prob/drop/target_mean" in metrics.to_mlflow_metrics()
+    assert all("//" not in key for key in metrics.to_mlflow_metrics())
     assert own.to_dict()["source_digit"] == 2
 
 
@@ -175,3 +198,27 @@ def test_cli_rejects_intervention_and_acquisition_together():
                 "lm_q30.6_secret_digit",
             ]
         )
+
+
+def test_acquisition_mlflow_tags_are_strings():
+    tracker = _Tracker()
+    use_case = ReceiverAcquisitionUseCase(tracker_port=tracker)
+    args = SimpleNamespace(
+        method="latent_mas",
+        task="secret_digit",
+        use_vllm=False,
+        latent_steps=4,
+        tracking_experiment_name="latentmas_receiver_acquisition",
+        acquisition_cross_policy="different_digit_shift_v1",
+        max_samples=2,
+        seed=42,
+        acquisition_conditions=["own", "cross", "drop"],
+        context_modes=["full", "latent_only"],
+        model_name="model",
+    )
+    model = SimpleNamespace()
+    with pytest.raises(RuntimeError, match="stop after run creation"):
+        use_case.execute(model, args)
+    assert tracker.tags is not None
+    assert tracker.tags["seed"] == "42"
+    assert tracker.tags["latent_steps"] == "4"

@@ -354,8 +354,9 @@ class ReceiverAcquisitionMetrics:
         }
         for cell, values in self.cells.items():
             mode, condition = cell.split("/", 1) if "/" in cell else (cell, "")
+            metric_cell = f"{mode}/{condition}" if condition else mode
             if values.get("content_follow_accuracy") is not None:
-                result[f"accuracy/{mode}/{condition}/source_follow"] = float(
+                result[f"accuracy/{metric_cell}/source_follow"] = float(
                     values["content_follow_accuracy"]
                 )
             for source, suffix in (
@@ -364,18 +365,18 @@ class ReceiverAcquisitionMetrics:
                 ("mean_source_margin", "margin"),
             ):
                 if values.get(source) is not None:
-                    result[f"{suffix}/{mode}/{condition}/source_mean"] = float(
+                    result[f"{suffix}/{metric_cell}/source_mean"] = float(
                         values[source]
                     )
             if values.get("mean_target_probability") is not None:
-                result[f"prob/{mode}/{condition}/target_mean"] = float(
+                result[f"prob/{metric_cell}/target_mean"] = float(
                     values["mean_target_probability"]
                 )
             if values.get("mean_candidate_mass") is not None:
-                result[f"prob/{mode}/{condition}/candidate_mass_mean"] = float(
+                result[f"prob/{metric_cell}/candidate_mass_mean"] = float(
                     values["mean_candidate_mass"]
                 )
-            result[f"count/{mode}/{condition}/successful"] = float(
+            result[f"count/{metric_cell}/successful"] = float(
                 values.get("n_successful", 0)
             )
         for cell, value in self.source_probability_delta_vs_drop.items():
