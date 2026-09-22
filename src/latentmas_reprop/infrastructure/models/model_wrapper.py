@@ -5,7 +5,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from ...domain.ports.cache_port import CacheLayer
-from ...domain.ports.model_port import ModelPort
+from ...domain.ports.model_port import ModelPort, NextTokenState
+from ...domain.services.kv_cache import get_past_kv_sequence_length
 from ..cache.manager import ExecutionCacheManager, get_cache_manager
 
 try:
@@ -22,20 +23,6 @@ def _ensure_pad_token(tokenizer: AutoTokenizer) -> None:
             tokenizer.pad_token = tokenizer.eos_token
         else:
             tokenizer.add_special_tokens({"pad_token": "<pad>"})
-
-
-def _past_length(past_key_values: Any) -> int:
-    if past_key_values is None:
-        return 0
-
-    if hasattr(past_key_values, "get_seq_length"):
-        return int(past_key_values.get_seq_length())
-
-    try:
-        k = past_key_values[0][0]
-        return k.shape[-2]
-    except Exception:
-        return 0
 
 
 class ModelWrapper(ModelPort):
@@ -358,7 +345,7 @@ class ModelWrapper(ModelPort):
         prompt_lengths = attention_mask.sum(dim=1).tolist()
 
         if past_key_values is not None:
-            past_len = _past_length(past_key_values)
+            past_len = get_past_kv_sequence_length(past_key_values)
             if past_len > 0:
                 past_mask = torch.ones(
                     (attention_mask.shape[0], past_len),
@@ -398,6 +385,47 @@ class ModelWrapper(ModelPort):
         )["input_ids"].to(self.device)
 
     @torch.no_grad()
+    def forward_next_token_batch(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        *,
+        past_key_values: Any = None,
+        output_hidden_states: bool = False,
+    ) -> NextTokenState:
+        if self.use_vllm:
+            raise RuntimeError(
+                "Next-token state inspection requires the transformers backend"
+            )
+        if input_ids.dim() != 2:
+            raise ValueError("input_ids must be 2D with shape [batch, seq_len]")
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids, device=self.device)
+        if past_key_values is not None:
+            past_len = get_past_kv_sequence_length(past_key_values)
+            if past_len:
+                prefix = torch.ones(
+                    (attention_mask.shape[0], past_len),
+                    dtype=attention_mask.dtype,
+                    device=attention_mask.device,
+                )
+                attention_mask = torch.cat((prefix, attention_mask), dim=-1)
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            use_cache=False,
+            output_hidden_states=output_hidden_states,
+            return_dict=True,
+        )
+        hidden = None
+        if output_hidden_states:
+            hidden = tuple(state[:, -1, :].detach() for state in outputs.hidden_states)
+        return NextTokenState(
+            logits=outputs.logits[:, -1, :].detach(), hidden_states=hidden
+        )
+
+    @torch.no_grad()
     def generate_latent_batch(
         self,
         input_ids: torch.Tensor,
@@ -415,7 +443,7 @@ class ModelWrapper(ModelPort):
             attention_mask = attention_mask.to(self.device)
 
         if past_key_values is not None:
-            past_len = _past_length(past_key_values)
+            past_len = get_past_kv_sequence_length(past_key_values)
             if past_len > 0:
                 past_mask = torch.ones(
                     (attention_mask.shape[0], past_len),
@@ -442,7 +470,7 @@ class ModelWrapper(ModelPort):
             latent_vec = self._apply_latent_realignment(last_hidden, source_model)
             latent_embed = latent_vec.unsqueeze(1)
 
-            past_len = _past_length(past)
+            past_len = get_past_kv_sequence_length(past)
             latent_mask = torch.ones(
                 (latent_embed.shape[0], past_len + 1),
                 dtype=torch.long,
@@ -477,7 +505,7 @@ class ModelWrapper(ModelPort):
         else:
             attention_mask = attention_mask.to(self.HF_device)
         if past_key_values is not None:
-            past_len = _past_length(past_key_values)
+            past_len = get_past_kv_sequence_length(past_key_values)
             if past_len > 0:
                 past_mask = torch.ones(
                     (attention_mask.shape[0], past_len),
@@ -503,7 +531,7 @@ class ModelWrapper(ModelPort):
             source_model = self.HF_model if hasattr(self, "HF_model") else self.model
             latent_vec = self._apply_latent_realignment(last_hidden, source_model)
             latent_embed = latent_vec.unsqueeze(1)
-            past_len = _past_length(past)
+            past_len = get_past_kv_sequence_length(past)
             latent_mask = torch.ones(
                 (latent_embed.shape[0], past_len + 1),
                 dtype=torch.long,

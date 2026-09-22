@@ -29,12 +29,16 @@ from ..domain.ports.cache_port import CacheLayer, CachePort
 from ..domain.ports.dataset_port import DatasetPort
 from ..domain.ports.evaluator_port import EvaluatorPort
 from ..domain.ports.tracking_port import ExperimentTrackerPort
-from ..domain.services.latent_mas import (
-    LatentMASMethod,
+from ..domain.services.kv_cache import (
     clone_past_kv,
     create_zero_past_kv,
+    estimate_past_kv_bytes,
+    get_past_kv_dtype,
+    get_past_kv_num_layers,
+    get_past_kv_sequence_length,
     move_past_kv,
 )
+from ..domain.services.latent_mas import LatentMASMethod
 from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
@@ -127,72 +131,6 @@ def compute_mcnemar_test(b: int, c: int) -> dict[str, Any]:
         "c_own_wrong_other_correct": c,
         "discordant_pairs": n,
     }
-
-
-def get_kv_sequence_length(past_kv: Any) -> int:
-    """Safely obtain sequence length from past KV cache structure."""
-    if past_kv is None:
-        return 0
-    if hasattr(past_kv, "get_seq_length"):
-        return past_kv.get_seq_length()
-    if isinstance(past_kv, (list, tuple)) and len(past_kv) > 0:
-        first_layer = past_kv[0]
-        if isinstance(first_layer, (list, tuple)) and len(first_layer) > 0:
-            tensor = first_layer[0]
-            if hasattr(tensor, "shape") and len(tensor.shape) >= 2:
-                return int(tensor.shape[-2])
-    return 0
-
-
-def get_kv_num_layers(past_kv: Any) -> int:
-    """Return number of KV cache layers."""
-    if past_kv is None:
-        return 0
-    if hasattr(past_kv, "layers"):
-        return len(past_kv.layers)
-    if isinstance(past_kv, (list, tuple)):
-        return len(past_kv)
-    return 0
-
-
-def get_kv_dtype(past_kv: Any) -> str | None:
-    """Return string dtype of first KV tensor, or None."""
-    if past_kv is None:
-        return None
-    if hasattr(past_kv, "layers") and len(past_kv.layers) > 0:
-        layer = past_kv.layers[0]
-        if hasattr(layer, "keys") and torch.is_tensor(layer.keys):
-            return str(layer.keys.dtype)
-    if isinstance(past_kv, (list, tuple)) and len(past_kv) > 0:
-        first = past_kv[0]
-        if isinstance(first, (list, tuple)) and len(first) > 0:
-            t = first[0]
-            if torch.is_tensor(t):
-                return str(t.dtype)
-    return None
-
-
-def estimate_cache_bytes(past_kv: Any) -> int:
-    """Estimate total bytes in KV cache tensors (CPU-side)."""
-    if past_kv is None:
-        return 0
-    total = 0
-    if hasattr(past_kv, "layers"):
-        for layer in past_kv.layers:
-            for attr in ("keys", "values"):
-                t = getattr(layer, attr, None)
-                if torch.is_tensor(t):
-                    total += t.nelement() * t.element_size()
-        return total
-    if isinstance(past_kv, (list, tuple)):
-        for layer in past_kv:
-            if isinstance(layer, (list, tuple)):
-                for t in layer:
-                    if torch.is_tensor(t):
-                        total += t.nelement() * t.element_size()
-            elif torch.is_tensor(layer):
-                total += layer.nelement() * layer.element_size()
-    return total
 
 
 class InterventionUseCase:
@@ -387,8 +325,8 @@ class InterventionUseCase:
             contexts.append(past_kv_cpu)
             traces_list.append(agent_traces[0] if agent_traces else [])
             context_build_latencies.append(t_build)
-            context_seq_lens.append(get_kv_sequence_length(past_kv_cpu))
-            cache_bytes_list.append(estimate_cache_bytes(past_kv_cpu))
+            context_seq_lens.append(get_past_kv_sequence_length(past_kv_cpu))
+            cache_bytes_list.append(estimate_past_kv_bytes(past_kv_cpu))
 
             if save_raw_cache:
                 cache_name = f"latent_{args.task}_{idx}_s{args.seed}.pt"
@@ -424,8 +362,8 @@ class InterventionUseCase:
         condition_tokens: dict[str, list[int]] = {c: [] for c in conditions}
 
         # Cache metadata per layer for first sample
-        _num_layers = get_kv_num_layers(contexts[0]) if contexts else 0
-        _cache_dtype = get_kv_dtype(contexts[0]) if contexts else None
+        _num_layers = get_past_kv_num_layers(contexts[0]) if contexts else 0
+        _cache_dtype = get_past_kv_dtype(contexts[0]) if contexts else None
 
         for i, item in enumerate(tqdm(dataset_iter, desc="Intervention decoding")):
             sample_id = f"sample_{i}"

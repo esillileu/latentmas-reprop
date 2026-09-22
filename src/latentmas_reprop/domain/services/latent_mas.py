@@ -1,11 +1,11 @@
-import copy
 from typing import Any
 
 import torch
 
 from ...infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR, StandardEvaluator
-from ...infrastructure.models.model_wrapper import ModelWrapper, _past_length
+from ...infrastructure.models.model_wrapper import ModelWrapper
 from ..models import default_agents
+from .kv_cache import get_past_kv_sequence_length, truncate_past_kv
 from .prompts import (
     build_agent_message_hierarchical_latent_mas,
     build_agent_message_sequential_latent_mas,
@@ -52,39 +52,6 @@ class LatentMASMethod:
             self.sequential_info_only = True
         self.task = getattr(args, "task", "gsm8k")
         self.evaluator = evaluator or DEFAULT_EVALUATOR
-
-    @staticmethod
-    def _slice_tensor(tensor: torch.Tensor, tokens_to_keep: int) -> torch.Tensor:
-        if tokens_to_keep <= 0:
-            return tensor[..., 0:0, :].contiguous()
-        keep = min(tokens_to_keep, tensor.shape[-2])
-        start = tensor.shape[-2] - keep
-        return tensor[..., start:, :].contiguous()
-
-    def _truncate_past(self, past_kv: Any, tokens_to_keep: int) -> Any:
-        if past_kv is None or tokens_to_keep <= 0:
-            return None
-
-        # Modern Transformers DynamicCache support
-        if hasattr(past_kv, "layers"):
-            for layer in past_kv.layers:
-                if hasattr(layer, "keys") and torch.is_tensor(layer.keys):
-                    layer.keys = self._slice_tensor(layer.keys, tokens_to_keep)
-                if hasattr(layer, "values") and torch.is_tensor(layer.values):
-                    layer.values = self._slice_tensor(layer.values, tokens_to_keep)
-            return past_kv
-
-        trimmed_layers = []
-        for layer in past_kv:
-            if isinstance(layer, tuple):
-                trimmed_layers.append(
-                    tuple(self._slice_tensor(t, tokens_to_keep) for t in layer)
-                )
-            elif torch.is_tensor(layer):
-                trimmed_layers.append(self._slice_tensor(layer, tokens_to_keep))
-            else:
-                trimmed_layers.append(layer)
-        return tuple(trimmed_layers)
 
     @torch.no_grad()
     def build_latent_contexts(self, items: list[dict]) -> tuple[Any, list[list[dict]]]:
@@ -133,7 +100,7 @@ class LatentMASMethod:
                 )
             )
 
-            prev_past_len = _past_length(past_kv)
+            prev_past_len = get_past_kv_sequence_length(past_kv)
 
             if getattr(self.args, "think", False):
                 wrapped_prompts = [f"{prompt}<think>" for prompt in prompts]
@@ -162,10 +129,10 @@ class LatentMASMethod:
                 past_key_values=past_kv,
             )
             if self.sequential_info_only or self.latent_only:
-                new_past_len = _past_length(past_kv)
+                new_past_len = get_past_kv_sequence_length(past_kv)
                 tokens_added = new_past_len - prev_past_len
                 tokens_to_keep = self.latent_steps if self.latent_only else tokens_added
-                past_kv = self._truncate_past(past_kv, tokens_to_keep)
+                past_kv = truncate_past_kv(past_kv, tokens_to_keep)
 
             for idx in range(batch_size):
                 mask = wrapped_mask[idx].bool()
@@ -361,7 +328,7 @@ class LatentMASMethod:
             )
 
             if agent.role != "judger":
-                prev_past_len = _past_length(past_kv)
+                prev_past_len = get_past_kv_sequence_length(past_kv)
 
                 if getattr(self.args, "think", False):
                     wrapped_prompts = [f"{prompt}<think>" for prompt in prompts]
@@ -394,12 +361,12 @@ class LatentMASMethod:
                     )
                 )
                 if self.sequential_info_only or self.latent_only:
-                    new_past_len = _past_length(past_kv)
+                    new_past_len = get_past_kv_sequence_length(past_kv)
                     tokens_added = new_past_len - prev_past_len
                     tokens_to_keep = (
                         self.latent_steps if self.latent_only else tokens_added
                     )
-                    past_kv = self._truncate_past(past_kv, tokens_to_keep)
+                    past_kv = truncate_past_kv(past_kv, tokens_to_keep)
 
                 if self.latent_only:
                     if self.latent_steps > 0:
@@ -529,54 +496,3 @@ class LatentMASMethod:
 
     def run_item(self, item: dict) -> dict:
         return self.run_batch([item])[0]
-
-
-def move_past_kv(past_kv: Any, device: torch.device | str) -> Any:
-    """Move past_kv cache tensors to specified device (e.g. 'cpu' to conserve VRAM)."""
-    if past_kv is None:
-        return None
-    target_device = torch.device(device)
-    if hasattr(past_kv, "layers"):  # Transformers DynamicCache
-        for layer in past_kv.layers:
-            if hasattr(layer, "keys") and torch.is_tensor(layer.keys):
-                layer.keys = layer.keys.to(target_device)
-            if hasattr(layer, "values") and torch.is_tensor(layer.values):
-                layer.values = layer.values.to(target_device)
-        return past_kv
-    if isinstance(past_kv, (tuple, list)):
-        return tuple(
-            tuple(t.to(target_device) for t in layer)
-            if isinstance(layer, (tuple, list))
-            else (layer.to(target_device) if torch.is_tensor(layer) else layer)
-            for layer in past_kv
-        )
-    return past_kv
-
-
-def clone_past_kv(past_kv: Any) -> Any:
-    """Deep-copy past_kv cache to avoid in-place mutations during generation."""
-    if past_kv is None:
-        return None
-    return copy.deepcopy(past_kv)
-
-
-def create_zero_past_kv(past_kv: Any) -> Any:
-    """Create a zero-filled past_kv cache matching the exact shapes, dtypes, and devices."""
-    if past_kv is None:
-        return None
-    cloned = copy.deepcopy(past_kv)
-    if hasattr(cloned, "layers"):
-        for layer in cloned.layers:
-            if hasattr(layer, "keys") and torch.is_tensor(layer.keys):
-                layer.keys.zero_()
-            if hasattr(layer, "values") and torch.is_tensor(layer.values):
-                layer.values.zero_()
-        return cloned
-    if isinstance(cloned, (tuple, list)):
-        return tuple(
-            tuple(torch.zeros_like(t) for t in layer)
-            if isinstance(layer, (tuple, list))
-            else (torch.zeros_like(layer) if torch.is_tensor(layer) else layer)
-            for layer in cloned
-        )
-    return cloned

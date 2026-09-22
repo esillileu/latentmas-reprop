@@ -1,7 +1,14 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 import torch
+
+
+@dataclass(frozen=True)
+class NextTokenState:
+    logits: torch.Tensor
+    hidden_states: tuple[torch.Tensor, ...] | None = None
 
 
 class ModelPort(ABC):
@@ -45,4 +52,16 @@ class ModelPort(ABC):
     @abstractmethod
     def tokenize_text(self, text: str) -> torch.Tensor:
         """Tokenize arbitrary string text into tensor IDs."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def forward_next_token_batch(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        *,
+        past_key_values: Any = None,
+        output_hidden_states: bool = False,
+    ) -> NextTokenState:
+        """Return next-token logits without generation or a new cache."""
         raise NotImplementedError

@@ -13,7 +13,7 @@ Covers:
     - failed experiment leaves failed MLflow record
     - InterventionMetrics to_mlflow_metrics
     - SampleInterventionRecord with new fields
-    - _truncate_past DynamicCache (requested vs actual length)
+    - truncate_past_kv DynamicCache (requested vs actual length)
 """
 
 import contextlib
@@ -26,10 +26,7 @@ from transformers.cache_utils import DynamicCache
 
 from latentmas_reprop.application.intervention_use_case import (
     compute_mcnemar_test,
-    estimate_cache_bytes,
     generate_cross_indices,
-    get_kv_num_layers,
-    get_kv_sequence_length,
 )
 from latentmas_reprop.domain.models import (
     InterventionCondition,
@@ -37,11 +34,14 @@ from latentmas_reprop.domain.models import (
     SampleInterventionRecord,
     compute_sample_key,
 )
-from latentmas_reprop.domain.services.latent_mas import (
-    LatentMASMethod,
+from latentmas_reprop.domain.services.kv_cache import (
     clone_past_kv,
     create_zero_past_kv,
+    estimate_past_kv_bytes,
+    get_past_kv_num_layers,
+    get_past_kv_sequence_length,
     move_past_kv,
+    truncate_past_kv,
 )
 
 # ── generate_cross_indices ────────────────────────────────────────────────────
@@ -117,8 +117,8 @@ def test_drop_ne_zero_semantically():
     zero_ctx = create_zero_past_kv(cache)
     assert drop_ctx is None
     assert zero_ctx is not None
-    assert get_kv_sequence_length(drop_ctx) == 0
-    assert get_kv_sequence_length(zero_ctx) == 8  # same shape as own
+    assert get_past_kv_sequence_length(drop_ctx) == 0
+    assert get_past_kv_sequence_length(zero_ctx) == 8  # same shape as own
 
 
 # ── cache helpers ─────────────────────────────────────────────────────────────
@@ -143,26 +143,26 @@ def test_cache_helpers_dynamic_cache():
     assert zeroed.layers[0].keys.shape == k.shape
 
 
-def test_get_kv_sequence_length():
-    assert get_kv_sequence_length(None) == 0
+def test_get_past_kv_sequence_length():
+    assert get_past_kv_sequence_length(None) == 0
     cache = _make_cache(seq_len=7)
-    assert get_kv_sequence_length(cache) == 7
+    assert get_past_kv_sequence_length(cache) == 7
 
 
-def test_get_kv_num_layers():
+def test_get_past_kv_num_layers():
     cache = DynamicCache()
     # Before any update, layers may be empty
-    assert get_kv_num_layers(None) == 0
+    assert get_past_kv_num_layers(None) == 0
     cache.update(torch.randn(1, 2, 5, 8), torch.randn(1, 2, 5, 8), 0)
     cache.update(torch.randn(1, 2, 5, 8), torch.randn(1, 2, 5, 8), 1)
-    assert get_kv_num_layers(cache) == 2
+    assert get_past_kv_num_layers(cache) == 2
 
 
-def test_estimate_cache_bytes():
+def test_estimate_past_kv_bytes():
     cache = _make_cache(seq_len=8)  # 1 layer, 2 heads, 8 seq, 16 dim
     # keys + values: 2 * (1*2*8*16 * 4 bytes float32)
     expected = 2 * (1 * 2 * 8 * 16 * 4)  # ~8192 bytes
-    actual = estimate_cache_bytes(cache)
+    actual = estimate_past_kv_bytes(cache)
     assert actual == expected
 
 
@@ -172,7 +172,7 @@ def test_estimate_cache_bytes():
 def test_cache_length_metadata_own():
     """For own condition: target == source seq len, delta == 0."""
     cache = _make_cache(seq_len=12)
-    seq_len = get_kv_sequence_length(cache)
+    seq_len = get_past_kv_sequence_length(cache)
     target = seq_len
     src = seq_len  # own: same
     delta = src - target
@@ -184,15 +184,15 @@ def test_cache_length_metadata_cross_delta():
     """For cross condition: delta = source_len - target_len."""
     cache_i = _make_cache(seq_len=10)
     cache_j = _make_cache(seq_len=15)
-    target = get_kv_sequence_length(cache_i)
-    src = get_kv_sequence_length(cache_j)
+    target = get_past_kv_sequence_length(cache_i)
+    src = get_past_kv_sequence_length(cache_j)
     delta = src - target
     assert delta == 5
 
 
 def test_cache_length_metadata_drop():
     """Drop: source_cache_seq_len == 0."""
-    assert get_kv_sequence_length(None) == 0
+    assert get_past_kv_sequence_length(None) == 0
 
 
 # ── stable sample key ─────────────────────────────────────────────────────────
@@ -515,41 +515,19 @@ def test_failed_experiment_calls_end_run_failed():
     tracker.end_run.assert_called_once_with(status="FAILED")
 
 
-# ── _truncate_past DynamicCache (requested vs actual length) ──────────────────
+# ── truncate_past_kv DynamicCache (requested vs actual length) ────────────────
 
 
 def test_truncate_past_requested_vs_actual():
-    """_truncate_past(cache, tokens_to_keep) should result in exactly tokens_to_keep tokens."""
+    """Truncation results in exactly the requested number of tokens."""
     cache = DynamicCache()
     k = torch.arange(20, dtype=torch.float32).view(1, 1, 20, 1)
     v = torch.arange(20, dtype=torch.float32).view(1, 1, 20, 1)
     cache.update(k, v, 0)
-    assert get_kv_sequence_length(cache) == 20
+    assert get_past_kv_sequence_length(cache) == 20
 
-    # Create a LatentMASMethod-like truncation
-    dummy_args = types.SimpleNamespace(
-        latent_only=False,
-        sequential_info_only=False,
-        task="gsm8k",
-        latent_space_realign=False,
-        prompt="sequential",
-        think=False,
-        method="latent_mas",
-        model_name="Qwen/test-model",
-        device="cpu",
-        device2="cpu",
-    )
-    model_mock = MagicMock()
-    model_mock.device = torch.device("cpu")
-
-    method = LatentMASMethod(
-        model=model_mock,
-        latent_steps=4,
-        args=dummy_args,
-    )
-
-    truncated = method._truncate_past(cache, tokens_to_keep=7)
-    actual_len = get_kv_sequence_length(truncated)
+    truncated = truncate_past_kv(cache, tokens_to_keep=7)
+    actual_len = get_past_kv_sequence_length(truncated)
     assert actual_len == 7, f"Expected 7 tokens, got {actual_len}"
     # Verify values: last 7 tokens (indices 13..19)
     assert truncated.layers[0].keys.squeeze()[-1].item() == 19.0
@@ -558,20 +536,5 @@ def test_truncate_past_requested_vs_actual():
 def test_truncate_past_keeps_max_when_small():
     """If tokens_to_keep >= cache length, entire cache is kept."""
     cache = _make_cache(seq_len=5)
-    dummy_args = types.SimpleNamespace(
-        latent_only=False,
-        sequential_info_only=False,
-        task="gsm8k",
-        latent_space_realign=False,
-        prompt="sequential",
-        think=False,
-        method="latent_mas",
-        model_name="Qwen/test-model",
-        device="cpu",
-        device2="cpu",
-    )
-    model_mock = MagicMock()
-    model_mock.device = torch.device("cpu")
-    method = LatentMASMethod(model=model_mock, latent_steps=4, args=dummy_args)
-    result = method._truncate_past(cache, tokens_to_keep=100)
-    assert get_kv_sequence_length(result) == 5
+    result = truncate_past_kv(cache, tokens_to_keep=100)
+    assert get_past_kv_sequence_length(result) == 5
