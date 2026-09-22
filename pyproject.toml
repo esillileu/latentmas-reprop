@@ -69,3 +69,10 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
 docstring-code-format = true
+
+[tool.flck]
+soft = 250
+hard = 300
+
+allow = [
+]

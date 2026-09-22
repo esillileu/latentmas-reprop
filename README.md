@@ -43,6 +43,17 @@ just run -c tm_q30.6_gsm8k
 just run -c bs_q30.6_gsm8k
 ```
 
+Run the secret-digit receiver acquisition experiment (transformers backend only):
+
+```bash
+just run-acquisition -c lm_q30.6_secret_digit
+```
+
+This decomposes full, prompt-only, latent-only, and no-cache digit transfer without
+generating text. The preset also runs a balanced template-disjoint linear probe over
+detached sender latent-step states. Raw KV caches and receiver hidden states remain
+opt-in via `--save_raw_cache` and `--save_hidden_states`.
+
 ### 3. Developer Commands
 ```bash
 just test        # Run test suite
