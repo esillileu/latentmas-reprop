@@ -49,8 +49,9 @@ Run the secret-digit receiver acquisition experiment (transformers backend only)
 just run-acquisition -c lm_q30.6_secret_digit
 ```
 
-This records full-cache, latent-only, cross-sender, and no-cache next-token digit
-probabilities without generating text. Raw KV caches and receiver hidden states are
+This decomposes full, prompt-only, latent-only, and no-cache digit transfer without
+generating text. The preset also runs a balanced template-disjoint linear probe over
+detached sender latent-step states. Raw KV caches and receiver hidden states remain
 opt-in via `--save_raw_cache` and `--save_hidden_states`.
 
 ### 3. Developer Commands

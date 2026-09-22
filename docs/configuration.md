@@ -55,6 +55,12 @@ Receiver acquisition additionally accepts `acquisition`, `context_modes`,
 `save_raw_cache`. The canonical preset is `lm_q30.6_secret_digit.yaml`; it requires
 `task: secret_digit`, the transformers backend, and a positive `latent_steps` value.
 
+The canonical secret-digit carrier modes are `full`, `prompt_only`, and
+position-preserving `latent_only`. `drop_position_matched` isolates absolute-position
+effects without retaining KV content. The same preset can enable the template-disjoint
+sender-state probe with `probe_sender_latents`, `probe_prompt_templates`,
+`probe_train_template_fraction`, and `save_latent_states`.
+
 ---
 
 ## 3. Example Presets

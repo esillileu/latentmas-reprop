@@ -63,9 +63,12 @@ logits directly:
 just run-acquisition -c lm_q30.6_secret_digit
 ```
 
-Its default matrix is `full,latent_only` × `own,cross`, plus one `drop` forward per
-sample. Override subsets with `--context_modes` and `--acquisition_conditions`.
+Its default matrix decomposes `full`, `prompt_only`, and position-preserving
+`latent_only` carriers under `own,cross`, plus `drop` and `drop_position_matched`.
+Override subsets with `--carrier_modes` and `--acquisition_conditions`.
 Hidden states and raw sender caches are only persisted when explicitly enabled.
+The preset also runs a balanced, template-disjoint linear probe over detached sender
+pre/post-realignment latent-step states.
 
 Any option defined in a config file can be overridden directly from the command line:
 

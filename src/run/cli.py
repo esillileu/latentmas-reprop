@@ -205,9 +205,13 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         help="Run the secret-digit receiver acquisition experiment.",
     )
     parser.add_argument(
+        "--carrier_modes",
         "--context_modes",
+        dest="carrier_modes",
         type=str,
-        default=defaults.get("context_modes", "full,latent_only"),
+        default=defaults.get(
+            "carrier_modes", defaults.get("context_modes", "full,latent_only")
+        ),
     )
     parser.add_argument(
         "--acquisition_conditions",
@@ -223,6 +227,31 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         "--save_hidden_states",
         action="store_true",
         default=defaults.get("save_hidden_states", False),
+    )
+    parser.add_argument(
+        "--probe_sender_latents",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("probe_sender_latents", False),
+    )
+    parser.add_argument(
+        "--probe_prompt_templates",
+        type=int,
+        default=defaults.get("probe_prompt_templates", 20),
+    )
+    parser.add_argument(
+        "--probe_train_template_fraction",
+        type=float,
+        default=defaults.get("probe_train_template_fraction", 0.75),
+    )
+    parser.add_argument(
+        "--probe_epochs",
+        type=int,
+        default=defaults.get("probe_epochs", 200),
+    )
+    parser.add_argument(
+        "--save_latent_states",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.get("save_latent_states", True),
     )
 
     return parser
@@ -271,9 +300,20 @@ def parse_args(args=None) -> argparse.Namespace:
             parser.error(f"--{name} contains invalid values: {sorted(unknown)}")
         return values
 
-    parsed.context_modes = normalize_csv("context_modes", {"full", "latent_only"})
+    parsed.carrier_modes = normalize_csv(
+        "carrier_modes",
+        {
+            "full",
+            "prompt_only",
+            "latent_only",
+            "latent_only_position_fixed",
+            "latent_only_compact_debug",
+        },
+    )
+    parsed.context_modes = parsed.carrier_modes
     parsed.acquisition_conditions = normalize_csv(
-        "acquisition_conditions", {"own", "cross", "drop"}
+        "acquisition_conditions",
+        {"own", "cross", "drop", "drop_position_matched"},
     )
     if parsed.intervention and parsed.acquisition:
         parser.error("--intervention and --acquisition are mutually exclusive")
@@ -293,5 +333,7 @@ def parse_args(args=None) -> argparse.Namespace:
             )
         if "cross" in parsed.acquisition_conditions and parsed.max_samples < 2:
             parser.error("cross acquisition requires at least two samples")
+        if not 0.0 < parsed.probe_train_template_fraction < 1.0:
+            parser.error("--probe_train_template_fraction must be between 0 and 1")
 
     return parsed
