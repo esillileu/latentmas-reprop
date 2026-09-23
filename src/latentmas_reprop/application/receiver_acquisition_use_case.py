@@ -119,6 +119,7 @@ class ReceiverAcquisitionUseCase:
                 self.tracker_port.log_params(
                     {
                         "model": args.model_name,
+                        "config_path": args.config_path,
                         "task": args.task,
                         "sample_count": len(samples),
                         "method": args.method,
