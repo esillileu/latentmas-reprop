@@ -1,6 +1,7 @@
 method: latent_mas
 model_name:
   - Qwen/Qwen3-0.6B
+  - Qwen/Qwen3-4B
   - Qwen/Qwen3-8B
 task: secret_digit
 max_samples: 100
