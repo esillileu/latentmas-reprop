@@ -38,17 +38,21 @@ Configurations are stored in [`configs/`](../configs/) using the format:
 Examples:
 ```bash
 # Run LatentMAS on GSM8K using Qwen3-0.6B
-just run -c lm_q30.6_gsm8k
+just run -c lmas/reprop/lm_gsm8k
 
-# Run TextMAS on GSM8K
-just run -c tm_q30.6_gsm8k
+# Run the TextMAS and baseline matrix on GSM8K
+just run -c lmas/reprop/bs_gsm8k
 
 # Run Single-Agent Baseline on GSM8K
 just run -c bs_q30.6_gsm8k
 ```
 
 > [!TIP]
-> You do not need to append `.yaml` or provide the full path. `-c lm_q30.6_gsm8k` will automatically resolve against `configs/lm_q30.6_gsm8k.yaml`. Full paths or arbitrary YAML files can also be passed.
+> You do not need to append `.yaml` or provide the full path. `-c lmas/reprop/lm_gsm8k`
+> resolves against `configs/lmas/reprop/lm_gsm8k.yaml`, and nested presets such as
+> `-c lmas/secret_digit/preflight` resolve against
+> `configs/lmas/secret_digit/preflight.yaml`. Full paths or arbitrary YAML files can
+> also be passed.
 
 ---
 
@@ -60,7 +64,8 @@ The synthetic secret-digit experiment uses the transformers KV cache and next-to
 logits directly:
 
 ```bash
-just run-acquisition -c lm_q30.6_secret_digit
+just run-acquisition -c lmas/secret_digit/preflight \
+  --model_name Qwen/Qwen3-0.6B --latent_steps 4
 ```
 
 Its default matrix decomposes `full`, `prompt_only`, and position-preserving
@@ -99,13 +104,13 @@ Any option defined in a config file can be overridden directly from the command 
 
 ```bash
 # Override the number of evaluated samples:
-just run -c lm_q30.6_gsm8k --max_samples 10
+just run -c lmas/reprop/lm_gsm8k --max_samples 10
 
 # Override temperature and generation batch size:
-just run -c lm_q30.6_gsm8k --temperature 0.7 --generate_bs 2
+just run -c lmas/reprop/lm_gsm8k --temperature 0.7 --generate_bs 2
 
 # Enable latent space realignment on top of the preset:
-just run -c lm_q30.6_gsm8k --latent_space_realign
+just run -c lmas/reprop/lm_gsm8k --latent_space_realign
 ```
 
 ---

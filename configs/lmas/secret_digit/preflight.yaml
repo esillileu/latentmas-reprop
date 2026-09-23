@@ -1,8 +1,13 @@
 method: latent_mas
-model_name: Qwen/Qwen3-8B
+model_name:
+  - Qwen/Qwen3-0.6B
+  - Qwen/Qwen3-8B
 task: secret_digit
 max_samples: 100
-latent_steps: 4
+latent_steps:
+  - 1
+  - 4
+  - 20
 seed: 42
 device: cuda
 acquisition: true

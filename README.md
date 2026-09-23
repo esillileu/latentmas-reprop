@@ -33,20 +33,21 @@ Run experiments directly with `just run -c <preset>`:
 
 ```bash
 # Run LatentMAS preset on GSM8K
-just run -c lm_q30.6_gsm8k
+just run -c lmas/reprop/lm_gsm8k
 
 # Run with option overrides
-just run -c lm_q30.6_gsm8k --max_samples 10 --generate_bs 2
+just run -c lmas/reprop/lm_gsm8k --max_samples 10 --generate_bs 2
 
-# Run TextMAS or Baseline
-just run -c tm_q30.6_gsm8k
+# Run the TextMAS and baseline matrix
+just run -c lmas/reprop/bs_gsm8k
 just run -c bs_q30.6_gsm8k
 ```
 
 Run the secret-digit receiver acquisition experiment (transformers backend only):
 
 ```bash
-just run-acquisition -c lm_q30.6_secret_digit
+just run-acquisition -c lmas/secret_digit/preflight \
+  --model_name Qwen/Qwen3-0.6B --latent_steps 4
 ```
 
 This decomposes full, prompt-only, latent-only, and no-cache digit transfer without
@@ -60,7 +61,7 @@ Saved states can be analyzed without loading a model:
 ```bash
 just analyze-sender-probe \
   --states .cache/evaluation/receiver_acquisition/sender_latent_states.pt \
-  --source-config configs/lm_q30.6_secret_digit.yaml
+  --source-config configs/lmas/secret_digit/preflight.yaml
 ```
 
 Replace a legacy MLflow acquisition run while preserving its acquisition metrics,

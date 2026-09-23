@@ -39,21 +39,19 @@ class _Tracker:
 def acquisition_config_path(tmp_path):
     path = tmp_path / "secret_digit.yaml"
     path.write_text(
-        "\n".join(
-            (
-                "method: latent_mas",
-                "model_name: Qwen/Qwen3-0.6B",
-                "task: secret_digit",
-                "max_samples: 100",
-                "latent_steps: 4",
-                "acquisition: true",
-                "carrier_modes: full,prompt_only,latent_only",
-                "acquisition_conditions: own,cross,drop,drop_position_matched",
-                "tracking_experiment_name: latentmas_receiver_acquisition",
-                "probe_sender_latents: true",
-                "probe_prompt_templates: 20",
-            )
-        ),
+        "\n".join((
+            "method: latent_mas",
+            "model_name: Qwen/Qwen3-0.6B",
+            "task: secret_digit",
+            "max_samples: 100",
+            "latent_steps: 4",
+            "acquisition: true",
+            "carrier_modes: full,prompt_only,latent_only",
+            "acquisition_conditions: own,cross,drop,drop_position_matched",
+            "tracking_experiment_name: latentmas_receiver_acquisition",
+            "probe_sender_latents: true",
+            "probe_prompt_templates: 20",
+        )),
         encoding="utf-8",
     )
     return str(path)
@@ -139,14 +137,12 @@ def test_cli_routes_canonical_acquisition_preset(acquisition_config_path):
 
 def test_cli_rejects_intervention_and_acquisition_together(acquisition_config_path):
     with pytest.raises(SystemExit):
-        parse_args(
-            [
-                "--intervention",
-                "--acquisition",
-                "-c",
-                acquisition_config_path,
-            ]
-        )
+        parse_args([
+            "--intervention",
+            "--acquisition",
+            "-c",
+            acquisition_config_path,
+        ])
 
 
 def test_acquisition_mlflow_tags_are_strings():
