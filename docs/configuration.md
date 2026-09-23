@@ -59,7 +59,11 @@ The canonical secret-digit carrier modes are `full`, `prompt_only`, and
 position-preserving `latent_only`. `drop_position_matched` isolates absolute-position
 effects without retaining KV content. The same preset can enable the template-disjoint
 sender-state probe with `probe_sender_latents`, `probe_prompt_templates`,
-`probe_train_template_fraction`, and `save_latent_states`.
+`probe_folds`, `probe_permutations`, `probe_backend`, `probe_batch_size`, and
+`save_latent_states`. The canonical GPU backend is `torch`; it fits independent
+L2-regularized multinomial classifiers in permutation batches. The default batch size
+is 256, which is conservative for 32 GB VRAM and can be overridden for a particular
+GPU. CUDA OOM automatically retries with half the batch size.
 
 ---
 

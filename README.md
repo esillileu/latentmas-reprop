@@ -50,9 +50,32 @@ just run-acquisition -c lm_q30.6_secret_digit
 ```
 
 This decomposes full, prompt-only, latent-only, and no-cache digit transfer without
-generating text. The preset also runs a balanced template-disjoint linear probe over
-detached sender latent-step states. Raw KV caches and receiver hidden states remain
-opt-in via `--save_raw_cache` and `--save_hidden_states`.
+generating text. Sender states are collected with frozen-model inference and analyzed
+with grouped five-fold logistic regression plus max-statistic permutation correction.
+GPU analysis batches independent permutation classifiers with PyTorch; no model
+inference is needed when reanalyzing saved states.
+
+Saved states can be analyzed without loading a model:
+
+```bash
+just analyze-sender-probe \
+  --states .cache/evaluation/receiver_acquisition/sender_latent_states.pt \
+  --source-config configs/lm_q30.6_secret_digit.yaml
+```
+
+Replace a legacy MLflow acquisition run while preserving its acquisition metrics,
+artifacts, timestamps, and traces:
+
+```bash
+just analyze-sender-probe \
+  --source-run-id RUN_ID \
+  --replace-source-run \
+  --backend torch \
+  --permutations 5000 \
+  --batch-size 256
+```
+
+The replacement is created and verified before the legacy run is soft-deleted.
 
 ### 3. Developer Commands
 ```bash

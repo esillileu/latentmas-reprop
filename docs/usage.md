@@ -67,8 +67,33 @@ Its default matrix decomposes `full`, `prompt_only`, and position-preserving
 `latent_only` carriers under `own,cross`, plus `drop` and `drop_position_matched`.
 Override subsets with `--carrier_modes` and `--acquisition_conditions`.
 Hidden states and raw sender caches are only persisted when explicitly enabled.
-The preset also runs a balanced, template-disjoint linear probe over detached sender
-pre/post-realignment latent-step states.
+The preset saves detached sender states and uses grouped five-fold logistic regression
+with 5,000 within-template permutations. Reanalyze states without model inference
+with:
+
+```bash
+just analyze-sender-probe --states PATH --source-config CONFIG
+MLFLOW_TRACKING_URI=URI just analyze-sender-probe \
+  --source-run-id RUN_ID --source-artifact-path probe/sender_latent_states.pt
+```
+
+To replace a legacy run containing the invalid single-split probe, use:
+
+```bash
+MLFLOW_TRACKING_URI=URI just analyze-sender-probe \
+  --source-run-id RUN_ID \
+  --replace-source-run \
+  --backend torch \
+  --permutations 5000 \
+  --batch-size 256
+```
+
+The command copies all non-probe parameters and metric histories, acquisition
+artifacts, original start/end timestamps, and trace links into a replacement run. It
+then records canonical `probe/results.json` and `probe/null_statistics.json`, verifies
+trace ownership, and only then soft-deletes the legacy run. Progress and ETA are
+printed after every permutation batch. Larger batches are not necessarily faster for
+joint batched L-BFGS, so 256 remains the default even on a 32 GB GPU.
 
 Any option defined in a config file can be overridden directly from the command line:
 
@@ -114,6 +139,7 @@ just --list
 | `just run <options>` | Execute benchmark runner (`uv run python -m src.run <args>`) |
 | `just run-intervention <options>` | Execute the latent-cache intervention harness |
 | `just run-acquisition <options>` | Execute secret-digit receiver acquisition |
+| `just analyze-sender-probe <options>` | Analyze saved sender states without inference |
 | `just test` | Run the complete pytest test suite |
 | `just lint` | Run Ruff linter checks |
 | `just format` | Format code using Ruff formatter |
