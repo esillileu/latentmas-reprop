@@ -116,12 +116,12 @@ def forward_receiver_observation(
         retained_start = 0
         retained_end = cache_seq_len
         retained_tail_len = cache_seq_len
-    elif mode == "latent_only_position_fixed":
+    elif mode == "latent_only":
         receiver_position_start = original_full_seq_len
         retained_start = original_full_seq_len - cache_seq_len
         retained_end = original_full_seq_len
         retained_tail_len = cache_seq_len
-    elif mode in {"latent_only", "latent_only_compact_debug"}:
+    elif mode == "latent_only_compact_debug":
         receiver_position_start = cache_seq_len
         retained_start = original_full_seq_len - cache_seq_len
         retained_end = original_full_seq_len

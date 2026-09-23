@@ -152,7 +152,6 @@ def validate_intervention_and_acquisition_args(
             "full",
             "prompt_only",
             "latent_only",
-            "latent_only_position_fixed",
             "latent_only_compact_debug",
         },
     )

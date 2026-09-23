@@ -27,7 +27,6 @@ def _resolve_condition_cache(
         return None
     if mode in {
         "latent_only",
-        "latent_only_position_fixed",
         "latent_only_compact_debug",
     }:
         return bundle.latent_only

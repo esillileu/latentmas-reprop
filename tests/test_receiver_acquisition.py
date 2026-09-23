@@ -5,6 +5,9 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from latentmas_reprop.application.receiver_acquisition.forward import (
+    forward_receiver_observation,
+)
 from latentmas_reprop.application.receiver_acquisition_use_case import (
     ReceiverAcquisitionUseCase,
     aggregate_receiver_records,
@@ -30,6 +33,30 @@ class _Tracker:
 
     def end_run(self, *_args, **_kwargs):
         pass
+
+
+@pytest.fixture
+def acquisition_config_path(tmp_path):
+    path = tmp_path / "secret_digit.yaml"
+    path.write_text(
+        "\n".join(
+            (
+                "method: latent_mas",
+                "model_name: Qwen/Qwen3-0.6B",
+                "task: secret_digit",
+                "max_samples: 100",
+                "latent_steps: 4",
+                "acquisition: true",
+                "carrier_modes: full,prompt_only,latent_only",
+                "acquisition_conditions: own,cross,drop,drop_position_matched",
+                "tracking_experiment_name: latentmas_receiver_acquisition",
+                "probe_sender_latents: true",
+                "probe_prompt_templates: 20",
+            )
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
 
 
 def _record(condition="own", mode="full", source_digit=2, source_prob=0.7):
@@ -96,8 +123,8 @@ def test_metrics_pair_source_probability_against_same_sample_drop():
     assert own.to_dict()["source_digit"] == 2
 
 
-def test_cli_routes_canonical_acquisition_preset():
-    args = parse_args(["--acquisition", "-c", "lm_q30.6_secret_digit"])
+def test_cli_routes_canonical_acquisition_preset(acquisition_config_path):
+    args = parse_args(["--acquisition", "-c", acquisition_config_path])
     assert args.acquisition
     assert args.carrier_modes == ["full", "prompt_only", "latent_only"]
     assert args.context_modes == args.carrier_modes
@@ -110,14 +137,14 @@ def test_cli_routes_canonical_acquisition_preset():
     assert args.probe_sender_latents
 
 
-def test_cli_rejects_intervention_and_acquisition_together():
+def test_cli_rejects_intervention_and_acquisition_together(acquisition_config_path):
     with pytest.raises(SystemExit):
         parse_args(
             [
                 "--intervention",
                 "--acquisition",
                 "-c",
-                "lm_q30.6_secret_digit",
+                acquisition_config_path,
             ]
         )
 
@@ -198,3 +225,63 @@ def test_next_token_forward_preserves_requested_receiver_position_start():
         position_start=38,
     )
     assert wrapper.model.position_ids.tolist() == [[38, 39, 40]]
+
+
+class _ReceiverModel:
+    device = torch.device("cpu")
+
+    def __init__(self):
+        self.position_start = None
+        self.tokenizer = SimpleNamespace(
+            convert_ids_to_tokens=str,
+            decode=lambda token_ids: str(token_ids[0]),
+        )
+
+    def forward_next_token_batch(self, *_args, position_start, **_kwargs):
+        self.position_start = position_start
+        return SimpleNamespace(logits=torch.zeros(1, 20), hidden_states=None)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_position_start"),
+    [("latent_only", 38), ("latent_only_compact_debug", 4)],
+)
+def test_latent_only_preserves_positions_unless_compact_debug(
+    mode, expected_position_start
+):
+    model = _ReceiverModel()
+    sample = SimpleNamespace(
+        sample_id="sample", sample_index=0, sample_key="key", digit=1
+    )
+    cache = ((torch.zeros(1, 1, 4, 1), torch.zeros(1, 1, 4, 1)),)
+    mapping = {
+        "candidates": {
+            str(digit): {"contextual_token_id": digit} for digit in range(10)
+        }
+    }
+    args = SimpleNamespace(
+        save_hidden_states=False,
+        seed=42,
+        model_name="model",
+        task="secret_digit",
+        latent_steps=4,
+    )
+
+    record, _ = forward_receiver_observation(
+        model=model,
+        args=args,
+        target=sample,
+        source=sample,
+        mode=mode,
+        condition="own",
+        cache=cache,
+        receiver_ids=torch.ones(1, 3, dtype=torch.long),
+        receiver_mask=torch.ones(1, 3, dtype=torch.long),
+        mapping=mapping,
+        original_full_seq_len=38,
+        tracker_port=None,
+    )
+
+    assert record.error is None
+    assert record.receiver_position_start == expected_position_start
+    assert model.position_start == expected_position_start
