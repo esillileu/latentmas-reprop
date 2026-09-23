@@ -23,6 +23,11 @@
 - 오류가 난 환경 문제 원인과 권장 해결방안을 제시
 - 사용자 명시 없이는 환경 변경 금지, 특히 *.lock 종류 파일은 변경 금지
 
+### 4. 모든 Python 명령은 `uv`로 실행
+- Python 스크립트, 모듈, 테스트 및 일회성 명령은 반드시 `uv run python`,
+  `uv run pytest`처럼 `uv run`을 통해 실행합니다.
+- 시스템의 `python` 또는 `python3` 명령을 직접 실행하지 않습니다.
+
 ---
 
 ## 📚 프로젝트 문서 인덱스 및 요약 (Documentation Index)

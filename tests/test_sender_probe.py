@@ -1,8 +1,11 @@
 """Tests for grouped sender-state probe analysis."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import torch
 
+import latentmas_reprop.application.sender_probe.replacement as replacement_module
 from latentmas_reprop.application.sender_probe import (
     ProbeAnalysisConfig,
     analyze_sender_states,
@@ -11,6 +14,7 @@ from latentmas_reprop.application.sender_probe.folds import grouped_folds
 from latentmas_reprop.application.sender_probe.replacement import (
     LEGACY_PROBE_PARAMS,
     _analysis_params,
+    _replacement_params,
     _without_probe_results,
 )
 from latentmas_reprop.application.sender_probe.torch_solver import (
@@ -87,6 +91,84 @@ def test_replacement_does_not_restore_legacy_probe_parameters():
         },
     )
     assert params.keys().isdisjoint(LEGACY_PROBE_PARAMS)
+
+
+def test_replacement_overwrites_analysis_parameters_without_duplicates():
+    params = _replacement_params(
+        {
+            "model_name": "Qwen/Qwen3-0.6B",
+            "probe_sender_latents": "True",
+            "probe_backend": "auto",
+            "probe_permutations": "5000",
+        },
+        {"probe_backend": "sklearn", "probe_permutations": 1},
+    )
+    values = {param.key: param.value for param in params}
+
+    assert len(params) == len(values)
+    assert values == {
+        "model_name": "Qwen/Qwen3-0.6B",
+        "probe_backend": "sklearn",
+        "probe_permutations": "1",
+    }
+
+
+def test_replacement_soft_deletes_source_without_unlinking_traces(monkeypatch):
+    source = SimpleNamespace(
+        info=SimpleNamespace(
+            run_id="source", experiment_id="experiment", start_time=1, end_time=2
+        ),
+        data=SimpleNamespace(tags={}, params={}, metrics={}),
+    )
+    copied = SimpleNamespace(data=SimpleNamespace(params={}, metrics={}))
+
+    class Client:
+        deleted_run_id = None
+
+        def get_run(self, run_id):
+            return source if run_id == "source" else copied
+
+        def create_run(self, *args, **kwargs):
+            return SimpleNamespace(info=SimpleNamespace(run_id="replacement"))
+
+        def link_traces_to_run(self, trace_ids, run_id):
+            assert trace_ids == ["trace"]
+            assert run_id == "replacement"
+
+        def set_terminated(self, *args, **kwargs):
+            pass
+
+        def list_artifacts(self, run_id, path):
+            return [
+                SimpleNamespace(path="probe/null_statistics.json"),
+                SimpleNamespace(path="probe/results.json"),
+                SimpleNamespace(path="probe/sender_latent_states.pt"),
+            ]
+
+        def delete_run(self, run_id):
+            self.deleted_run_id = run_id
+
+    client = Client()
+    monkeypatch.setattr(
+        replacement_module.mlflow.artifacts,
+        "download_artifacts",
+        lambda **kwargs: "/tmp/sender_latent_states.pt",
+    )
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        replacement_module, "analyze_sender_states", lambda *args: ({}, {})
+    )
+    monkeypatch.setattr(replacement_module, "_populate_replacement", lambda *args: None)
+    monkeypatch.setattr(
+        replacement_module, "_trace_ids", lambda *args: ["trace"]
+    )
+
+    replacement_id = replacement_module.replace_probe_run(
+        "source", ProbeAnalysisConfig(), client=client
+    )
+
+    assert replacement_id == "replacement"
+    assert client.deleted_run_id == "source"
 
 
 def test_batched_solver_matches_independent_fits():

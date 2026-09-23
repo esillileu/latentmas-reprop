@@ -76,6 +76,19 @@ def _analysis_params(
     }
 
 
+def _replacement_params(
+    source_params: dict[str, str], settings: dict[str, Any]
+) -> list[Param]:
+    replaced = LEGACY_PROBE_PARAMS | settings.keys()
+    params = [
+        Param(key, value)
+        for key, value in source_params.items()
+        if key not in replaced
+    ]
+    params.extend(Param(key, str(value)) for key, value in settings.items())
+    return params
+
+
 def replace_probe_run(
     source_run_id: str,
     config: ProbeAnalysisConfig,
@@ -157,8 +170,6 @@ def replace_probe_run(
             replacement_traces = _trace_ids(client, replacement_id, experiment_id)
             if set(replacement_traces) != set(traces):
                 raise RuntimeError("replacement trace verification failed")
-            if traces:
-                client.unlink_traces_from_run(traces, source_run_id)
             client.delete_run(source_run_id)
             return replacement_id
         except Exception:
@@ -176,13 +187,8 @@ def _populate_replacement(
     statistics: dict[str, Any],
 ) -> None:
     analysis = results["analysis"]
-    params = [
-        Param(key, value)
-        for key, value in source.data.params.items()
-        if key not in LEGACY_PROBE_PARAMS
-    ]
     settings = _analysis_params(config, analysis)
-    params.extend(Param(key, str(value)) for key, value in settings.items())
+    params = _replacement_params(source.data.params, settings)
     metrics = []
     for key in source.data.metrics:
         if not key.startswith("probe/"):
