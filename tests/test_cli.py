@@ -6,6 +6,25 @@ except ModuleNotFoundError:
     from run.cli import parse_args
 
 
+@pytest.fixture
+def config_path(tmp_path):
+    path = tmp_path / "benchmark.yaml"
+    path.write_text(
+        "\n".join(
+            (
+                "method: latent_mas",
+                "model_name: Qwen/Qwen3-0.6B",
+                "task: gsm8k",
+                "prompt: sequential",
+                "max_samples: 5",
+                "latent_steps: 4",
+            )
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 def test_parse_args_latent_mas():
     args = parse_args(
         [
@@ -52,9 +71,8 @@ def test_parse_args_baseline():
     assert args.model_name == "Qwen/Qwen3-0.6B"
 
 
-def test_parse_args_config_preset():
-    # Load defaults from configs/lm_q30.6_gsm8k.yaml using --config
-    args = parse_args(["--config", "lm_q30.6_gsm8k"])
+def test_parse_args_config_preset(config_path):
+    args = parse_args(["--config", config_path])
     assert args.method == "latent_mas"
     assert args.model_name == "Qwen/Qwen3-0.6B"
     assert args.task == "gsm8k"
@@ -63,12 +81,12 @@ def test_parse_args_config_preset():
     assert args.latent_steps == 4
 
 
-def test_parse_args_config_with_override():
+def test_parse_args_config_with_override(config_path):
     # Override max_samples and temperature using -c
     args = parse_args(
         [
             "-c",
-            "lm_q30.6_gsm8k",
+            config_path,
             "--max_samples",
             "20",
             "--temperature",
@@ -81,9 +99,9 @@ def test_parse_args_config_with_override():
     assert args.latent_steps == 4
 
 
-def test_parse_args_template_alias():
+def test_parse_args_template_alias(config_path):
     # Verify --template alias still works
-    args = parse_args(["--template", "lm_q30.6_gsm8k"])
+    args = parse_args(["--template", config_path])
     assert args.method == "latent_mas"
 
 

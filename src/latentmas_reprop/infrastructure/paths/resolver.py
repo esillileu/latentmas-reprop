@@ -126,11 +126,11 @@ class PathResolver:
         if candidate.is_file():
             return candidate.resolve()
 
-        candidate_yaml = self.configs_dir / f"{p.name}.yaml"
+        candidate_yaml = self.configs_dir / f"{p}.yaml"
         if candidate_yaml.is_file():
             return candidate_yaml.resolve()
 
-        candidate_yml = self.configs_dir / f"{p.name}.yml"
+        candidate_yml = self.configs_dir / f"{p}.yml"
         if candidate_yml.is_file():
             return candidate_yml.resolve()
 
