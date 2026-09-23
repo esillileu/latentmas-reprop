@@ -7,10 +7,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from latentmas_reprop.application.benchmark_results import (
-    BenchmarkRunStore,
-    build_run_id,
-)
+from latentmas_reprop.application.benchmark import BenchmarkRunStore, build_run_id
 from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
 from latentmas_reprop.application.intervention_use_case import InterventionUseCase
 from latentmas_reprop.application.receiver_acquisition_use_case import (

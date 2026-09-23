@@ -4,12 +4,9 @@ import argparse
 
 import torch
 
-from latentmas_reprop.application.benchmark_results import (
-    BenchmarkRunStore,
-    build_run_id,
-)
+from latentmas_reprop.application.benchmark import BenchmarkRunStore, build_run_id
+from latentmas_reprop.application.benchmark.evaluation import summarize_predictions
 from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
-from latentmas_reprop.application.evaluation_service import summarize_predictions
 from latentmas_reprop.domain.models import compute_sample_key
 from latentmas_reprop.domain.services.latent_mas import LatentMASMethod
 from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager

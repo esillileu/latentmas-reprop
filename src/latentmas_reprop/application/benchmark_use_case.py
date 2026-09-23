@@ -15,7 +15,7 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
-from .benchmark_results import (
+from .benchmark import (
     BenchmarkRunStore,
     build_metrics,
     build_run_id,
