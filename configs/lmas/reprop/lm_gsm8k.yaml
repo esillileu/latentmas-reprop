@@ -1,9 +1,12 @@
+# Table 1 LatentMAS matrix: Qwen3-4B and Qwen3-8B, sequential GSM8K.
+# latent_steps 0 is a separate diagnostic preset. Qwen3-14B is lm_gsm8k_14b.yaml.
+# The paper does not state which of 10/20/40 was used for each Table 1 cell.
 method: latent_mas
 model_name:
-  - Qwen/Qwen3-0.6B
+  - Qwen/Qwen3-4B
   - Qwen/Qwen3-8B
-  - Qwen/Qwen3-14B
 task: gsm8k
+split: test
 prompt: sequential
 max_samples: -1
 generate_bs: 1
@@ -14,5 +17,8 @@ latent_steps:
 max_new_tokens: 2048
 temperature: 0.6
 top_p: 0.95
-device: cuda
 seed: 42
+device: cuda
+use_vllm: false
+latent_space_realign: false
+think: false

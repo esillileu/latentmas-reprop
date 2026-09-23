@@ -1,0 +1,20 @@
+# Separate Qwen3-14B GSM8K run, kept out of the 4B/8B matrix.
+# This file uses 20 latent steps, the example published in an early README.
+# Issue 20 of Gen-Verse/LatentMAS instead specifies --latent_steps 10 --think.
+# think stays false here so the run matches the shared reproduction settings.
+method: latent_mas
+model_name: Qwen/Qwen3-14B
+task: gsm8k
+split: test
+prompt: sequential
+max_samples: -1
+generate_bs: 1
+latent_steps: 20
+max_new_tokens: 2048
+temperature: 0.6
+top_p: 0.95
+seed: 42
+device: cuda
+use_vllm: false
+latent_space_realign: false
+think: false

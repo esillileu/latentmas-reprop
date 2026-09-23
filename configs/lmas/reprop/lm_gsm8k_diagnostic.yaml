@@ -1,7 +1,7 @@
-# Table 1 Single and TextMAS matrix: Qwen3-4B and Qwen3-8B, sequential GSM8K.
-method:
-  - baseline
-  - text_mas
+# Diagnostic only. Not a Table 1 cell.
+# latent_steps 0 still runs the non-judger prompts, then drops their KV cache
+# before the judger. It is not "LatentMAS with no latent iterations".
+method: latent_mas
 model_name:
   - Qwen/Qwen3-4B
   - Qwen/Qwen3-8B
