@@ -10,11 +10,10 @@ from .prompts import (
     build_agent_message_hierarchical_latent_mas,
     build_agent_message_sequential_latent_mas,
 )
+from .token_counts import attach_token_counts
 
 
 class LatentMASMethod:
-    """Latent Multi-Agent System (LatentMAS) method with latent KV cache communication."""
-
     def __init__(
         self,
         model: ModelWrapper,
@@ -92,16 +91,19 @@ class LatentMASMethod:
             gold = item.get("gold", "")
             pred, ok, error_msg = self.evaluator.evaluate(self.task, final_text, gold)
             results.append(
-                {
-                    "question": item["question"],
-                    "gold": gold,
-                    "solution": item.get("solution", ""),
-                    "prediction": pred,
-                    "raw_prediction": final_text,
-                    "agents": agent_traces[idx],
-                    "correct": ok,
-                    "error_msg": error_msg,
-                }
+                attach_token_counts(
+                    {
+                        "question": item["question"],
+                        "gold": gold,
+                        "solution": item.get("solution", ""),
+                        "prediction": pred,
+                        "raw_prediction": final_text,
+                        "agents": agent_traces[idx],
+                        "correct": ok,
+                        "error_msg": error_msg,
+                        "judger_received_latent_cache": self.latent_steps > 0,
+                    }
+                )
             )
         return results
 
@@ -168,6 +170,7 @@ class LatentMASMethod:
                         "input_tokens": tokens_batch[idx],
                         "latent_steps": self.latent_steps,
                         "output": "",
+                        "generated_tokens": 0,
                     }
                 )
         return past_kv, embedding_record, agent_traces
@@ -204,7 +207,7 @@ class LatentMASMethod:
         judger_prompts, judger_ids, judger_mask, tokens_batch = self._prepare_tokens(
             prompts, self.model.device
         )
-        generated_batch, _ = self.model.generate_text_batch(
+        generated_batch, _, generated_token_counts = self.model.generate_text_batch(
             judger_ids,
             judger_mask,
             max_new_tokens=self.judger_max_new_tokens,
@@ -225,9 +228,10 @@ class LatentMASMethod:
                     "input_ids": judger_ids[idx][mask].to("cpu").tolist(),
                     "input_tokens": tokens_batch[idx],
                     "output": final_text,
+                    "generated_tokens": int(generated_token_counts[idx]),
                 }
             )
-        # Results include 'error_msg' via self._evaluate_results
+        # _evaluate_results stores "error_msg" on each sample.
         return self._evaluate_results(items, final_texts, agent_traces)
 
     def run_batch(self, items: list[dict]) -> list[dict]:

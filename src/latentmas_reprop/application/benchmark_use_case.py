@@ -1,11 +1,10 @@
-import contextlib
 import time
 from typing import Any
 
 from tqdm import tqdm
 
 from ..domain.models import BenchmarkMetrics
-from ..domain.ports.cache_port import CacheLayer, CachePort
+from ..domain.ports.cache_port import CachePort
 from ..domain.ports.dataset_port import DatasetPort
 from ..domain.ports.evaluator_port import EvaluatorPort
 from ..domain.ports.model_port import ModelPort
@@ -16,7 +15,15 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
-from .evaluation_service import evaluate_predictions
+from .benchmark_results import (
+    BenchmarkRunStore,
+    build_metrics,
+    build_run_id,
+    config_snapshot,
+    predictions_in_dataset_order,
+    runtime_metadata,
+    sample_key_for,
+)
 
 
 class BenchmarkUseCase:
@@ -129,83 +136,79 @@ class BenchmarkUseCase:
     def execute(
         self, model: ModelWrapper, args: Any
     ) -> tuple[BenchmarkMetrics, list[dict]]:
+        """Evaluate one resolved configuration, resuming samples already stored."""
+        dtype_name = str(getattr(model, "dtype_name", ""))
+        requested_max_samples = int(args.max_samples)
+        run_id = build_run_id(args, dtype_name)
+        store = BenchmarkRunStore(self.cache_port, run_id)
+        if store.is_complete():
+            print(f"Reusing completed run {run_id}")
+            return store.load_finished()
+
         method = self.create_method(model, args)
-        start_time = time.time()
+        dataset = list(self.dataset_port.load(task=args.task, split=args.split))
+        target = len(dataset) if requested_max_samples == -1 else requested_max_samples
+        target = min(target, len(dataset))
+        selected = dataset[:target]
+        done = store.completed_keys()
+        pending = [item for item in selected if sample_key_for(args, item) not in done]
 
-        dataset_iter = self.dataset_port.load(task=args.task, split=args.split)
+        session_start = time.perf_counter()
+        booked = 0.0
 
-        if args.max_samples == -1:
-            dataset_iter = list(dataset_iter)
-            args.max_samples = len(dataset_iter)
+        def commit_eval_time() -> float:
+            nonlocal booked
+            elapsed = time.perf_counter() - session_start
+            total = store.add_eval_time(elapsed - booked)
+            booked = elapsed
+            return total
 
-        progress = tqdm(total=args.max_samples)
-        preds: list[dict] = []
-        processed = 0
+        progress = tqdm(total=target, initial=target - len(pending))
+        processed = target - len(pending)
         batch: list[dict] = []
-
-        for item in dataset_iter:
-            if processed >= args.max_samples:
-                break
+        for item in pending:
             batch.append(item)
-            if (
-                len(batch) == args.generate_bs
-                or processed + len(batch) == args.max_samples
-            ):
-                processed, preds = self.process_batch(
+            filled = len(batch) == args.generate_bs
+            if filled or processed + len(batch) == target:
+                processed, fresh = self.process_batch(
                     method,
                     batch,
                     processed,
-                    preds,
+                    [],
                     progress,
-                    args.max_samples,
+                    target,
                     args,
                 )
+                for offset, result in enumerate(fresh):
+                    stored = dict(result)
+                    stored["sample_key"] = sample_key_for(args, batch[offset])
+                    store.append(stored)
+                commit_eval_time()
                 batch = []
-                if processed >= args.max_samples:
-                    break
-
-        if batch and processed < args.max_samples:
-            processed, preds = self.process_batch(
-                method,
-                batch,
-                processed,
-                preds,
-                progress,
-                max_samples=args.max_samples,
-                args=args,
-            )
         progress.close()
-
-        total_time = time.time() - start_time
-        acc, correct = evaluate_predictions(preds)
-
-        metrics = BenchmarkMetrics(
-            method=args.method,
-            model=args.model_name,
-            split=args.split,
-            seed=args.seed,
-            max_samples=args.max_samples,
-            accuracy=acc,
-            correct=correct,
-            total_time_sec=round(total_time, 4),
-            time_per_sample_sec=round(total_time / args.max_samples, 4)
-            if args.max_samples > 0
-            else 0.0,
+        if not pending:
+            commit_eval_time()
+        eval_seconds = float(store.read_progress().get("eval_time_sec", 0.0))
+        predictions = predictions_in_dataset_order(store, args, selected)
+        saved_config = config_snapshot(args)
+        saved_config["requested_max_samples"] = requested_max_samples
+        saved_config["resolved_max_samples"] = target
+        metrics = build_metrics(
+            args,
+            predictions,
+            run_id=run_id,
+            dtype_name=dtype_name,
+            eval_seconds=eval_seconds,
+            model_load_seconds=float(getattr(model, "load_time_sec", 0.0)),
         )
-
-        # Cache run results to root .cache/evaluation/runs/
-        sanitized_model = args.model_name.replace("/", "_")
-        run_cache_filename = (
-            f"run_{args.task}_{args.method}_{sanitized_model}_s{args.max_samples}.json"
+        store.write_complete(
+            {
+                "status": "complete",
+                "run_id": run_id,
+                "sample_count": len(predictions),
+                "metrics": metrics.to_dict(),
+                "config": saved_config,
+                "runtime": runtime_metadata(model, dtype_name, eval_seconds),
+            }
         )
-        with contextlib.suppress(Exception):
-            self.cache_port.save_json(
-                CacheLayer.EVALUATION_RUNS,
-                run_cache_filename,
-                {
-                    "metrics": metrics.to_dict(),
-                    "predictions": preds,
-                },
-            )
-
-        return metrics, preds
+        return metrics, predictions

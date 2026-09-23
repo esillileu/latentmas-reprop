@@ -121,6 +121,18 @@ class BenchmarkMetrics:
     correct: int
     total_time_sec: float
     time_per_sample_sec: float
+    total: int = 0
+    output_tokens_total: int = 0
+    output_tokens_mean: float = 0.0
+    latent_steps_total: int = 0
+    latent_steps_mean: float = 0.0
+    model_load_time_sec: float = 0.0
+    eval_time_sec: float = 0.0
+    peak_vram_bytes: int = 0
+    dtype: str = ""
+    prompt: str = ""
+    latent_steps: int = 0
+    run_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -3,6 +3,7 @@ from typing import Any
 from ...infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR, StandardEvaluator
 from ...infrastructure.models.model_wrapper import ModelWrapper
 from .prompts import build_agent_messages_single_agent
+from .token_counts import attach_token_counts
 
 
 class BaselineMethod:
@@ -49,8 +50,12 @@ class BaselineMethod:
                 temperature=self.temperature,
                 top_p=self.top_p,
             )
+            generated_token_counts = [
+                len(self.model.tokenizer(text, add_special_tokens=False)["input_ids"])
+                for text in generated_batch
+            ]
         else:
-            generated_batch, _ = self.model.generate_text_batch(
+            generated_batch, _, generated_token_counts = self.model.generate_text_batch(
                 input_ids,
                 attention_mask,
                 max_new_tokens=self.max_new_tokens,
@@ -81,17 +86,21 @@ class BaselineMethod:
                 "input_ids": trimmed_ids,
                 "input_tokens": tokens_batch[idx],
                 "output": generated_text,
+                "generated_tokens": int(generated_token_counts[idx]),
             }
             results.append(
-                {
-                    "question": item["question"],
-                    "gold": gold,
-                    "solution": item["solution"],
-                    "prediction": pred,
-                    "raw_prediction": generated_text,
-                    "agents": [agent_trace],
-                    "correct": ok,
-                }
+                attach_token_counts(
+                    {
+                        "question": item["question"],
+                        "gold": gold,
+                        "solution": item["solution"],
+                        "prediction": pred,
+                        "raw_prediction": generated_text,
+                        "agents": [agent_trace],
+                        "correct": ok,
+                        "latent_steps_executed": 0,
+                    }
+                )
             )
         return results
 
