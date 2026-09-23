@@ -1,6 +1,7 @@
 """Command-line argument parser for benchmark runs."""
 
 import argparse
+import itertools
 from typing import Any
 
 import yaml
@@ -30,7 +31,7 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         type=str,
         default=None,
         metavar="CONFIG",
-        help="Path or name of YAML config file in configs/ (e.g. -c lm_q30.6_gsm8k)",
+        help="Path or name of a YAML config file in configs/",
     )
 
     # Core args for experiments
@@ -172,8 +173,7 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
     return parser
 
 
-def parse_args(args=None) -> argparse.Namespace:
-    """Parse configuration with YAML template loading and CLI overrides."""
+def _load_defaults(args: list[str] | None) -> dict[str, Any]:
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument(
         "--config", "-c", "--template", dest="config_path", type=str, default=None
@@ -192,9 +192,15 @@ def parse_args(args=None) -> argparse.Namespace:
             loaded = yaml.safe_load(f)
             if isinstance(loaded, dict):
                 defaults = loaded
+    return defaults
 
+
+def _parse_args(args: list[str] | None, defaults: dict[str, Any]) -> argparse.Namespace:
     parser = build_parser(defaults=defaults)
     parsed = parser.parse_args(args)
+
+    if parsed.method not in {"baseline", "text_mas", "latent_mas"}:
+        parser.error(f"unsupported --method: {parsed.method}")
 
     if parsed.method == "latent_mas" and parsed.use_vllm:
         parsed.use_second_HF_model = True
@@ -203,3 +209,43 @@ def parse_args(args=None) -> argparse.Namespace:
     validate_intervention_and_acquisition_args(parser, parsed)
 
     return parsed
+
+
+def parse_run_matrix(args=None) -> list[argparse.Namespace]:
+    """Expand top-level YAML lists into a Cartesian product of parsed runs."""
+    argv = list(args) if args is not None else None
+    defaults = _load_defaults(argv)
+    dimensions = {
+        key: value for key, value in defaults.items() if isinstance(value, list)
+    }
+    empty = [key for key, values in dimensions.items() if not values]
+    if empty:
+        raise ValueError(f"sweep dimensions cannot be empty: {', '.join(empty)}")
+    if not dimensions:
+        return [_parse_args(argv, defaults)]
+
+    scalar_defaults = {
+        key: value for key, value in defaults.items() if key not in dimensions
+    }
+    parsed_runs = []
+    seen = set()
+    for values in itertools.product(*dimensions.values()):
+        run_defaults = scalar_defaults | dict(zip(dimensions, values, strict=True))
+        parsed = _parse_args(argv, run_defaults)
+        signature = tuple(
+            sorted((key, repr(value)) for key, value in vars(parsed).items())
+        )
+        if signature not in seen:
+            seen.add(signature)
+            parsed_runs.append(parsed)
+    return parsed_runs
+
+
+def parse_args(args=None) -> argparse.Namespace:
+    """Parse a configuration that resolves to exactly one run."""
+    runs = parse_run_matrix(args)
+    if len(runs) != 1:
+        raise ValueError(
+            f"configuration expands to {len(runs)} runs; use parse_run_matrix()"
+        )
+    return runs[0]

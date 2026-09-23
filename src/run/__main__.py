@@ -1,13 +1,14 @@
 import sys
 
-from .cli import parse_args
+from .cli import parse_run_matrix
 from .runner import run_benchmark
 
 
 def main(argv: list[str] | None = None) -> None:
     """CLI entrypoint for src.run module."""
-    args = parse_args(argv)
-    run_benchmark(args)
+    runs = parse_run_matrix(argv)
+    for args in runs:
+        run_benchmark(args)
 
 
 if __name__ == "__main__":
