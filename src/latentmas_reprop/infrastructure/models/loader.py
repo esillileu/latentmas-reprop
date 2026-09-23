@@ -5,6 +5,8 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from .dtype import resolve_model_dtype
+
 
 def ensure_pad_token(tokenizer: AutoTokenizer) -> None:
     """Ensure tokenizer has a pad token."""
@@ -18,14 +20,21 @@ def ensure_pad_token(tokenizer: AutoTokenizer) -> None:
 def load_hf_causal_lm(
     model_name: str,
     device: torch.device,
-) -> tuple[AutoTokenizer, AutoModelForCausalLM]:
-    """Load HuggingFace causal LM and tokenizer."""
+    dtype: torch.dtype | None = None,
+) -> tuple[AutoTokenizer, AutoModelForCausalLM, torch.dtype]:
+    """Load HuggingFace causal LM and tokenizer.
+
+    BF16 is used only when the selected CUDA device supports it. V100-class
+    GPUs use FP16. CPU loads use FP32. The returned dtype is the one requested
+    from ``from_pretrained``.
+    """
+    selected = dtype if dtype is not None else resolve_model_dtype(device)
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     ensure_pad_token(tokenizer)
     with torch.no_grad():
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            dtype=(torch.bfloat16 if torch.cuda.is_available() else torch.float32),
+            dtype=selected,
         )
     if len(tokenizer) != model.get_input_embeddings().weight.shape[0]:
         model.resize_token_embeddings(len(tokenizer))
@@ -33,7 +42,12 @@ def load_hf_causal_lm(
     model.eval()
     if hasattr(model.config, "use_cache"):
         model.config.use_cache = True
-    return tokenizer, model
+    parameter_dtype = next(model.parameters()).dtype
+    if parameter_dtype != selected:
+        raise RuntimeError(
+            f"Loaded {model_name} as {parameter_dtype}, expected {selected}."
+        )
+    return tokenizer, model, selected
 
 
 def init_vllm_backend(
@@ -75,10 +89,11 @@ def init_vllm_backend(
     hf_device = None
     if use_second_hf:
         hf_device = getattr(args, "device2", "cuda:1")
+        hf_dtype = resolve_model_dtype(torch.device(hf_device))
         hf_model = (
             AutoModelForCausalLM.from_pretrained(
                 model_name,
-                dtype=(torch.bfloat16 if torch.cuda.is_available() else torch.float32),
+                dtype=hf_dtype,
             )
             .to(hf_device)
             .eval()

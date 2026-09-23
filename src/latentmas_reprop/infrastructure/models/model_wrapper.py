@@ -5,6 +5,7 @@ import torch
 from ...domain.ports.model_port import LatentRolloutState, ModelPort, NextTokenState
 from ..cache.manager import ExecutionCacheManager, get_cache_manager
 from .chat_formatter import prepare_chat_batch
+from .dtype import dtype_name, resolve_model_dtype
 from .loader import init_vllm_backend, load_hf_causal_lm
 from .realignment import RealignmentManager
 from .rollout import generate_latent_hidden_state_batch, generate_latent_rollout
@@ -43,6 +44,8 @@ class ModelWrapper(ModelPort):
             self.model_name, self.cache_manager, args
         )
 
+        self.dtype = resolve_model_dtype(self.device)
+        self.dtype_name = dtype_name(self.dtype)
         if self.use_vllm:
             (
                 self.vllm_engine,
@@ -57,7 +60,10 @@ class ModelWrapper(ModelPort):
                 )
             return
 
-        self.tokenizer, self.model = load_hf_causal_lm(model_name, self.device)
+        self.tokenizer, self.model, self.dtype = load_hf_causal_lm(
+            model_name, self.device, dtype=self.dtype
+        )
+        self.dtype_name = dtype_name(self.dtype)
         if self.latent_space_realign:
             self.realignment_manager.ensure_matrix(self.model, self.device)
 
@@ -134,7 +140,7 @@ class ModelWrapper(ModelPort):
         temperature: float = 0.7,
         top_p: float = 0.95,
         past_key_values: Any = None,
-    ) -> tuple[list[str], Any]:
+    ) -> tuple[list[str], Any, list[int]]:
         return generate_text_batch(
             self.model,
             self.tokenizer,
