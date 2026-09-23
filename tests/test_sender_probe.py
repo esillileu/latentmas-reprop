@@ -8,7 +8,11 @@ from latentmas_reprop.application.sender_probe import (
     analyze_sender_states,
 )
 from latentmas_reprop.application.sender_probe.folds import grouped_folds
-from latentmas_reprop.application.sender_probe.replacement import _without_probe_results
+from latentmas_reprop.application.sender_probe.replacement import (
+    LEGACY_PROBE_PARAMS,
+    _analysis_params,
+    _without_probe_results,
+)
 from latentmas_reprop.application.sender_probe.torch_solver import (
     TorchSolverConfig,
     _fit_predict,
@@ -70,6 +74,19 @@ def test_replacement_removes_legacy_probe_summary_fields():
         "runtime_total_sec": 3.0,
         "research_matrix": {"carrier_probability_deltas": {"full": 0.2}},
     }
+
+
+def test_replacement_does_not_restore_legacy_probe_parameters():
+    params = _analysis_params(
+        ProbeAnalysisConfig(),
+        {
+            "resolved_backend": "sklearn",
+            "solver": "lbfgs",
+            "resolved_workers": 1,
+            "resolved_batch_size": 256,
+        },
+    )
+    assert params.keys().isdisjoint(LEGACY_PROBE_PARAMS)
 
 
 def test_batched_solver_matches_independent_fits():

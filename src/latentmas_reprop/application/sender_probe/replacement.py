@@ -60,6 +60,22 @@ def _without_probe_results(value: Any) -> Any:
     return value
 
 
+def _analysis_params(
+    config: ProbeAnalysisConfig, analysis: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "probe_folds": config.folds,
+        "probe_permutations": config.permutations,
+        "probe_backend": analysis["resolved_backend"],
+        "probe_solver": analysis["solver"],
+        "probe_workers": analysis["resolved_workers"],
+        "probe_c": config.c,
+        "probe_max_iter": config.max_iter,
+        "probe_tol": config.tol,
+        "probe_batch_size": analysis["resolved_batch_size"],
+    }
+
+
 def replace_probe_run(
     source_run_id: str,
     config: ProbeAnalysisConfig,
@@ -165,19 +181,7 @@ def _populate_replacement(
         for key, value in source.data.params.items()
         if key not in LEGACY_PROBE_PARAMS
     ]
-    settings = {
-        "probe_sender_latents": True,
-        "probe_prompt_templates": 20,
-        "probe_folds": config.folds,
-        "probe_permutations": config.permutations,
-        "probe_backend": analysis["resolved_backend"],
-        "probe_solver": analysis["solver"],
-        "probe_workers": analysis["resolved_workers"],
-        "probe_c": config.c,
-        "probe_max_iter": config.max_iter,
-        "probe_tol": config.tol,
-        "probe_batch_size": analysis["resolved_batch_size"],
-    }
+    settings = _analysis_params(config, analysis)
     params.extend(Param(key, str(value)) for key, value in settings.items())
     metrics = []
     for key in source.data.metrics:
