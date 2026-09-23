@@ -93,14 +93,32 @@ def add_acquisition_args(
         default=defaults.get("probe_prompt_templates", 20),
     )
     parser.add_argument(
-        "--probe_train_template_fraction",
-        type=float,
-        default=defaults.get("probe_train_template_fraction", 0.75),
+        "--probe_folds", type=int, default=defaults.get("probe_folds", 5)
     )
     parser.add_argument(
-        "--probe_epochs",
+        "--probe_permutations",
         type=int,
-        default=defaults.get("probe_epochs", 200),
+        default=defaults.get("probe_permutations", 5000),
+    )
+    parser.add_argument(
+        "--probe_backend",
+        choices=["auto", "torch", "sklearn"],
+        default=defaults.get("probe_backend", "auto"),
+    )
+    parser.add_argument(
+        "--probe_workers", type=int, default=defaults.get("probe_workers", 0)
+    )
+    parser.add_argument("--probe_c", type=float, default=defaults.get("probe_c", 1.0))
+    parser.add_argument(
+        "--probe_max_iter", type=int, default=defaults.get("probe_max_iter", 1000)
+    )
+    parser.add_argument(
+        "--probe_tol", type=float, default=defaults.get("probe_tol", 1e-4)
+    )
+    parser.add_argument(
+        "--probe_batch_size",
+        type=int,
+        default=defaults.get("probe_batch_size", 256),
     )
     parser.add_argument(
         "--save_latent_states",
@@ -161,5 +179,9 @@ def validate_intervention_and_acquisition_args(
             )
         if "cross" in parsed.acquisition_conditions and parsed.max_samples < 2:
             parser.error("cross acquisition requires at least two samples")
-        if not 0.0 < parsed.probe_train_template_fraction < 1.0:
-            parser.error("--probe_train_template_fraction must be between 0 and 1")
+        if parsed.probe_folds < 2 or parsed.probe_prompt_templates < parsed.probe_folds:
+            parser.error("probe templates must be at least the number of folds")
+        if parsed.probe_permutations < 0 or parsed.probe_workers < 0:
+            parser.error("probe permutations and workers must be non-negative")
+        if parsed.probe_batch_size <= 0:
+            parser.error("probe batch size must be positive")

@@ -6,7 +6,6 @@ from typing import Any
 from ...domain.models import ReceiverAcquisitionMetrics, ReceiverAcquisitionRecord
 from ...domain.ports.cache_port import CacheLayer, CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
-from ..sender_latent_probe import SenderProbeResult
 
 
 def log_receiver_artifacts(
@@ -17,8 +16,8 @@ def log_receiver_artifacts(
     metrics: ReceiverAcquisitionMetrics,
     mapping: dict[str, Any],
     hidden: dict[str, tuple],
-    probe_result: SenderProbeResult | None,
-) -> None:
+    sender_states: dict[str, Any] | None,
+) -> Any:
     """Save acquisition json results, summary, configurations, and upload artifacts."""
     data = [record.to_dict() for record in records]
     cache_port.save_json(
@@ -53,35 +52,13 @@ def log_receiver_artifacts(
             )
             tracker_port.log_artifact(hidden_path, "states")
 
-    if probe_result is not None:
-        log_probe_artifacts(cache_port, tracker_port, args, probe_result)
-
-
-def log_probe_artifacts(
-    cache_port: CachePort,
-    tracker_port: ExperimentTrackerPort | None,
-    args: Any,
-    probe_result: SenderProbeResult,
-) -> None:
-    """Log linear probe artifacts, splits, and confusion matrices."""
-    state_payload = {
-        **probe_result.states,
-        "metadata": probe_result.metadata,
-    }
-    if args.save_latent_states:
+    state_path = None
+    if sender_states is not None and args.save_latent_states:
         state_path = cache_port.save_torch(
             CacheLayer.EVALUATION_RECEIVER_ACQUISITION,
             "sender_latent_states.pt",
-            state_payload,
+            sender_states,
         )
         if tracker_port:
             tracker_port.log_artifact(state_path, "probe")
-    if tracker_port:
-        tracker_port.log_param("analysis_stage", "carrier_probe")
-        tracker_port.log_dict(probe_result.split, "probe/probe_split.json")
-        tracker_port.log_dict(probe_result.summary, "probe/probe_summary.json")
-        for name, matrix in probe_result.confusion_matrices.items():
-            tracker_port.log_dict(
-                {"labels": list(range(10)), "matrix": matrix},
-                f"probe/confusion_matrix_{name}.json",
-            )
+    return state_path

@@ -1,6 +1,5 @@
 """Flow and integration tests for the secret-digit receiver acquisition protocol."""
 
-import re
 from types import SimpleNamespace
 
 import pytest
@@ -10,9 +9,7 @@ from latentmas_reprop.application.receiver_acquisition_use_case import (
     ReceiverAcquisitionUseCase,
     aggregate_receiver_records,
 )
-from latentmas_reprop.application.sender_latent_probe import run_sender_latent_probe
 from latentmas_reprop.domain.models import ReceiverAcquisitionRecord
-from latentmas_reprop.domain.ports.model_port import LatentRolloutState
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
 from run.cli import parse_args
 
@@ -147,43 +144,6 @@ def test_acquisition_mlflow_tags_are_strings():
     assert tracker.tags is not None
     assert tracker.tags["seed"] == "42"
     assert tracker.tags["latent_steps"] == "4"
-
-
-class _ProbeModel:
-    def prepare_chat_batch(self, messages, add_generation_prompt=True):
-        del add_generation_prompt
-        digit = int(re.search(r"\d", messages[0][0]["content"]).group())
-        ids = torch.tensor([[digit]])
-        return [messages[0][0]["content"]], ids, torch.ones_like(ids), [[]]
-
-    def generate_latent_batch_with_states(
-        self, input_ids, attention_mask=None, *, latent_steps, past_key_values=None
-    ):
-        del attention_mask, past_key_values
-        digit = int(input_ids.item())
-        state = torch.nn.functional.one_hot(torch.tensor(digit), num_classes=10).float()
-        steps = state.reshape(1, 1, 10).repeat(1, latent_steps, 1)
-        return LatentRolloutState(None, steps, steps)
-
-
-def test_sender_probe_uses_template_disjoint_balanced_split():
-    args = SimpleNamespace(
-        probe_prompt_templates=2,
-        probe_train_template_fraction=0.5,
-        probe_epochs=1,
-        latent_steps=2,
-        seed=42,
-    )
-    result = run_sender_latent_probe(_ProbeModel(), args)
-    assert set(result.split["train_template_indices"]).isdisjoint(
-        result.split["test_template_indices"]
-    )
-    assert result.states["latent_post_realign"].shape == (20, 2, 10)
-    assert result.summary["n_train_examples"] == 10
-    assert result.summary["n_test_examples"] == 10
-    assert {
-        item["digit"] for item in result.metadata if item["split"] == "test"
-    } == set(range(10))
 
 
 class _RolloutBackbone:

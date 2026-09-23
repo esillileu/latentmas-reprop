@@ -1,11 +1,8 @@
-from .cli import build_parser, parse_args
-from .runner import run_benchmark
-
-
 def main(argv=None) -> None:
+    """Run the benchmark CLI without eagerly importing model infrastructure."""
     from .__main__ import main as _main
 
     _main(argv)
 
 
-__all__ = ["build_parser", "main", "parse_args", "run_benchmark"]
+__all__ = ["main"]

@@ -77,7 +77,6 @@ class ReceiverAcquisitionMetrics:
     cache_bytes_stats: dict[str, dict[str, float]] = field(default_factory=dict)
     carrier_comparison: dict[str, dict[str, float]] = field(default_factory=dict)
     carrier_probability_deltas: dict[str, float] = field(default_factory=dict)
-    probe_metrics: dict[str, float] = field(default_factory=dict)
     research_matrix: dict[str, Any] = field(default_factory=dict)
     method_note: str = (
         "carrier KV rotations are retained; canonical receiver positions start at "
@@ -144,5 +143,4 @@ class ReceiverAcquisitionMetrics:
                 result[f"{carrier}/{name}"] = value
         for comparison, value in self.carrier_probability_deltas.items():
             result[f"carrier_delta/{comparison}"] = value
-        result.update(self.probe_metrics)
         return result
