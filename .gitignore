@@ -10,4 +10,5 @@ dist/
 build/
 .env
 mlruns/
+runs/
 *.db
