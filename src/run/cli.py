@@ -33,6 +33,11 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         metavar="CONFIG",
         help="Path or name of a YAML config file in configs/",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the expanded run matrix without loading models or running experiments.",
+    )
 
     # Core args for experiments
     method_required = "method" not in defaults
