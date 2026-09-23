@@ -51,6 +51,9 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
         ("Qwen/Qwen3-8B", 10),
         ("Qwen/Qwen3-8B", 20),
         ("Qwen/Qwen3-8B", 40),
+        ("Qwen/Qwen3-14B", 10),
+        ("Qwen/Qwen3-14B", 20),
+        ("Qwen/Qwen3-14B", 40),
     ]
     assert [(run.method, run.model_name) for run in baselines] == [
         ("baseline", "Qwen/Qwen3-4B"),

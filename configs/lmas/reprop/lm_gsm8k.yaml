@@ -1,10 +1,12 @@
-# Table 1 LatentMAS matrix: Qwen3-4B and Qwen3-8B, sequential GSM8K.
-# latent_steps 0 is a separate diagnostic preset. Qwen3-14B is lm_gsm8k_14b.yaml.
+# Table 1 LatentMAS matrix: Qwen3-4B, 8B, and 14B, sequential GSM8K.
+# latent_steps 0 stays in lm_gsm8k_diagnostic.yaml.
+# lm_gsm8k_14b.yaml remains the single 20-step preset.
 # The paper does not state which of 10/20/40 was used for each Table 1 cell.
 method: latent_mas
 model_name:
   - Qwen/Qwen3-4B
   - Qwen/Qwen3-8B
+  - Qwen/Qwen3-14B
 task: gsm8k
 split: test
 prompt: sequential
