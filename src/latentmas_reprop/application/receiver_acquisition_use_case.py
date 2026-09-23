@@ -35,7 +35,11 @@ from .receiver_acquisition.scoring import (
     score_digit_logits,
     validate_digit_candidates,
 )
-from .sender_latent_probe import SenderProbeResult, run_sender_latent_probe
+from .sender_probe import (
+    ProbeAnalysisConfig,
+    SenderProbeAnalysisUseCase,
+    collect_sender_states,
+)
 
 __all__ = [
     "CANDIDATE_DIGITS",
@@ -115,6 +119,7 @@ class ReceiverAcquisitionUseCase:
                 self.tracker_port.log_params(
                     {
                         "model": args.model_name,
+                        "config_path": args.config_path,
                         "task": args.task,
                         "sample_count": len(samples),
                         "method": args.method,
@@ -140,8 +145,6 @@ class ReceiverAcquisitionUseCase:
                         "latent_space_realign": bool(args.latent_space_realign),
                         "probe_sender_latents": bool(args.probe_sender_latents),
                         "probe_prompt_templates": args.probe_prompt_templates,
-                        "probe_train_template_fraction": args.probe_train_template_fraction,
-                        "probe_epochs": args.probe_epochs,
                         "save_latent_states": bool(args.save_latent_states),
                     }
                 )
@@ -158,9 +161,13 @@ class ReceiverAcquisitionUseCase:
                 mapping,
                 self.tracker_port,
             )
-            probe_result: SenderProbeResult | None = None
+            sender_states = None
             if args.probe_sender_latents:
-                probe_result = run_sender_latent_probe(model, args)
+                sender_states = collect_sender_states(
+                    model,
+                    latent_steps=args.latent_steps,
+                    template_count=args.probe_prompt_templates,
+                ).payload()
             cells_per_sample = len(modes) * sum(
                 condition in {"own", "cross"} for condition in conditions
             ) + sum(
@@ -174,8 +181,6 @@ class ReceiverAcquisitionUseCase:
                 time.perf_counter() - start,
                 context_runtime,
             )
-            if probe_result is not None:
-                metrics.probe_metrics = dict(probe_result.summary["metrics"])
             metrics.research_matrix = {
                 "carrier_source_follow_accuracy": {
                     carrier: values["source_follow_accuracy"]
@@ -186,10 +191,8 @@ class ReceiverAcquisitionUseCase:
                     for carrier, values in metrics.carrier_comparison.items()
                 },
                 "carrier_probability_deltas": metrics.carrier_probability_deltas,
-                "probe_accuracy_by_step": metrics.probe_metrics,
-                "chance_probe_accuracy": 0.1,
             }
-            log_receiver_artifacts(
+            state_path = log_receiver_artifacts(
                 self.cache_port,
                 self.tracker_port,
                 args,
@@ -197,12 +200,33 @@ class ReceiverAcquisitionUseCase:
                 metrics,
                 mapping,
                 hidden,
-                probe_result,
+                sender_states,
+            )
+            source_run_id = (
+                self.tracker_port.active_run_id if self.tracker_port else None
             )
             if self.tracker_port:
                 self.tracker_port.log_metrics(metrics.to_mlflow_metrics())
                 self.tracker_port.flush_traces()
                 self.tracker_port.end_run("FINISHED")
+            if state_path is not None:
+                SenderProbeAnalysisUseCase(self.tracker_port).execute(
+                    state_path,
+                    ProbeAnalysisConfig(
+                        seed=args.seed,
+                        folds=args.probe_folds,
+                        permutations=args.probe_permutations,
+                        backend=args.probe_backend,
+                        workers=args.probe_workers,
+                        c=args.probe_c,
+                        max_iter=args.probe_max_iter,
+                        tol=args.probe_tol,
+                        batch_size=args.probe_batch_size,
+                    ),
+                    source_run_id=source_run_id,
+                    source_artifact_path="probe/sender_latent_states.pt",
+                    source_config=vars(args),
+                )
             return metrics, records
         except Exception:
             if self.tracker_port:

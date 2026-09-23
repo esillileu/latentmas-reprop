@@ -86,8 +86,6 @@ def aggregate_receiver_records(
         "prompt_only/cross",
         "latent_only/own",
         "latent_only/cross",
-        "latent_only_position_fixed/own",
-        "latent_only_position_fixed/cross",
     )
     for cell in comparable_cells:
         values = [
@@ -106,7 +104,6 @@ def aggregate_receiver_records(
             "full",
             "prompt_only",
             "latent_only",
-            "latent_only_position_fixed",
         )
     }
     cross_retention = {}
@@ -114,7 +111,6 @@ def aggregate_receiver_records(
         "full",
         "prompt_only",
         "latent_only",
-        "latent_only_position_fixed",
     ):
         vals = [
             r.target_retained
@@ -182,7 +178,6 @@ def aggregate_receiver_records(
         "full",
         "prompt_only",
         "latent_only",
-        "latent_only_position_fixed",
     ):
         group = [r for r in successful if r.context_mode == mode and r.cache_present]
         if group:

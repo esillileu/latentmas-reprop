@@ -24,8 +24,8 @@ Presets follow a concise naming pattern:
   - Full dataset name (e.g. `gsm8k`, `aime2024`, `medqa`, `arc`, `mbpp_plus`, `humaneval_plus`)
 
 **Examples**:
-- `lm_q30.6_gsm8k.yaml`
-- `tm_q30.6_gsm8k.yaml`
+- `lmas/reprop/lm_gsm8k.yaml`
+- `lmas/reprop/bs_gsm8k.yaml`
 - `bs_q30.6_gsm8k.yaml`
 
 ---
@@ -52,20 +52,24 @@ A YAML configuration can define any argument accepted by `src/run/cli.py`:
 
 Receiver acquisition additionally accepts `acquisition`, `context_modes`,
 `acquisition_conditions`, `acquisition_cross_policy`, `save_hidden_states`, and
-`save_raw_cache`. The canonical preset is `lm_q30.6_secret_digit.yaml`; it requires
+`save_raw_cache`. The canonical preset is `lmas/secret_digit/preflight.yaml`; it requires
 `task: secret_digit`, the transformers backend, and a positive `latent_steps` value.
 
 The canonical secret-digit carrier modes are `full`, `prompt_only`, and
 position-preserving `latent_only`. `drop_position_matched` isolates absolute-position
 effects without retaining KV content. The same preset can enable the template-disjoint
 sender-state probe with `probe_sender_latents`, `probe_prompt_templates`,
-`probe_train_template_fraction`, and `save_latent_states`.
+`probe_folds`, `probe_permutations`, `probe_backend`, `probe_batch_size`, and
+`save_latent_states`. The canonical GPU backend is `torch`; it fits independent
+L2-regularized multinomial classifiers in permutation batches. The default batch size
+is 256, which is conservative for 32 GB VRAM and can be overridden for a particular
+GPU. CUDA OOM automatically retries with half the batch size.
 
 ---
 
 ## 3. Example Presets
 
-### LatentMAS (`configs/lm_q30.6_gsm8k.yaml`)
+### LatentMAS (`configs/lmas/reprop/lm_gsm8k.yaml`)
 ```yaml
 method: latent_mas
 model_name: Qwen/Qwen3-0.6B
@@ -79,7 +83,7 @@ temperature: 0.0
 seed: 42
 ```
 
-### TextMAS (`configs/tm_q30.6_gsm8k.yaml`)
+### TextMAS and baseline (`configs/lmas/reprop/bs_gsm8k.yaml`)
 ```yaml
 method: text_mas
 model_name: Qwen/Qwen3-0.6B

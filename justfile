@@ -16,6 +16,10 @@ run-intervention *args:
 run-acquisition *args:
     uv run python -m src.run --acquisition {{args}}
 
+# Analyze previously collected sender latent states
+analyze-sender-probe *args:
+    uv run python -m src.run.sender_probe {{args}}
+
 # Run test suite
 test *args:
     uv run pytest {{args}}

@@ -32,9 +32,12 @@ def test_path_resolver_relative_resolution():
     assert resolved.is_absolute()
 
 
-def test_path_resolver_configs():
-    resolver = get_path_resolver()
-    assert resolver.configs_dir.is_dir()
-    resolved = resolver.resolve_config_path("lm_q30.6_gsm8k")
-    assert resolved.is_file()
-    assert resolved.name == "lm_q30.6_gsm8k.yaml"
+def test_path_resolver_nested_config_without_extension(tmp_path):
+    resolver = PathResolver(tmp_path)
+    config = resolver.configs_dir / "secret_digit" / "lm_q3-0.6_l0.yaml"
+    config.parent.mkdir(parents=True)
+    config.touch()
+
+    resolved = resolver.resolve_config_path("secret_digit/lm_q3-0.6_l0")
+
+    assert resolved == config.resolve()
