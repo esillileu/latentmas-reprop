@@ -1,6 +1,7 @@
 import time
 from typing import Any
 
+import torch
 from tqdm import tqdm
 
 from ..domain.models import BenchmarkMetrics
@@ -204,6 +205,8 @@ class BenchmarkUseCase:
                         store.append(stored)
                     commit_eval_time()
                     batch = []
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
             progress.close()
             if not pending:
                 commit_eval_time()

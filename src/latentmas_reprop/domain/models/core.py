@@ -138,12 +138,15 @@ class BenchmarkMetrics:
         return asdict(self)
 
     def to_mlflow_metrics(self) -> dict[str, float]:
+        vram_bytes = float(self.peak_vram_bytes)
         return {
             "accuracy": float(self.accuracy),
             "correct": float(self.correct),
             "max_samples": float(self.max_samples),
             "total_time_sec": float(self.total_time_sec),
             "time_per_sample_sec": float(self.time_per_sample_sec),
+            "peak_vram_bytes": vram_bytes,
+            "peak_vram_gb": round(vram_bytes / (1024**3), 3),
         }
 
 

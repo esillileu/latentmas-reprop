@@ -1,5 +1,7 @@
 # LatentMAS Reproduction Task Runner
 
+export PYTORCH_CUDA_ALLOC_CONF := "expandable_segments:True"
+
 # Default recipe: list all available commands
 default:
     @just --list
