@@ -36,7 +36,6 @@ def generate_text_batch(
         raise ValueError("input_ids must be 2D with shape [batch, seq_len]")
     if attention_mask is None:
         attention_mask = torch.ones_like(input_ids, device=device)
-    prompt_lengths = attention_mask.sum(dim=1).tolist()
 
     if past_key_values is not None:
         past_len = get_past_kv_sequence_length(past_key_values)
@@ -63,9 +62,9 @@ def generate_text_batch(
     sequences = outputs.sequences
     generations: list[str] = []
     token_counts: list[int] = []
-    for idx, length in enumerate(prompt_lengths):
-        length = int(length)
-        generated_ids = sequences[idx, length:]
+    prompt_seq_len = input_ids.shape[1]
+    for idx in range(input_ids.shape[0]):
+        generated_ids = sequences[idx, prompt_seq_len:]
         token_counts.append(count_new_token_ids(generated_ids, tokenizer.pad_token_id))
         text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
         generations.append(text)

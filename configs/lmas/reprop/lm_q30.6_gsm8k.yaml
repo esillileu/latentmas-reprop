@@ -3,7 +3,7 @@ model_name: Qwen/Qwen3-0.6B
 task: gsm8k
 prompt: sequential
 max_samples: -1
-generate_bs: 32
+generate_bs: 16
 latent_steps:
   - 10
   - 20
