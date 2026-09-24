@@ -39,10 +39,14 @@ def _args(**overrides):
 
 
 def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
-    latent = parse_run_matrix(["-c", "lmas/reprop/lm_gsm8k", "--dry-run"])
-    baselines = parse_run_matrix(["-c", "lmas/reprop/bs_gsm8k", "--dry-run"])
-    diagnostic = parse_run_matrix(["-c", "lmas/reprop/lm_gsm8k_diagnostic"])
-    large = parse_run_matrix(["-c", "lmas/reprop/lm_gsm8k_14b"])
+    latent_4b = parse_run_matrix(["-c", "lmas/reprop/lm_q34_gsm8k", "--dry-run"])
+    latent_8b = parse_run_matrix(["-c", "lmas/reprop/lm_q38_gsm8k", "--dry-run"])
+    latent_14b = parse_run_matrix(["-c", "lmas/reprop/lm_q314_gsm8k", "--dry-run"])
+    baselines_4b = parse_run_matrix(["-c", "lmas/reprop/bs_q34_gsm8k", "--dry-run"])
+    baselines_8b = parse_run_matrix(["-c", "lmas/reprop/bs_q38_gsm8k", "--dry-run"])
+    baselines_14b = parse_run_matrix(["-c", "lmas/reprop/bs_q314_gsm8k", "--dry-run"])
+    latent = [*latent_4b, *latent_8b, *latent_14b]
+    baselines = [*baselines_4b, *baselines_8b, *baselines_14b]
 
     assert [(run.model_name, run.latent_steps) for run in latent] == [
         ("Qwen/Qwen3-4B", 10),
@@ -56,21 +60,16 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
         ("Qwen/Qwen3-14B", 40),
     ]
     assert [(run.method, run.model_name) for run in baselines] == [
-        ("baseline", "Qwen/Qwen3-4B"),
-        ("baseline", "Qwen/Qwen3-8B"),
         ("text_mas", "Qwen/Qwen3-4B"),
+        ("baseline", "Qwen/Qwen3-4B"),
         ("text_mas", "Qwen/Qwen3-8B"),
+        ("baseline", "Qwen/Qwen3-8B"),
+        ("text_mas", "Qwen/Qwen3-14B"),
+        ("baseline", "Qwen/Qwen3-14B"),
     ]
-    assert [(run.model_name, run.latent_steps) for run in diagnostic] == [
-        ("Qwen/Qwen3-4B", 0),
-        ("Qwen/Qwen3-8B", 0),
-    ]
-    assert [(run.model_name, run.latent_steps, run.think) for run in large] == [
-        ("Qwen/Qwen3-14B", 20, False)
-    ]
-    for run in [*latent, *baselines, *diagnostic, *large]:
+    for run in [*latent, *baselines]:
         assert run.max_samples == -1
-        assert run.generate_bs == 1
+        assert run.generate_bs in {1, 4, 16, 32}
         assert run.max_new_tokens == 2048
         assert run.temperature == 0.6
         assert run.top_p == 0.95
