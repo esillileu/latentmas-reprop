@@ -69,7 +69,7 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
     ]
     for run in [*latent, *baselines]:
         assert run.max_samples == -1
-        assert run.generate_bs in {1, 4, 8, 16, 32}
+        assert run.generate_bs in {1, 2, 4}
         assert run.max_new_tokens == 2048
         assert run.temperature == 0.6
         assert run.top_p == 0.95
