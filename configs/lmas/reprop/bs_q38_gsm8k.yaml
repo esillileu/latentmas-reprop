@@ -1,11 +1,9 @@
-method:
-  - text_mas
-  - baseline
+method: baseline
 model_name: Qwen/Qwen3-8B
 task: gsm8k
 prompt: sequential
 max_samples: -1
-generate_bs: 1
+generate_bs: 4
 max_new_tokens: 2048
 temperature: 0.6
 top_p: 0.95

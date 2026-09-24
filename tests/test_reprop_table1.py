@@ -45,8 +45,12 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
     baselines_4b = parse_run_matrix(["-c", "lmas/reprop/bs_q34_gsm8k", "--dry-run"])
     baselines_8b = parse_run_matrix(["-c", "lmas/reprop/bs_q38_gsm8k", "--dry-run"])
     baselines_14b = parse_run_matrix(["-c", "lmas/reprop/bs_q314_gsm8k", "--dry-run"])
+    text_mas_4b = parse_run_matrix(["-c", "lmas/reprop/tm_q34_gsm8k", "--dry-run"])
+    text_mas_8b = parse_run_matrix(["-c", "lmas/reprop/tm_q38_gsm8k", "--dry-run"])
+    text_mas_14b = parse_run_matrix(["-c", "lmas/reprop/tm_q314_gsm8k", "--dry-run"])
     latent = [*latent_4b, *latent_8b, *latent_14b]
     baselines = [*baselines_4b, *baselines_8b, *baselines_14b]
+    text_mas = [*text_mas_4b, *text_mas_8b, *text_mas_14b]
 
     assert [(run.model_name, run.latent_steps) for run in latent] == [
         ("Qwen/Qwen3-4B", 10),
@@ -60,16 +64,18 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
         ("Qwen/Qwen3-14B", 40),
     ]
     assert [(run.method, run.model_name) for run in baselines] == [
-        ("text_mas", "Qwen/Qwen3-4B"),
         ("baseline", "Qwen/Qwen3-4B"),
-        ("text_mas", "Qwen/Qwen3-8B"),
         ("baseline", "Qwen/Qwen3-8B"),
-        ("text_mas", "Qwen/Qwen3-14B"),
         ("baseline", "Qwen/Qwen3-14B"),
     ]
-    for run in [*latent, *baselines]:
+    assert [(run.method, run.model_name) for run in text_mas] == [
+        ("text_mas", "Qwen/Qwen3-4B"),
+        ("text_mas", "Qwen/Qwen3-8B"),
+        ("text_mas", "Qwen/Qwen3-14B"),
+    ]
+    for run in [*latent, *baselines, *text_mas]:
         assert run.max_samples == -1
-        assert run.generate_bs in {1, 2, 4}
+        assert run.generate_bs in {1, 2, 4, 8, 16, 32}
         assert run.max_new_tokens == 2048
         assert run.temperature == 0.6
         assert run.top_p == 0.95

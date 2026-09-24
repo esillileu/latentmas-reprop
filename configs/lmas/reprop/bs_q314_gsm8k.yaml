@@ -1,6 +1,4 @@
-method:
-  - text_mas
-  - baseline
+method: baseline
 model_name: Qwen/Qwen3-14B
 task: gsm8k
 prompt: sequential

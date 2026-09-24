@@ -84,17 +84,34 @@ seed: 42
 tracking_experiment_name: latentmas-reprop
 ```
 
-### TextMAS and baseline (`configs/lmas/reprop/bs_q38_gsm8k.yaml`)
+### Baseline (`configs/lmas/reprop/bs_q38_gsm8k.yaml`)
 ```yaml
-method: text_mas
-model_name: Qwen/Qwen3-0.6B
+method: baseline
+model_name: Qwen/Qwen3-8B
 task: gsm8k
 prompt: sequential
-max_samples: 5
-generate_bs: 1
-max_new_tokens: 256
-temperature: 0.0
+max_samples: -1
+generate_bs: 4
+max_new_tokens: 2048
+temperature: 0.6
+top_p: 0.95
 seed: 42
+tracking_experiment_name: latentmas-reprop
+```
+
+### TextMAS (`configs/lmas/reprop/tm_q38_gsm8k.yaml`)
+```yaml
+method: text_mas
+model_name: Qwen/Qwen3-8B
+task: gsm8k
+prompt: sequential
+max_samples: -1
+generate_bs: 1
+max_new_tokens: 2048
+temperature: 0.6
+top_p: 0.95
+seed: 42
+tracking_experiment_name: latentmas-reprop
 ```
 
 ### Baseline (`configs/bs_q30.6_gsm8k.yaml`)
