@@ -159,9 +159,7 @@ def test_replacement_soft_deletes_source_without_unlinking_traces(monkeypatch):
         replacement_module, "analyze_sender_states", lambda *args: ({}, {})
     )
     monkeypatch.setattr(replacement_module, "_populate_replacement", lambda *args: None)
-    monkeypatch.setattr(
-        replacement_module, "_trace_ids", lambda *args: ["trace"]
-    )
+    monkeypatch.setattr(replacement_module, "_trace_ids", lambda *args: ["trace"])
 
     replacement_id = replacement_module.replace_probe_run(
         "source", ProbeAnalysisConfig(), client=client

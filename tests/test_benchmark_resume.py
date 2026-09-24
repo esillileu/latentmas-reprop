@@ -31,6 +31,7 @@ def _args(**overrides):
         "latent_space_realign": False,
         "use_vllm": False,
         "split": "test",
+        "tracking_experiment_name": "latentmas_test",
     }
     values.update(overrides)
     return argparse.Namespace(**values)

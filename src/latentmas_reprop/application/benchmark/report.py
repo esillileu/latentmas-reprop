@@ -48,7 +48,7 @@ def build_metrics(
         peak_vram_bytes=peak_allocated_bytes(),
         dtype=dtype_name,
         prompt=args.prompt,
-        latent_steps=int(args.latent_steps),
+        latent_steps=int(getattr(args, "latent_steps", 0)),
         run_id=run_id,
     )
 
@@ -61,12 +61,25 @@ def runtime_metadata(
     capability = None
     if torch.cuda.is_available():
         device = getattr(model, "device", torch.device("cuda"))
-        index = device.index if getattr(device, "index", None) is not None else 0
+        index = (
+            device.index
+            if isinstance(getattr(device, "index", None), int)
+            else 0
+        )
         gpu_name = torch.cuda.get_device_name(index)
         major, minor = torch.cuda.get_device_capability(index)
         capability = f"{major}.{minor}"
     hf_model = getattr(model, "model", None)
     config = getattr(hf_model, "config", None)
+    revision = getattr(config, "_commit_hash", None)
+    model_revision = revision if isinstance(revision, str) else None
+
+    model_load_time = getattr(model, "load_time_sec", 0.0)
+    try:
+        model_load_time_sec = round(float(model_load_time), 4)
+    except (TypeError, ValueError):
+        model_load_time_sec = 0.0
+
     return {
         "git_commit": get_path_resolver().get_git_commit_hash(),
         "torch_version": torch.__version__,
@@ -75,9 +88,9 @@ def runtime_metadata(
         "gpu_name": gpu_name,
         "gpu_capability": capability,
         "dtype": dtype_name,
-        "model_revision": getattr(config, "_commit_hash", None),
+        "model_revision": model_revision,
         "eval_time_sec": round(eval_seconds, 4),
-        "model_load_time_sec": round(float(getattr(model, "load_time_sec", 0.0)), 4),
+        "model_load_time_sec": model_load_time_sec,
         "peak_vram_bytes": peak_allocated_bytes(),
         "output_token_definition": OUTPUT_TOKEN_DEFINITION,
         "wall_time_definition": WALL_TIME_DEFINITION,

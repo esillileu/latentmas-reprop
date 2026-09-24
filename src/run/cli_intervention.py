@@ -43,7 +43,7 @@ def add_intervention_args(
     parser.add_argument(
         "--tracking_experiment_name",
         type=str,
-        default=defaults.get("tracking_experiment_name", "latentmas_intervention"),
+        default=defaults.get("tracking_experiment_name"),
         help="Experiment name for MLflow tracking.",
     )
 

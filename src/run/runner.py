@@ -56,6 +56,12 @@ def _reuse_completed_benchmark(
 
 def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
     """Execute a benchmark experiment with given parsed arguments."""
+    exp_name = getattr(args, "tracking_experiment_name", None)
+    if not exp_name:
+        raise ValueError(
+            "MLflow tracking experiment name must be specified (--tracking_experiment_name or via config) before running model inference."
+        )
+
     set_seed(args.seed)
     device = auto_device(args.device)
     reused = _reuse_completed_benchmark(args, device)
@@ -86,7 +92,8 @@ def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
         print(json.dumps(metrics_dict, ensure_ascii=False, indent=2))
         return metrics_dict, [r.to_dict() for r in records]
 
-    use_case = BenchmarkUseCase()
+    tracker = MLflowTracker()
+    use_case = BenchmarkUseCase(tracker_port=tracker)
 
     metrics, preds = use_case.execute(model, args)
 

@@ -137,6 +137,15 @@ class BenchmarkMetrics:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_mlflow_metrics(self) -> dict[str, float]:
+        return {
+            "accuracy": float(self.accuracy),
+            "correct": float(self.correct),
+            "max_samples": float(self.max_samples),
+            "total_time_sec": float(self.total_time_sec),
+            "time_per_sample_sec": float(self.time_per_sample_sec),
+        }
+
 
 def compute_sample_key(task: str, split: str, question: str) -> str:
     """Generate deterministic sha256 identifier for a dataset sample."""

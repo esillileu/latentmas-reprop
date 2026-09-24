@@ -146,9 +146,7 @@ def test_run_matrix_expands_list_fields_as_cartesian_product(matrix_config_path)
 
 
 def test_cli_override_collapses_sweep_dimension(matrix_config_path):
-    runs = parse_run_matrix(
-        ["--config", matrix_config_path, "--method", "latent_mas"]
-    )
+    runs = parse_run_matrix(["--config", matrix_config_path, "--method", "latent_mas"])
 
     assert [(run.method, run.latent_steps) for run in runs] == [
         ("latent_mas", 1),

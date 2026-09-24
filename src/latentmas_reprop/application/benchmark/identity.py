@@ -41,7 +41,7 @@ def build_run_id(args: Any, dtype_name: str) -> str:
     model = str(args.model_name).replace("/", "_").replace("\\", "_")
     return (
         f"{args.method}__{model}__{args.task}__{args.prompt}"
-        f"__ls{int(args.latent_steps)}__seed{int(args.seed)}__{dtype_name}"
+        f"__ls{int(getattr(args, 'latent_steps', 0))}__seed{int(args.seed)}__{dtype_name}"
         f"__mt{int(args.max_new_tokens)}"
         f"_temp{format_setting(float(args.temperature))}"
         f"_top{format_setting(float(args.top_p))}"
