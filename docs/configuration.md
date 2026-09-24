@@ -24,8 +24,8 @@ Presets follow a concise naming pattern:
   - Full dataset name (e.g. `gsm8k`, `aime2024`, `medqa`, `arc`, `mbpp_plus`, `humaneval_plus`)
 
 **Examples**:
-- `lmas/reprop/lm_gsm8k.yaml`
-- `lmas/reprop/bs_gsm8k.yaml`
+- `lmas/reprop/lm_q38_gsm8k.yaml`
+- `lmas/reprop/bs_q38_gsm8k.yaml`
 - `bs_q30.6_gsm8k.yaml`
 
 ---
@@ -69,21 +69,22 @@ GPU. CUDA OOM automatically retries with half the batch size.
 
 ## 3. Example Presets
 
-### LatentMAS (`configs/lmas/reprop/lm_gsm8k.yaml`)
+### LatentMAS (`configs/lmas/reprop/lm_q38_gsm8k.yaml`)
 ```yaml
 method: latent_mas
-model_name: Qwen/Qwen3-0.6B
+model_name: Qwen/Qwen3-8B
 task: gsm8k
 prompt: sequential
 max_samples: 5
-generate_bs: 1
-latent_steps: 4
+generate_bs: 4
+latent_steps: 10
 max_new_tokens: 256
 temperature: 0.0
 seed: 42
+tracking_experiment_name: latentmas-reprop
 ```
 
-### TextMAS and baseline (`configs/lmas/reprop/bs_gsm8k.yaml`)
+### TextMAS and baseline (`configs/lmas/reprop/bs_q38_gsm8k.yaml`)
 ```yaml
 method: text_mas
 model_name: Qwen/Qwen3-0.6B

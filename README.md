@@ -32,14 +32,14 @@ uv sync
 Run experiments directly with `just run -c <preset>`:
 
 ```bash
-# Run LatentMAS preset on GSM8K
-just run -c lmas/reprop/lm_gsm8k
+# Run LatentMAS preset on GSM8K (Qwen3-8B)
+just run -c lmas/reprop/lm_q38_gsm8k
 
 # Run with option overrides
-just run -c lmas/reprop/lm_gsm8k --max_samples 10 --generate_bs 2
+just run -c lmas/reprop/lm_q38_gsm8k --max_samples 10 --generate_bs 2
 
-# Run the TextMAS and baseline matrix
-just run -c lmas/reprop/bs_gsm8k
+# Run the TextMAS and baseline matrix (Qwen3-8B)
+just run -c lmas/reprop/bs_q38_gsm8k
 just run -c bs_q30.6_gsm8k
 ```
 

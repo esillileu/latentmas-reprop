@@ -81,9 +81,7 @@ def _replacement_params(
 ) -> list[Param]:
     replaced = LEGACY_PROBE_PARAMS | settings.keys()
     params = [
-        Param(key, value)
-        for key, value in source_params.items()
-        if key not in replaced
+        Param(key, value) for key, value in source_params.items() if key not in replaced
     ]
     params.extend(Param(key, str(value)) for key, value in settings.items())
     return params
