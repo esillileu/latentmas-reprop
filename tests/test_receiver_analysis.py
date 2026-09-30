@@ -1,0 +1,46 @@
+"""Saved-observation receiver diagnostics."""
+
+import pytest
+
+from latentmas_reprop.application.receiver_acquisition.analysis import analyze_records
+
+
+def test_source_digit_confusion_and_paired_probability_delta():
+    records = []
+    for index, (target, source, own_prediction, cross_prediction) in enumerate(
+        [(0, 7, 1, 7), (1, 7, 7, 1), (7, 1, 1, 1)]
+    ):
+        for condition, mode, prediction in (
+            ("drop", "none", 3),
+            ("own", "latent_only", own_prediction),
+            ("cross", "latent_only", cross_prediction),
+        ):
+            probabilities = {str(digit): 0.1 for digit in range(10)}
+            if condition != "drop":
+                probabilities[str(source)] = 0.08
+            records.append(
+                {
+                    "sample_index": index,
+                    "target_digit": target,
+                    "source_digit": source if condition != "drop" else None,
+                    "predicted_digit": prediction,
+                    "candidate_probabilities": probabilities,
+                    "condition": condition,
+                    "context_mode": mode,
+                    "error": None,
+                }
+            )
+    result = analyze_records(records)
+    own = result["latent_only/own"]
+    assert own["prediction_distribution"]["1"]["count"] == 2
+    assert own["prediction_distribution"]["7"]["fraction"] == pytest.approx(1 / 3)
+    assert own["confusion_matrix"][7][1] == 1
+    assert own["per_digit_accuracy"][7]["sample_count"] == 2
+    assert own["per_digit_accuracy"][7]["correct_count"] == 1
+    assert own["unique_predictions"] == 2
+    assert own["top_prediction"] == 1
+    assert own["top_fraction"] == pytest.approx(2 / 3)
+    assert own["accuracy"] == pytest.approx(2 / 3)
+    assert own["accuracy_delta_vs_drop"] == pytest.approx(2 / 3)
+    assert own["probability_delta_vs_drop"] == pytest.approx(-0.02)
+    assert result["drop"]["confusion_matrix"][0][3] == 1

@@ -60,6 +60,15 @@ just run -c bs_q30.6_gsm8k
 
 ### Receiver acquisition
 
+Reanalyze existing Receiver MLflow `sample_results.jsonl` artifacts without model
+inference using `just analyze-receiver`. It caches downloaded observations under
+`.cache/receiver_acquisition/mlflow/<run_id>/` and writes
+`artifacts/receiver_acquisition/summary.md` plus run-specific JSON under
+`artifacts/receiver_acquisition/runs/<model>/steps_<steps>/<run_id>/`, including
+prediction frequencies, source-digit confusion matrices, per-digit accuracy,
+and prediction concentration. The command checks the Qwen3-4B / 20-step
+full-sample reference before writing the reports.
+
 The synthetic secret-digit experiment uses the transformers KV cache and next-token
 logits directly:
 

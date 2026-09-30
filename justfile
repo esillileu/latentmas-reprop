@@ -42,6 +42,10 @@ run-acquisition *args:
 analyze-sender-probe *args:
     uv run python -m src.run.sender_probe {{args}}
 
+# Reanalyze saved receiver observations from MLflow (no inference)
+analyze-receiver *args:
+    uv run python -m src.run.receiver_analysis {{args}}
+
 # Run test suite
 test *args:
     uv run pytest {{args}}
