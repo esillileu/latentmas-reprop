@@ -9,6 +9,13 @@ from ...domain.ports.model_port import NextTokenState
 from ...domain.services.kv_cache import get_past_kv_sequence_length
 
 
+def count_new_token_ids(generated_ids: torch.Tensor, pad_token_id: int | None) -> int:
+    """Count ids in a generate() suffix, excluding pad ids."""
+    if pad_token_id is not None:
+        generated_ids = generated_ids[generated_ids != pad_token_id]
+    return int(generated_ids.shape[0])
+
+
 def generate_text_batch(
     model: torch.nn.Module,
     tokenizer: AutoTokenizer,
@@ -20,8 +27,11 @@ def generate_text_batch(
     temperature: float = 0.7,
     top_p: float = 0.95,
     past_key_values: Any = None,
-) -> tuple[list[str], Any]:
-    """Generate text completions using HuggingFace model."""
+) -> tuple[list[str], Any, list[int]]:
+    """Generate text completions using HuggingFace model.
+
+    The third value is the number of newly generated token ids per row.
+    """
     if input_ids.dim() != 2:
         raise ValueError("input_ids must be 2D with shape [batch, seq_len]")
     if attention_mask is None:
@@ -52,12 +62,14 @@ def generate_text_batch(
     )
     sequences = outputs.sequences
     generations: list[str] = []
+    token_counts: list[int] = []
     for idx, length in enumerate(prompt_lengths):
         length = int(length)
         generated_ids = sequences[idx, length:]
+        token_counts.append(count_new_token_ids(generated_ids, tokenizer.pad_token_id))
         text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
         generations.append(text)
-    return generations, outputs.past_key_values
+    return generations, outputs.past_key_values, token_counts
 
 
 def forward_next_token_batch(

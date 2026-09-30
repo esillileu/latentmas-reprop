@@ -53,10 +53,10 @@
 
 ```bash
 # 벤치마크 실행 (기본 프리셋)
-just run -c lmas/reprop/lm_gsm8k
+just run -c lmas/reprop/lm_q38_gsm8k
 
 # 벤치마크 실행 (옵션 오버라이드)
-just run -c lmas/reprop/lm_gsm8k --max_samples 10
+just run -c lmas/reprop/lm_q38_gsm8k --max_samples 10
 
 # 테스트 및 검증
 just test

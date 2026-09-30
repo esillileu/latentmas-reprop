@@ -27,6 +27,7 @@ def test_latent_mas_regression_path():
     mock_model.generate_text_batch.return_value = (
         ["The final answer is \\boxed{42}."],
         None,
+        [8],
     )
 
     args = argparse.Namespace(
