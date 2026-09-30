@@ -7,6 +7,7 @@ from .prompts import (
     build_agent_messages_hierarchical_text_mas,
     build_agent_messages_sequential_text_mas,
 )
+from .token_counts import attach_token_counts
 
 
 class TextMASMethod:
@@ -44,6 +45,7 @@ class TextMASMethod:
         history_contexts = ["" for _ in range(batch_size)]
         agent_traces: list[list[dict]] = [[] for _ in range(batch_size)]
         final_texts = ["" for _ in range(batch_size)]
+        token_totals = [0 for _ in range(batch_size)]
 
         for agent in self.agents:
             if getattr(self.args, "prompt", "sequential") == "hierarchical":
@@ -82,13 +84,23 @@ class TextMASMethod:
                     temperature=self.temperature,
                     top_p=self.top_p,
                 )
+                generated_token_counts = [
+                    len(
+                        self.model.tokenizer(text, add_special_tokens=False)[
+                            "input_ids"
+                        ]
+                    )
+                    for text in generated_texts
+                ]
             else:
-                generated_texts, _ = self.model.generate_text_batch(
-                    input_ids,
-                    attention_mask,
-                    max_new_tokens=self.max_new_tokens_each,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
+                generated_texts, _, generated_token_counts = (
+                    self.model.generate_text_batch(
+                        input_ids,
+                        attention_mask,
+                        max_new_tokens=self.max_new_tokens_each,
+                        temperature=self.temperature,
+                        top_p=self.top_p,
+                    )
                 )
 
             agent_name_map_for_prompt_hierarchical = {
@@ -104,6 +116,7 @@ class TextMASMethod:
 
             for idx in range(batch_size):
                 text_out = generated_texts[idx].strip()
+                token_totals[idx] += int(generated_token_counts[idx])
 
                 if getattr(self.args, "prompt", "sequential") == "hierarchical":
                     mapped_name = agent_name_map_for_prompt_hierarchical.get(
@@ -128,6 +141,7 @@ class TextMASMethod:
                         "input_ids": trimmed_ids,
                         "input_tokens": tokens_batch[idx],
                         "output": text_out,
+                        "generated_tokens": int(generated_token_counts[idx]),
                     }
                 )
 
@@ -143,16 +157,20 @@ class TextMASMethod:
                 print(f"error_msg: {error_msg}")
 
             results.append(
-                {
-                    "question": item["question"],
-                    "gold": gold,
-                    "solution": item["solution"],
-                    "context": history_contexts[idx],
-                    "prediction": pred,
-                    "raw_prediction": final_text,
-                    "agents": agent_traces[idx],
-                    "correct": ok,
-                }
+                attach_token_counts(
+                    {
+                        "question": item["question"],
+                        "gold": gold,
+                        "solution": item["solution"],
+                        "context": history_contexts[idx],
+                        "prediction": pred,
+                        "raw_prediction": final_text,
+                        "agents": agent_traces[idx],
+                        "correct": ok,
+                        "latent_steps_executed": 0,
+                        "generated_tokens": token_totals[idx],
+                    }
+                )
             )
         return results
 

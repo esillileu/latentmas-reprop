@@ -43,8 +43,8 @@ class ModelPort(ABC):
         temperature: float = 0.7,
         top_p: float = 0.95,
         past_key_values: Any = None,
-    ) -> tuple[list[str], Any]:
-        """Generate text completions for a tokenized batch."""
+    ) -> tuple[list[str], Any, list[int]]:
+        """Generate text completions and per-row new-token counts."""
         raise NotImplementedError
 
     @abstractmethod

@@ -15,9 +15,7 @@ def main(argv: list[str] | None = None) -> None:
         ]
         print(f"Run plan: {len(runs)} run(s)")
         for index, run in enumerate(runs, start=1):
-            details = ", ".join(
-                f"{key}={getattr(run, key)}" for key in varying
-            )
+            details = ", ".join(f"{key}={getattr(run, key)}" for key in varying)
             print(f"[{index}/{len(runs)}] {details or 'single configuration'}")
         return
     for args in runs:

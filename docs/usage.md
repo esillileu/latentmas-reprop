@@ -37,19 +37,19 @@ Configurations are stored in [`configs/`](../configs/) using the format:
 
 Examples:
 ```bash
-# Run LatentMAS on GSM8K using Qwen3-0.6B
-just run -c lmas/reprop/lm_gsm8k
+# Run LatentMAS on GSM8K using Qwen3-8B
+just run -c lmas/reprop/lm_q38_gsm8k
 
-# Run the TextMAS and baseline matrix on GSM8K
-just run -c lmas/reprop/bs_gsm8k
+# Run the TextMAS and baseline matrix on GSM8K (Qwen3-8B)
+just run -c lmas/reprop/bs_q38_gsm8k
 
 # Run Single-Agent Baseline on GSM8K
 just run -c bs_q30.6_gsm8k
 ```
 
 > [!TIP]
-> You do not need to append `.yaml` or provide the full path. `-c lmas/reprop/lm_gsm8k`
-> resolves against `configs/lmas/reprop/lm_gsm8k.yaml`, and nested presets such as
+> You do not need to append `.yaml` or provide the full path. `-c lmas/reprop/lm_q38_gsm8k`
+> resolves against `configs/lmas/reprop/lm_q38_gsm8k.yaml`, and nested presets such as
 > `-c lmas/secret_digit/preflight` resolve against
 > `configs/lmas/secret_digit/preflight.yaml`. Full paths or arbitrary YAML files can
 > also be passed.
@@ -104,13 +104,13 @@ Any option defined in a config file can be overridden directly from the command 
 
 ```bash
 # Override the number of evaluated samples:
-just run -c lmas/reprop/lm_gsm8k --max_samples 10
+just run -c lmas/reprop/lm_q38_gsm8k --max_samples 10
 
 # Override temperature and generation batch size:
-just run -c lmas/reprop/lm_gsm8k --temperature 0.7 --generate_bs 2
+just run -c lmas/reprop/lm_q38_gsm8k --temperature 0.7 --generate_bs 2
 
 # Enable latent space realignment on top of the preset:
-just run -c lmas/reprop/lm_gsm8k --latent_space_realign
+just run -c lmas/reprop/lm_q38_gsm8k --latent_space_realign
 ```
 
 ---

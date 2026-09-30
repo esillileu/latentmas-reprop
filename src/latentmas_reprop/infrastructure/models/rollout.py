@@ -9,6 +9,11 @@ from ...domain.ports.model_port import LatentRolloutState
 from ...domain.services.kv_cache import get_past_kv_sequence_length
 
 
+def _require_finite(tensor: torch.Tensor, stage: str) -> None:
+    if not torch.isfinite(tensor).all():
+        raise RuntimeError(f"Non-finite value detected during {stage}.")
+
+
 def generate_latent_rollout(
     model: torch.nn.Module,
     device: torch.device,
@@ -49,6 +54,7 @@ def generate_latent_rollout(
     )
     past = outputs.past_key_values
     last_hidden = outputs.hidden_states[-1][:, -1, :]
+    _require_finite(last_hidden, "latent prompt forward")
     hidden_steps: list[torch.Tensor] = []
     latent_steps_output: list[torch.Tensor] = []
 
@@ -56,6 +62,7 @@ def generate_latent_rollout(
     for _ in range(latent_steps):
         hidden_steps.append(last_hidden.detach())
         latent_vec = apply_realign_fn(last_hidden, src_model)
+        _require_finite(latent_vec, "latent realignment")
         latent_steps_output.append(latent_vec.detach())
         latent_embed = latent_vec.unsqueeze(1)
 
@@ -132,6 +139,7 @@ def generate_latent_hidden_state_batch(
 
     for _ in range(latent_steps):
         latent_vec = apply_realign_fn(last_hidden, hf_model)
+        _require_finite(latent_vec, "latent realignment")
         latent_embed = latent_vec.unsqueeze(1)
         past_len = get_past_kv_sequence_length(past)
         latent_mask = torch.ones(

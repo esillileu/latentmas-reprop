@@ -8,6 +8,28 @@ default:
 run *args:
     uv run python -m src.run {{args}}
 
+# Run reproduction benchmark suite in model size order (0.6B -> 4B -> 8B -> 14B)
+lmas action="reprop" *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{action}}" = "reprop" ]; then
+        echo "=== [1/4] Running Reproduction: Qwen3-0.6B ==="
+        uv run python -m src.run -c lmas/reprop/bs_q30.6_gsm8k {{args}}
+        uv run python -m src.run -c lmas/reprop/lm_q30.6_gsm8k {{args}}
+        echo "=== [2/4] Running Reproduction: Qwen3-4B ==="
+        uv run python -m src.run -c lmas/reprop/bs_q34_gsm8k {{args}}
+        uv run python -m src.run -c lmas/reprop/lm_q34_gsm8k {{args}}
+        echo "=== [3/4] Running Reproduction: Qwen3-8B ==="
+        uv run python -m src.run -c lmas/reprop/bs_q38_gsm8k {{args}}
+        uv run python -m src.run -c lmas/reprop/lm_q38_gsm8k {{args}}
+        echo "=== [4/4] Running Reproduction: Qwen3-14B ==="
+        uv run python -m src.run -c lmas/reprop/bs_q314_gsm8k {{args}}
+        uv run python -m src.run -c lmas/reprop/lm_q314_gsm8k {{args}}
+    else
+        echo "Unknown action: {{action}}. Usage: just lmas reprop [args...]"
+        exit 1
+    fi
+
 # Run latent communication intervention experiment
 run-intervention *args:
     uv run python -m src.run --intervention {{args}}
