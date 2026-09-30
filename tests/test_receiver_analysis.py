@@ -2,7 +2,58 @@
 
 import pytest
 
-from latentmas_reprop.application.receiver_acquisition.analysis import analyze_records
+from latentmas_reprop.application.receiver_acquisition.analysis import (
+    analyze_records,
+    render_markdown,
+    select_receiver_runs,
+)
+
+
+def _candidate(run_id, model="model", steps=4, samples=100, designated=False):
+    return {
+        "run_id": run_id,
+        "model": model,
+        "latent_steps": steps,
+        "sample_count": samples,
+        "condition_counts": {
+            "drop": samples,
+            "latent_only/own": samples,
+            "latent_only/cross": samples,
+        },
+        "designated": designated,
+    }
+
+
+def test_selection_excludes_partial_runs_and_reports_coverage():
+    selected = select_receiver_runs(
+        [_candidate("partial", samples=10), _candidate("complete")], set()
+    )
+    assert [run["run_id"] for run in selected] == ["complete"]
+    report = render_markdown([{**selected[0], "conditions": {}}])
+    assert "| model | 4 | complete | 100 |" in report
+    assert "partial" not in report
+
+
+def test_selection_rejects_ambiguous_canonical_runs():
+    candidates = [_candidate("first"), _candidate("second")]
+    with pytest.raises(ValueError, match=r"Ambiguous canonical.*first.*second"):
+        select_receiver_runs(candidates, set())
+    assert [run["run_id"] for run in select_receiver_runs(candidates, {"second"})] == [
+        "second"
+    ]
+    with pytest.raises(ValueError, match="Ambiguous designated"):
+        select_receiver_runs(
+            [
+                _candidate("first", designated=True),
+                _candidate("second", designated=True),
+            ],
+            set(),
+        )
+
+
+def test_selection_rejects_unknown_designation():
+    with pytest.raises(ValueError, match="not found"):
+        select_receiver_runs([_candidate("known")], {"missing"})
 
 
 def test_source_digit_confusion_and_paired_probability_delta():

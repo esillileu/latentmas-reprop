@@ -18,6 +18,51 @@ def read_records(path: Path) -> list[dict[str, Any]]:
     ]
 
 
+def select_receiver_runs(
+    candidates: list[dict[str, Any]], designated_ids: set[str]
+) -> list[dict[str, Any]]:
+    """Select one complete Receiver run per model and step, rejecting ambiguity."""
+    available_ids = {run["run_id"] for run in candidates}
+    unknown_ids = designated_ids - available_ids
+    if unknown_ids:
+        raise ValueError(
+            f"Designated Receiver run IDs not found: {sorted(unknown_ids)}"
+        )
+    groups: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
+    for run in candidates:
+        groups[(run["model"], run["latent_steps"])].append(run)
+    selected = []
+    for (model, steps), group in sorted(groups.items()):
+        designated = [
+            run for run in group if run["run_id"] in designated_ids or run["designated"]
+        ]
+        if len(designated) > 1:
+            ids = sorted(run["run_id"] for run in designated)
+            raise ValueError(
+                f"Ambiguous designated Receiver runs for {model}, steps={steps}: {ids}"
+            )
+        if designated:
+            selected.append(designated[0])
+            continue
+        canonical = [
+            run
+            for run in group
+            if run["sample_count"] == 100
+            and all(
+                run["condition_counts"].get(condition) == 100
+                for condition in CONDITIONS
+            )
+        ]
+        if len(canonical) > 1:
+            ids = sorted(run["run_id"] for run in canonical)
+            raise ValueError(
+                f"Ambiguous canonical Receiver runs for {model}, steps={steps}: {ids}"
+            )
+        if canonical:
+            selected.append(canonical[0])
+    return selected
+
+
 def analyze_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Count predictions against the actual source digit (target for drop)."""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -110,6 +155,21 @@ def render_markdown(runs: list[dict[str, Any]]) -> str:
         "Saved receiver sample results only; no inference was run. Accuracy, correct-class "
         "probability, and source-to-prediction counts are observations, not automatic "
         "acquisition labels.",
+        "",
+        "## Coverage",
+        "",
+        "One selected Receiver run per model and latent step. Sample count is the number "
+        "of distinct saved sample indices; all three reported conditions are present.",
+        "",
+        "| Model | Steps | Run ID | Samples |",
+        "|---|---:|---|---:|",
+    ]
+    for run in runs:
+        lines.append(
+            f"| {run['model']} | {run['latent_steps']} | {run['run_id']} | "
+            f"{run['sample_count']} |"
+        )
+    lines += [
         "",
         "## Encoding → Acquisition results",
         "",

@@ -68,6 +68,19 @@ inference using `just analyze-receiver`. It caches downloaded observations under
 prediction frequencies, source-digit confusion matrices, per-digit accuracy,
 and prediction concentration. The command checks the Qwen3-4B / 20-step
 full-sample reference before writing the reports.
+Only complete 100-sample runs are selected automatically. When multiple runs
+qualify for the same model and latent step, the command stops with their run IDs;
+specify the intended run using `--canonical-run-id RUN_ID` (repeat for each
+ambiguous model/step). An MLflow `receiver_analysis_canonical=true` tag also
+designates a run. The report's coverage table lists each selected run ID and
+sample count.
+For the current saved Receiver set, the explicitly selected latest 4-step runs are:
+
+```bash
+just analyze-receiver \
+  --canonical-run-id 4d3b741b0d1f4a569da95c0474097ad0 \
+  --canonical-run-id 589f77a1f63241459d6ea902337fcea7
+```
 
 The synthetic secret-digit experiment uses the transformers KV cache and next-token
 logits directly:

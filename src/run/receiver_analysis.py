@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 
 from mlflow.tracking import MlflowClient
@@ -10,6 +11,7 @@ from latentmas_reprop.application.receiver_acquisition.analysis import (
     analyze_records,
     read_records,
     render_markdown,
+    select_receiver_runs,
 )
 from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
 
@@ -22,6 +24,12 @@ def main() -> None:
         type=Path,
         default=paths.root / "artifacts" / "receiver_acquisition",
     )
+    parser.add_argument(
+        "--canonical-run-id",
+        action="append",
+        default=[],
+        help="Designate a Receiver run for its model and latent step; repeat as needed.",
+    )
     args = parser.parse_args()
     client = MlflowClient()
     experiments = client.search_experiments(
@@ -29,7 +37,8 @@ def main() -> None:
     )
     if len(experiments) != 1:
         raise ValueError("Expected one latentmas_receiver_acquisition experiment")
-    runs = []
+    candidates = []
+    records_by_id = {}
     reference_verified = False
     for run in client.search_runs([experiments[0].experiment_id], max_results=1000):
         artifacts = {
@@ -46,11 +55,42 @@ def main() -> None:
             )
         )
         records = read_records(path)
-        conditions = analyze_records(records)
-        if not conditions:
+        if not records:
             continue
         model = records[0]["model"]
         steps = records[0]["latent_steps"]
+        condition_counts = Counter(
+            "drop"
+            if record["condition"] == "drop"
+            else f"{record['context_mode']}/{record['condition']}"
+            for record in records
+            if record["error"] is None
+        )
+        candidates.append(
+            {
+                "run_id": run.info.run_id,
+                "model": model,
+                "latent_steps": steps,
+                "sample_count": len({record["sample_index"] for record in records}),
+                "condition_counts": condition_counts,
+                "designated": run.data.tags.get("receiver_analysis_canonical")
+                == "true",
+            }
+        )
+        records_by_id[run.info.run_id] = records
+    selected = select_receiver_runs(candidates, set(args.canonical_run_id))
+    runs = []
+    for candidate in selected:
+        model = candidate["model"]
+        steps = candidate["latent_steps"]
+        conditions = analyze_records(records_by_id[candidate["run_id"]])
+        if not all(
+            condition in conditions
+            for condition in ("drop", "latent_only/own", "latent_only/cross")
+        ):
+            raise ValueError(
+                f"Selected Receiver run has missing conditions: {candidate['run_id']}"
+            )
         if model == "Qwen/Qwen3-4B" and steps == 20:
             expected = {
                 "drop": ({3: 100}, 0.10),
@@ -77,9 +117,10 @@ def main() -> None:
             print("Verified Qwen3-4B / steps=20 against saved full-sample results")
         runs.append(
             {
-                "run_id": run.info.run_id,
+                "run_id": candidate["run_id"],
                 "model": model,
                 "latent_steps": steps,
+                "sample_count": candidate["sample_count"],
                 "conditions": conditions,
             }
         )
@@ -102,6 +143,17 @@ def main() -> None:
         (run_dir / "diagnostics.json").write_text(
             json.dumps(run, indent=2) + "\n", encoding="utf-8"
         )
+    selected_ids = {run["run_id"] for run in runs}
+    for stale in (args.output_dir / "runs").glob("*/*/*/diagnostics.json"):
+        if stale.parent.name not in selected_ids:
+            stale.unlink()
+            for parent in (
+                stale.parent,
+                stale.parent.parent,
+                stale.parent.parent.parent,
+            ):
+                if not any(parent.iterdir()):
+                    parent.rmdir()
     print(f"Analyzed {len(runs)} Receiver runs: {summary_path}")
 
 
