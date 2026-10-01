@@ -5,6 +5,36 @@ receiver acquisition and intervention. `--upstream_steps 10,40` specifies low an
 high compute within a single run, plus a zero-compute no-handoff baseline; use a comma-separated string in YAML rather
 than a sweep list. Latent steps apply to every non-judger agent.
 
+Model-specific 20-sample presets:
+
+| Preset | Model | Conditions within each run |
+| --- | --- | --- |
+| `lmas/receiver_reasoning/lm_q34_gsm8k` | Qwen3-4B | 0, 10, 20 × answer-only/free |
+| `lmas/receiver_reasoning/lm_q30.6_gsm8k` | Qwen3-0.6B | 0, 5, 10 × answer-only/free |
+
+```bash
+just run-receiver-reasoning -c lmas/receiver_reasoning/lm_q34_gsm8k
+just run-receiver-reasoning -c lmas/receiver_reasoning/lm_q30.6_gsm8k
+# Validate configuration expansion without inference:
+just run-receiver-reasoning -c lmas/receiver_reasoning/lm_q34_gsm8k --dry-run
+```
+
+Each preset specifies a scalar `model_name` and a comma-separated string such as
+`upstream_steps: '0,10,20'`. Zero explicitly names the no-handoff baseline; it is
+normalized out of the positive build levels and executed exactly once per mode.
+Omitting zero still includes the same baseline. Each model creates one run with
+six cells per sample (120 receiver decodes over 20 samples), sharing its dataset
+and upstream contexts for paired comparisons. Full KV handoff and a 4096-token
+free budget are the defaults. Each sample owns one root MLflow trace containing
+both upstream build spans and all six receiver spans, with prompts, outputs,
+correctness, truncation, scoped latency and allocated/reserved VRAM. A 20-sample
+run therefore retains 20 complete trajectories rather than pooling samples into
+one trace.
+
+YAML lists are run-sweep dimensions in the general CLI. Listing both models and
+step specifications creates a Cartesian product, not model-specific pairs. Use
+these separate model presets to avoid unintended crossed combinations.
+
 For each sample and compute level, upstream inference runs once. Both receiver
 modes receive independent deep copies of the same upstream KV cache. The default
 handoff transfers the full cache, including upstream prompt and latent positions.

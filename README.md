@@ -118,6 +118,11 @@ just run-receiver-reasoning -c lmas/receiver_reasoning/gsm8k \
   --model_name Qwen/Qwen3-0.6B --max_samples 2
 ```
 
+Model-specific 20-sample presets are available as
+`lmas/receiver_reasoning/lm_q34_gsm8k` (0/10/20 steps) and
+`lmas/receiver_reasoning/lm_q30.6_gsm8k` (0/5/10 steps). Each keeps all conditions
+in one paired run; use `--dry-run` to inspect the plan without inference.
+
 The preset runs 20 GSM8K samples with Qwen3-4B at 10 and 40 latent steps,
 passing the full upstream KV cache, plus no-handoff baselines. Both receiver
 modes use greedy decoding; free reasoning has a 4096-token budget.

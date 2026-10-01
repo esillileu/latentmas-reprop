@@ -65,3 +65,15 @@ def test_matrix_runs_sequentially(tmp_path, monkeypatch):
         ("latent_mas", 1),
         ("latent_mas", 4),
     ]
+
+
+def test_receiver_dry_run_shows_conditions_within_one_run(monkeypatch, capsys):
+    executed = []
+    monkeypatch.setattr(run_main, "run_benchmark", executed.append)
+    run_main.main(["-c", "lmas/receiver_reasoning/lm_q30.6_gsm8k", "--dry-run"])
+    output = capsys.readouterr().out
+    assert "Run plan: 1 run(s)" in output
+    assert "model_name=Qwen/Qwen3-0.6B" in output
+    assert "upstream_steps=[0, 5, 10]" in output
+    assert "max_samples=20" in output
+    assert not executed

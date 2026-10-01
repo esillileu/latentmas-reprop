@@ -34,11 +34,15 @@ def validate_receiver_reasoning_args(parser, parsed):
     except ValueError:
         parser.error("--upstream_steps requires comma-separated integers")
     if (
-        len(parsed.upstream_steps) not in (1, 2)
-        or any(step <= 0 for step in parsed.upstream_steps)
+        not parsed.upstream_steps
+        or any(step < 0 for step in parsed.upstream_steps)
         or parsed.upstream_steps != sorted(set(parsed.upstream_steps))
     ):
-        parser.error("--upstream_steps requires 1-2 increasing positive values")
+        parser.error("--upstream_steps requires increasing nonnegative values")
+    # Zero is the automatically included no-handoff baseline, not a second build.
+    parsed.upstream_steps = [step for step in parsed.upstream_steps if step > 0]
+    if len(parsed.upstream_steps) not in (1, 2):
+        parser.error("--upstream_steps requires 1-2 positive levels plus optional zero")
     if parsed.handoff_positions is not None and parsed.handoff_positions <= 0:
         parser.error("--handoff_positions must be positive")
     if parsed.method != "latent_mas" or parsed.use_vllm:

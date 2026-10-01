@@ -16,6 +16,12 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Run plan: {len(runs)} run(s)")
         for index, run in enumerate(runs, start=1):
             details = ", ".join(f"{key}={getattr(run, key)}" for key in varying)
+            if run.receiver_reasoning:
+                details = (
+                    f"model_name={run.model_name}, "
+                    f"upstream_steps={[0, *run.upstream_steps]}, "
+                    f"receiver_modes=answer_only/free, max_samples={run.max_samples}"
+                )
             print(f"[{index}/{len(runs)}] {details or 'single configuration'}")
         return
     for args in runs:
