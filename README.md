@@ -139,3 +139,13 @@ The report and machine-readable paired/bootstrap results are written to
 `artifacts/latent_handoff/<model>/<run_id>/` by default, with a report index
 at `artifacts/latent_handoff/summary.md`. Finished runs matching the exact MLflow `version_tag` are analyzed separately
 for every model, without pooling results or filtering by model/Git commit.
+
+Receiver compute preflight (independent of the receiver reasoning pilot):
+
+```bash
+just run-receiver-compute-preflight -c lmas/receiver_compute_preflight/gsm8k --dry-run
+just analyze-receiver-compute-preflight --run-id RUN_ID
+```
+
+See [receiver compute preflight](docs/receiver_compute_preflight.md) for full-KV
+paired budget curves, exact token-prefix smoke verification, and MLflow artifacts.
