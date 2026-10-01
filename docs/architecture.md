@@ -1,4 +1,4 @@
-# Architecture & System Design
+tree# Architecture & System Design
 
 This repository is structured around **Hexagonal Architecture (Ports & Adapters)**, strictly isolating core domain logic, application use cases, external infrastructure concerns, and the command-line execution entry point.
 

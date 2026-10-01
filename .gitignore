@@ -12,3 +12,4 @@ build/
 mlruns/
 runs/
 *.db
+artifacts/
