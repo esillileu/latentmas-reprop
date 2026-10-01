@@ -38,9 +38,10 @@ just run -c lmas/reprop/lm_q38_gsm8k
 # Run with option overrides
 just run -c lmas/reprop/lm_q38_gsm8k --max_samples 10 --generate_bs 2
 
-# Run the TextMAS and baseline matrix (Qwen3-8B)
+# Run Single Baseline, TextMAS, or LatentMAS presets (Qwen3-8B)
 just run -c lmas/reprop/bs_q38_gsm8k
-just run -c bs_q30.6_gsm8k
+just run -c lmas/reprop/tm_q38_gsm8k
+just run -c lmas/reprop/lm_q38_gsm8k
 ```
 
 Run the secret-digit receiver acquisition experiment (transformers backend only):

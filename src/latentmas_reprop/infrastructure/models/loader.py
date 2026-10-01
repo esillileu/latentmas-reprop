@@ -9,7 +9,8 @@ from .dtype import resolve_model_dtype
 
 
 def ensure_pad_token(tokenizer: AutoTokenizer) -> None:
-    """Ensure tokenizer has a pad token."""
+    """Ensure tokenizer has a pad token and left-padding for causal generation."""
+    tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None:
         if tokenizer.eos_token is not None:
             tokenizer.pad_token = tokenizer.eos_token

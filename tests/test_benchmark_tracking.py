@@ -264,5 +264,6 @@ def test_benchmark_traces_and_spans_for_textmas(tmp_path):
     # Check expectation and feedback
     assert len(tracker.expectations) == 1
     assert tracker.expectations[0]["value"] == "4"
-    assert len(tracker.feedbacks) == 1
-    assert tracker.feedbacks[0]["value"] is True
+    assert len(tracker.feedbacks) == 2
+    assert any(f["name"] == "correctness" and f["value"] is True for f in tracker.feedbacks)
+    assert any(f["name"] == "peak_vram_gb" for f in tracker.feedbacks)
