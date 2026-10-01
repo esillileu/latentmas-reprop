@@ -54,6 +54,7 @@ def generate_token_ids_batch(
     top_p: float = 0.95,
     past_key_values: Any = None,
     report_progress: bool = False,
+    observer: StoppingCriteria | None = None,
 ) -> tuple[list[list[int]], Any]:
     """Return actual generate() suffix IDs and the resulting KV cache."""
     if input_ids.dim() != 2:
@@ -72,15 +73,12 @@ def generate_token_ids_batch(
             attention_mask = torch.cat([past_mask, attention_mask], dim=-1)
 
     sampling = {"temperature": temperature, "top_p": top_p} if temperature > 0 else {}
-    progress = (
-        {
-            "stopping_criteria": StoppingCriteriaList(
-                [GenerationProgress(input_ids.shape[-1], max_new_tokens)]
-            )
-        }
-        if report_progress
-        else {}
-    )
+    criteria = []
+    if report_progress:
+        criteria.append(GenerationProgress(input_ids.shape[-1], max_new_tokens))
+    if observer is not None:
+        criteria.append(observer)
+    progress = {"stopping_criteria": StoppingCriteriaList(criteria)} if criteria else {}
     outputs = model.generate(
         input_ids=input_ids,
         attention_mask=attention_mask,
