@@ -17,12 +17,6 @@ def add_compute_preflight_args(parser, defaults):
         default=defaults.get("receiver_budgets", "64,128,256,512,1024,free"),
     )
     parser.add_argument(
-        "--target_accuracies", default=defaults.get("target_accuracies", "0.5,0.7,0.9")
-    )
-    parser.add_argument(
-        "--bootstrap_count", type=int, default=defaults.get("bootstrap_count", 2000)
-    )
-    parser.add_argument(
         "--free_max_new_tokens",
         type=int,
         default=defaults.get("free_max_new_tokens", 8192),
@@ -54,9 +48,6 @@ def validate_compute_preflight_args(parser, args):
             "free" if x == "free" else int(x)
             for x in str(args.receiver_budgets).split(",")
         ]
-        args.target_accuracies = [
-            float(x) for x in str(args.target_accuracies).split(",")
-        ]
     except ValueError:
         parser.error("invalid comma-separated preflight axis")
     if (
@@ -75,16 +66,10 @@ def validate_compute_preflight_args(parser, args):
         parser.error(
             "receiver_budgets requires increasing positive budgets followed by free"
         )
-    if args.max_new_tokens <= max(finite) or args.bootstrap_count < 1:
-        parser.error(
-            "free cap must exceed finite budgets; bootstrap_count must be positive"
-        )
+    if args.max_new_tokens <= max(finite):
+        parser.error("free cap must exceed finite budgets")
     if args.free_max_new_tokens < args.max_new_tokens:
         parser.error("free_max_new_tokens must be at least max_new_tokens")
-    if not args.target_accuracies or any(
-        not 0 <= x <= 1 for x in args.target_accuracies
-    ):
-        parser.error("target accuracies must be between zero and one")
     if args.max_samples != -1 and args.max_samples < 2:
         parser.error("preflight requires at least two samples")
     if args.verify_prefix and args.max_samples != 2:

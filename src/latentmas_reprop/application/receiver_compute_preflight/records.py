@@ -1,6 +1,5 @@
 """Sample-level answer, receiver cost, and donor diagnostics."""
 
-from .cost import prefix_cost
 from .inference import evaluate_prefix
 
 
@@ -18,7 +17,6 @@ def trajectory_records(
     ids, metadata = trajectory["token_ids"], trajectory["metadata"]
     recipient_length = recipient_meta["handoff_positions"]
     donor_length = donor_meta.get("handoff_positions", 0)
-    is_handoff = identity["donor_id"] is not None
     rows = []
     for budget in args.receiver_budgets:
         row = evaluate_prefix(
@@ -40,10 +38,6 @@ def trajectory_records(
             seed=args.seed,
             recipient_sequence_length=recipient_length,
             donor_sequence_length=donor_length,
-            donor_length_delta=donor_length - recipient_length if is_handoff else None,
-            donor_length_abs_delta=abs(donor_length - recipient_length)
-            if is_handoff
-            else None,
             recipient_upstream_metadata=recipient_meta,
             upstream_metadata=donor_meta,
             upstream_agents=donor_trace,
@@ -59,12 +53,6 @@ def trajectory_records(
                 for k, v in trajectory.items()
                 if k not in {"token_ids", "metadata"}
             },
-        )
-        row.update(prefix_cost(metadata, row["generated_tokens"], budget))
-        row["receiver_generated_tokens_per_sec"] = (
-            row["generated_tokens"] / row["receiver_latency_sec"]
-            if row["receiver_latency_sec"]
-            else 0.0
         )
         row["execution_success"] = True
         row["parse_failure"] = row["no_answer"]

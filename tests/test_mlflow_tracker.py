@@ -173,3 +173,19 @@ def test_run_tags_are_serializable_for_remote_tracking(tmp_path, monkeypatch):
     tracker.start_run("preflight-tags", tags={"seed": 42, "smoke": True})
     assert captured["tags"]["seed"] == "42"
     assert captured["tags"]["smoke"] == "True"
+
+
+def test_span_error_status_preserves_message(tmp_path):
+    tracker = MLflowTracker(
+        tracking_uri=f"sqlite:///{tmp_path / 'failure.db'}",
+        artifact_location=str(tmp_path / "artifacts"),
+    )
+    tracker.start_run("failed-inference")
+    with tracker.start_sample_trace("sample", {"question": "q"}) as root:
+        root.set_status("ERROR", "generation failed")
+        trace_id = root.trace_id
+    tracker.flush_traces()
+    tracker.end_run("FAILED")
+    trace = mlflow.get_trace(trace_id)
+    assert trace.data.spans[0].status.status_code == "ERROR"
+    assert trace.data.spans[0].attributes["error.message"] == "generation failed"

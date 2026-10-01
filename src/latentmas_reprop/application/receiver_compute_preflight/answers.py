@@ -1,6 +1,9 @@
 """Explicit, complete GSM8K final answers for cutoff evaluation."""
 
 import re
+from itertools import pairwise
+
+from .cost import prefix_cost
 
 NUMBER = r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
 BOX = re.compile(r"\\boxed\{\s*(" + NUMBER + r")\s*\}")
@@ -61,6 +64,39 @@ def evaluate_final_answer(
     }
 
 
+def trajectory_diagnostics(row):
+    attempts = row["free_attempts"]
+    for first, second in pairwise(attempts):
+        if (
+            second["generated_token_ids"][: len(first["generated_token_ids"])]
+            != first["generated_token_ids"]
+        ):
+            raise ValueError(
+                "Expanded free trajectory differs from initial greedy prefix"
+            )
+    final_ids = attempts[-1]["generated_token_ids"]
+    checks = row["prefix_verification_attempts"]
+    for check in checks:
+        if check["generated_token_ids"] != final_ids[: check["cap"]] or any(
+            check[key] != row[key]
+            for key in (
+                "receiver_prompt",
+                "receiver_input_ids",
+                "receiver_thinking_open",
+            )
+        ):
+            raise ValueError(
+                f"Greedy prefix differs from capped generation at R={check['cap']}"
+            )
+    return {
+        "prefix_verified": bool(checks),
+        "free_retry_count": len(attempts) - 1,
+        "receiver_retry_latency_sec": sum(
+            a["receiver_latency_sec"] for a in attempts[:-1]
+        ),
+    }
+
+
 def reevaluate_records(records, evaluator):
     """Apply current final-answer policy to saved text without re-tokenization."""
     evaluated = []
@@ -81,5 +117,32 @@ def reevaluate_records(records, evaluator):
         )
         if r["receiver_budget"] == "free" and not natural:
             row.update(valid=False, pathological=True)
+        if all(
+            key in r
+            for key in (
+                "receiver_cache_positions",
+                "receiver_prompt_tokens",
+                "receiver_budget_latency_sec",
+                "receiver_latency_sec",
+            )
+        ):
+            row.update(prefix_cost(r, row["generated_tokens"], row["receiver_budget"]))
+            row["receiver_generated_tokens_per_sec"] = (
+                row["generated_tokens"] / row["receiver_latency_sec"]
+                if row["receiver_latency_sec"]
+                else 0.0
+            )
+        if "donor_id" in r:
+            delta = (
+                r["donor_sequence_length"] - r["recipient_sequence_length"]
+                if r["donor_id"]
+                else None
+            )
+            row.update(
+                donor_length_delta=delta,
+                donor_length_abs_delta=abs(delta) if delta is not None else None,
+            )
+        if "free_attempts" in r:
+            row.update(trajectory_diagnostics(r))
         evaluated.append(row)
     return evaluated

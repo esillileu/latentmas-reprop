@@ -16,8 +16,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--bootstrap-count", type=int)
-    parser.add_argument("--target-accuracies")
+    parser.add_argument("--bootstrap-count", type=int, default=2000)
+    parser.add_argument("--target-accuracies", default="0.5,0.7,0.9")
     args = parser.parse_args(argv)
     MLflowTracker()
     client = MlflowClient()
@@ -43,16 +43,19 @@ def main(argv=None):
             if line.strip()
         ]
         config = yaml.safe_load(Path(config_path).read_text())
-    if args.bootstrap_count is not None:
-        if args.bootstrap_count < 1:
-            parser.error("bootstrap count must be positive")
-        config["bootstrap_count"] = args.bootstrap_count
-    if args.target_accuracies is not None:
+    if args.bootstrap_count < 1:
+        parser.error("bootstrap count must be positive")
+    try:
         targets = [float(x) for x in args.target_accuracies.split(",")]
-        if not targets or any(not 0 <= x <= 1 for x in targets):
-            parser.error("target accuracies must be between zero and one")
-        config["target_accuracies"] = targets
+    except ValueError:
+        parser.error("target accuracies must be comma-separated numbers")
+    if not targets or any(not 0 <= x <= 1 for x in targets):
+        parser.error("target accuracies must be between zero and one")
+    config.update(bootstrap_count=args.bootstrap_count, target_accuracies=targets)
     export(output, records, config)
+    (output / "analysis_config.yaml").write_text(
+        yaml.safe_dump(config, sort_keys=False)
+    )
     (output / "source.json").write_text(
         json.dumps(
             {"run_id": args.run_id, "artifact_uri": run.info.artifact_uri}, indent=2
@@ -65,6 +68,7 @@ def main(argv=None):
         "budget_curves.csv",
         "bootstrap_statistics.json",
         "source.json",
+        "analysis_config.yaml",
     ):
         client.log_artifact(args.run_id, str(output / name), artifact_path="analysis")
     print(f"Analysis: {output}")

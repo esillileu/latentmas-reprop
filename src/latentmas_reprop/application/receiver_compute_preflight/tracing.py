@@ -1,76 +1,9 @@
-"""Sample trace lifecycle, rich result spans, and assessment manifests."""
+"""Condition traces with compact results and correctness-only assessments."""
 
 import traceback
 from contextlib import contextmanager
 
 from ..common.reporter import build_run_stem
-
-CELL_FIELDS = (
-    "prediction",
-    "correct",
-    "no_answer",
-    "final_answer_complete",
-    "valid",
-    "pathological",
-    "generated_tokens",
-    "receiver_latency_sec",
-    "receiver_attention_pairs",
-    "receiver_processed_positions",
-    "donor_id",
-    "donor_sequence_length",
-    "donor_length_delta",
-    "donor_length_abs_delta",
-    "receiver_trace_id",
-    "upstream_trace_id",
-    "prefix_verified",
-)
-
-
-def cell_key(row):
-    return f"{row['handoff_condition']}_r{row['receiver_budget']}"
-
-
-def assessments(tracker, state, item, measurements, failure):
-    trace_id, names = state["trace_id"], []
-    if not trace_id:
-        return names
-    tracker.log_expectation(trace_id, "expected_answer", item.get("gold", ""))
-    names.append("expected_answer")
-    if item.get("solution"):
-        tracker.log_expectation(trace_id, "reference_solution", str(item["solution"]))
-        names.append("reference_solution")
-    for name, value, source in (
-        ("execution_success", failure is None, "evaluator"),
-        ("peak_vram_gib", measurements.get("peak_vram_bytes", 0) / 2**30, "profiler"),
-    ):
-        tracker.log_feedback(
-            trace_id,
-            name,
-            value,
-            source_id=source,
-            rationale=failure if name == "execution_success" else None,
-        )
-        names.append(name)
-    for row in state["records"]:
-        for field in (
-            "correct",
-            "no_answer",
-            "valid",
-            "pathological",
-            "generated_tokens",
-            "receiver_latency_sec",
-            "receiver_attention_pairs",
-            "prefix_verified",
-        ):
-            name = f"{cell_key(row)}_{field}"
-            tracker.log_feedback(
-                trace_id,
-                name,
-                row[field],
-                rationale=f"prediction={row['prediction']}; gold={item.get('gold')}; error={row.get('error_msg')}",
-            )
-            names.append(name)
-    return names
 
 
 def run_identity(args, count):
@@ -86,52 +19,85 @@ def run_identity(args, count):
     return name, kind, label
 
 
+def evaluation_result(row):
+    status = (
+        "token_limit"
+        if not row["valid"]
+        else "no_answer"
+        if row["no_answer"]
+        else "correct"
+        if row["correct"]
+        else "incorrect"
+    )
+    result = {
+        "budget": row["receiver_budget"],
+        "status": status,
+        "correct": row["correct"],
+        "response": row["raw_receiver_output"],
+    }
+    if row["prediction"] is not None:
+        result["answer"] = row["prediction"]
+    return result
+
+
 @contextmanager
 def sample_trace(
-    tracker, runtime, args, config, item, index, sample_id, step, phase, manifest
+    tracker, runtime, args, config, item, index, sample_id, step, condition, manifest
 ):
+    settings = {
+        "model": args.model_name,
+        "upstream_steps": step,
+        "handoff_condition": condition,
+        "receiver_budgets": args.receiver_budgets,
+        "max_new_tokens": args.max_new_tokens,
+        "free_max_new_tokens": args.free_max_new_tokens,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "seed": args.seed,
+    }
     tags = {
         "experiment_type": "receiver_compute_preflight",
-        "model": args.model_name,
         "task": args.task,
         "split": args.split,
-        "method": args.method,
-        "seed": args.seed,
         "sample_id": sample_id,
         "sample_index": index,
-        "upstream_steps": step,
-        "phase": phase,
         "handoff_mode": "full",
         "receiver_mode": "free",
-        "git_commit": config["git_commit"],
-        "version_tag": config.get("version_tag"),
-        "run_name": config["run_name"],
-        "run_kind": config["run_kind"],
-        "run_label": config["run_label"],
-        "run_id": config["run_id"],
+        **{
+            k: config[k]
+            for k in (
+                "git_commit",
+                "version_tag",
+                "run_name",
+                "run_kind",
+                "run_label",
+                "run_id",
+            )
+        },
+        **{
+            k: settings[k]
+            for k in ("model", "upstream_steps", "handoff_condition", "seed")
+        },
     }
+    inputs = {
+        "question": item["question"],
+        "expected_answer": item.get("gold", ""),
+        "settings": settings,
+    }
+    if item.get("solution"):
+        inputs["reference_solution"] = item["solution"]
+    root_name = f"{args.model_name.split('/')[-1]}_sample_{index}_u{step}_{condition}"
     state, measurements, failure = None, {}, None
-    root_name = f"{args.model_name.split('/')[-1]}_{args.task}_{args.split}_{phase}_sample_{index}_u{step}"
     try:
         with tracker.start_sample_trace(
             root_name,
-            {
-                "sample_id": sample_id,
-                "sample_index": index,
-                "question": item["question"],
-                "gold": item.get("gold", ""),
-                "reference_solution": item.get("solution"),
-                "upstream_steps": step,
-                "phase": phase,
-                "config": config,
-            },
+            inputs,
             tags=tags,
-            request_preview=f"[{index}] U={step} {phase}: {item['question'][:160]}",
+            request_preview=f"[{index}] U={step} {condition}: {item['question'][:160]}",
         ) as root:
             state = {
                 "trace_id": root.trace_id,
                 "records": [],
-                "outputs": {},
                 "required_span_names": [root_name],
             }
             try:
@@ -139,66 +105,78 @@ def sample_trace(
                     yield state
             except (Exception, KeyboardInterrupt) as exc:
                 failure = f"{type(exc).__name__}: {exc}"
-                state["outputs"].update(
-                    error_msg=failure, failure_traceback=traceback.format_exc()
-                )
                 root.set_status("ERROR", failure)
+                root.set_attribute("failure_traceback", traceback.format_exc())
                 raise
             finally:
-                trajectories = [state["outputs"].get("trajectory", {})] + state[
-                    "records"
-                ]
-                for trajectory in trajectories:
-                    for field in ("free_attempts", "prefix_verification_attempts"):
-                        for attempt in trajectory.get(field, []):
-                            if attempt["receiver_trace_id"] == state["trace_id"]:
-                                name = attempt["receiver_span_name"]
-                                if name not in state["required_span_names"]:
-                                    state["required_span_names"].append(name)
                 for row in state["records"]:
                     row.update({f"sample_{k}": v for k, v in measurements.items()})
-                cells = {
-                    cell_key(r): {k: r[k] for k in CELL_FIELDS}
-                    for r in state["records"]
-                }
-                execution = {
-                    "execution_success": failure is None,
-                    "n_records_completed": len(cells),
-                    "no_answer_count": sum(r["no_answer"] for r in state["records"]),
-                    "invalid_count": sum(not r["valid"] for r in state["records"]),
-                }
-                root.set_outputs(
-                    state["outputs"]
-                    | {"cells": cells, "runtime": measurements, "execution": execution}
+                    for field in ("free_attempts", "prefix_verification_attempts"):
+                        for attempt in row[field]:
+                            name = attempt["receiver_span_name"]
+                            if name not in state["required_span_names"]:
+                                state["required_span_names"].append(name)
+                evaluations = [evaluation_result(row) for row in state["records"]]
+                free = next(
+                    (
+                        row
+                        for row in state["records"]
+                        if row["receiver_budget"] == "free"
+                    ),
+                    None,
                 )
-                for k, v in execution.items():
-                    root.set_attribute(k, v)
+                outputs = {"evaluations": evaluations}
+                if free is not None:
+                    outputs = {
+                        "response": free["raw_receiver_output"],
+                        "status": evaluation_result(free)["status"],
+                        **outputs,
+                    }
+                    for key in (
+                        "free_final_cap",
+                        "free_naturally_terminated",
+                        "donor_id",
+                        "donor_sequence_length",
+                        "upstream_trace_id",
+                    ):
+                        if free.get(key) is not None:
+                            root.set_attribute(key, free[key])
+                if failure:
+                    outputs.update(status="execution_error", error=failure)
+                root.set_outputs(outputs)
+                root.set_attribute("execution_success", failure is None)
+                root.set_attribute("n_records_completed", len(evaluations))
+                preview = failure or " | ".join(
+                    f"R={e['budget']}: {e.get('answer', e['status'])}"
+                    for e in evaluations
+                )
                 tracker.update_current_trace(
-                    tags=execution
-                    | {
+                    tags={
+                        "execution_success": failure is None,
+                        "result_status": outputs.get("status", "execution_error"),
                         "peak_vram_gib": measurements.get("peak_vram_bytes", 0) / 2**30,
-                        "peak_reserved_vram_gib": measurements.get(
-                            "peak_vram_reserved_bytes", 0
-                        )
-                        / 2**30,
                     },
-                    response_preview=failure
-                    or " | ".join(
-                        f"{key}: {r['prediction']} ({'PASS' if r['correct'] else 'FAIL'}; valid={r['valid']})"
-                        for key, r in cells.items()
-                    )
-                    or f"{phase}: completed",
+                    response_preview=preview,
                 )
     finally:
         if state is not None and state["trace_id"]:
-            names = assessments(tracker, state, item, measurements, failure)
+            names = []
+            for row in state["records"]:
+                name = f"correct_{'free' if row['receiver_budget'] == 'free' else 'r' + str(row['receiver_budget'])}"
+                tracker.log_feedback(
+                    state["trace_id"],
+                    name,
+                    row["correct"],
+                    rationale=f"R={row['receiver_budget']}; {evaluation_result(row)['status']}; expected={item.get('gold', '')}",
+                )
+                names.append(name)
             manifest.append(
                 {
                     "trace_id": state["trace_id"],
                     "sample_id": sample_id,
                     "sample_index": index,
                     "upstream_steps": step,
-                    "phase": phase,
+                    "handoff_condition": condition,
                     "required_assessments": names,
                     "required_span_names": state["required_span_names"],
                     "execution_success": failure is None,
@@ -206,56 +184,28 @@ def sample_trace(
             )
 
 
-def record_agents(tracker, agents, context_id, source_trace_id, prefix="upstream"):
-    """Show saved latent-agent snapshots without claiming additional inference."""
-    names = []
-    for index, agent in enumerate(agents):
-        name = f"{prefix}_{index}_{agent.get('role', 'agent')}"
-        names.append(name)
-        with tracker.start_span(
-            name,
-            "AGENT",
-            {
-                "context_id": context_id,
-                "source_trace_id": source_trace_id,
-                "recorded_agent_snapshot": True,
-                **agent,
-            },
-        ) as span:
-            span.set_attribute("recorded_agent_snapshot", True)
-            span.set_outputs(agent)
-            span.set_attribute(
-                "recorded_prompt_tokens", len(agent.get("input_ids", []))
-            )
-    return names
-
-
-def record_budget(tracker, row):
-    name = f"{row['handoff_condition']}_evaluate_r{row['receiver_budget']}"
-    row["evaluation_span_name"] = name
+def record_budgets(tracker, rows):
+    names = ["budget_evaluation"]
     with tracker.start_span(
-        name,
-        "EVALUATOR",
-        {
-            "receiver_budget": row["receiver_budget"],
-            "sample_id": row["sample_id"],
-            "handoff_condition": row["handoff_condition"],
-            "gold": row["gold"],
-            "receiver_trace_id": row["receiver_trace_id"],
-            "answer_policy": "explicit_complete_final_answer",
-            "generated_token_ids": row["generated_token_ids"],
-        },
-    ) as span:
-        span.set_outputs(row)
-        span.set_attribute(
-            "evaluation_status",
-            "pathological"
-            if not row["valid"]
-            else "no_answer"
-            if row["no_answer"]
-            else "correct"
-            if row["correct"]
-            else "incorrect",
-        )
-
-    return name
+        "budget_evaluation", "CHAIN", {"budgets": [r["receiver_budget"] for r in rows]}
+    ) as evaluation_span:
+        for row in rows:
+            name = f"evaluate_{'free' if row['receiver_budget'] == 'free' else 'r' + str(row['receiver_budget'])}"
+            names.append(name)
+            row["evaluation_span_name"] = name
+            with tracker.start_span(
+                name,
+                "EVALUATOR",
+                {"budget": row["receiver_budget"], "expected_answer": row["gold"]},
+            ) as span:
+                span.set_outputs(evaluation_result(row))
+                for key in (
+                    "correct",
+                    "no_answer",
+                    "valid",
+                    "final_answer_complete",
+                    "generated_tokens",
+                ):
+                    span.set_attribute(key, row[key])
+        evaluation_span.set_outputs({"budgets_evaluated": len(rows)})
+    return names

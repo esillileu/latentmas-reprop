@@ -63,22 +63,21 @@ def test_only_cap_reaching_trajectory_retries_and_preserves_context(monkeypatch)
     method, args = method_and_args()
     calls = generator(monkeypatch, stop_at=12)
     context = object()
-    result = collect_trajectory(
-        method, {"question": "q", "gold": "42"}, context, args, DEFAULT_EVALUATOR
-    )
+    result = collect_trajectory(method, {"question": "q", "gold": "42"}, context, args)
     assert calls == [(8, context), (16, context)]
     assert result["free_naturally_terminated"] is True
     assert result["pathological"] is False
     assert result["free_initial_cap_reached"] is True
-    assert result["free_retry_count"] == 1
-    assert result["receiver_retry_latency_sec"] == 0.8
+    assert len(result["free_attempts"]) == 2
+    assert "free_retry_count" not in result
+    assert "receiver_retry_latency_sec" not in result
     assert result["metadata"]["receiver_latency_sec"] == 1.6
 
 
 def test_natural_eos_at_cap_is_valid_and_does_not_retry(monkeypatch):
     method, args = method_and_args()
     calls = generator(monkeypatch, stop_at=8)
-    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args, DEFAULT_EVALUATOR)
+    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args)
     assert len(calls) == 1
     assert result["free_naturally_terminated"] is True
     assert result["pathological"] is False
@@ -93,7 +92,7 @@ def test_retry_ceiling_produces_explicit_pathological_records(monkeypatch):
     method, args = method_and_args()
     args.model_name, args.seed = "model", 0
     calls = generator(monkeypatch)
-    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args, DEFAULT_EVALUATOR)
+    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args)
     assert [c[0] for c in calls] == [8, 16, 32]
     assert result["pathological"] is True
     rows = trajectory_records(
@@ -108,8 +107,14 @@ def test_retry_ceiling_produces_explicit_pathological_records(monkeypatch):
         [],
     )
     assert [r["valid"] for r in rows] == [True, True, False]
+    from latentmas_reprop.application.receiver_compute_preflight.answers import (
+        reevaluate_records,
+    )
+
+    evaluated = reevaluate_records(rows, DEFAULT_EVALUATOR)
     assert all(
-        r["donor_length_delta"] == 2 and r["donor_length_abs_delta"] == 2 for r in rows
+        r["donor_length_delta"] == 2 and r["donor_length_abs_delta"] == 2
+        for r in evaluated
     )
     assert rows[-1]["free_cap_reached"] is True
 
@@ -118,13 +123,19 @@ def test_expansion_refuses_changed_prefix(monkeypatch):
     method, args = method_and_args()
     generator(monkeypatch, stop_at=12, mutate=True)
     with pytest.raises(ValueError, match="initial greedy prefix"):
-        collect_trajectory(method, {"question": "q", "gold": "42"}, None, args, DEFAULT_EVALUATOR)
+        collect_trajectory(method, {"question": "q", "gold": "42"}, None, args)
 
 
 def test_actual_capped_smoke_verification_ignores_timing_variation(monkeypatch):
     method, args = method_and_args()
     args.verify_prefix = True
     calls = generator(monkeypatch, stop_at=6)
-    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args, DEFAULT_EVALUATOR)
+    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args)
     assert [c[0] for c in calls] == [8, 2, 4]
-    assert result["prefix_verified"] is True
+    from latentmas_reprop.application.receiver_compute_preflight.answers import (
+        trajectory_diagnostics,
+    )
+
+    row = result | result["metadata"]
+    assert "prefix_verified" not in result
+    assert trajectory_diagnostics(row)["prefix_verified"] is True

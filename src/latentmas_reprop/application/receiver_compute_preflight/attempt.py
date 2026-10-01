@@ -3,8 +3,6 @@
 from contextlib import nullcontext
 
 from ...domain.ports.tracking_port import DummySpan
-from .cost import compute_proxy
-from .inference import evaluate_prefix
 
 
 def generate_attempt(
@@ -19,7 +17,6 @@ def generate_attempt(
     tracker,
     runtime,
     trace_inputs,
-    evaluator,
     termination,
 ):
     name = f"{(trace_inputs or {}).get('handoff_condition', 'receiver')}_{purpose}_attempt_{attempt_index}_cap_{cap}"
@@ -52,7 +49,16 @@ def generate_attempt(
                 {"execution_success": False, "error_msg": str(exc), "runtime": measured}
             )
             raise
-        span.set_inputs(inputs | metadata)
+        span.set_inputs(
+            {
+                "prompt": metadata["receiver_prompt"],
+                "parameters": {"max_new_tokens": cap, "temperature": 0.0, "top_p": 1.0},
+            }
+        )
+        for key, value in inputs.items():
+            if value is not None:
+                span.set_attribute(key, value)
+        span.set_attribute("input_token_ids", metadata["receiver_input_ids"])
         span.set_token_usage(metadata["receiver_prompt_tokens"], len(ids))
         metadata.update(
             {f"receiver_{k}": v for k, v in measured.items() if k != "latency_sec"}
@@ -60,72 +66,38 @@ def generate_attempt(
         metadata["receiver_execution_latency_sec"] = measured.get("latency_sec")
         metadata["receiver_trace_id"] = span.trace_id
         metadata["receiver_span_name"] = name
-        metadata["receiver_generated_tokens_per_sec"] = (
-            len(ids) / metadata["receiver_latency_sec"]
-            if metadata["receiver_latency_sec"]
-            else 0.0
-        )
         reason = termination(method.model, ids, cap)
-        evaluation = evaluate_prefix(
-            method.model.tokenizer,
-            evaluator,
-            item,
-            ids,
-            "free",
-            reason != "cap",
-            metadata["receiver_thinking_open"],
-        )
-        span.set_attribute("termination_reason", reason)
-        span.set_attribute(
-            "evaluation_status",
-            "pathological"
-            if reason == "cap"
-            else "no_answer"
-            if evaluation["no_answer"]
-            else "correct"
-            if evaluation["correct"]
-            else "incorrect",
-        )
         span.set_outputs(
             {
-                **evaluation,
+                "text": method.model.tokenizer.decode(ids, skip_special_tokens=True),
                 "termination_reason": reason,
-                "generated_token_ids": ids,
-                "raw_receiver_output": method.model.tokenizer.decode(
-                    ids, skip_special_tokens=True
-                ),
-                "generated_tokens": len(ids),
-                "execution_success": True,
-                **metadata,
-                **compute_proxy(
-                    metadata["receiver_cache_positions"],
-                    metadata["receiver_prompt_tokens"],
-                    len(ids),
-                ),
             }
         )
+        span.set_attribute("generated_token_ids", ids)
+        span.set_attribute("termination_reason", reason)
+        span.set_attribute("execution_success", True)
+        for key, value in metadata.items():
+            if (
+                key not in {"receiver_prompt", "receiver_input_ids"}
+                and value is not None
+            ):
+                span.set_attribute(key, value)
         return ids, metadata
 
 
-def finish_attempt(metadata, ids, cap, reason, method, item, evaluator):
-    evaluation = evaluate_prefix(
-        method.model.tokenizer,
-        evaluator,
-        item,
-        ids,
-        "free",
-        reason != "cap",
-        metadata["receiver_thinking_open"],
-    )
+def finish_attempt(metadata, ids, cap, reason, method):
     return {
         "cap": cap,
+        "generated_token_ids": ids,
         "generated_tokens": len(ids),
         "termination_reason": reason,
         "receiver_latency_sec": metadata["receiver_latency_sec"],
         "receiver_trace_id": metadata["receiver_trace_id"],
         "receiver_span_name": metadata["receiver_span_name"],
-        "prediction": evaluation["prediction"],
-        "correct": evaluation["correct"],
-        "no_answer": evaluation["no_answer"],
-        "raw_receiver_output": evaluation["raw_receiver_output"],
+        "receiver_prompt": metadata["receiver_prompt"],
+        "receiver_input_ids": metadata["receiver_input_ids"],
+        "receiver_thinking_open": metadata["receiver_thinking_open"],
+        "raw_receiver_output": method.model.tokenizer.decode(
+            ids, skip_special_tokens=True
+        ),
     }

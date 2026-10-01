@@ -5,27 +5,13 @@ import traceback
 from copy import copy
 from pathlib import Path
 
-from transformers import set_seed
-
 from ..domain.models import compute_sample_key
-from ..domain.services.kv_cache import move_past_kv
-from ..domain.services.latent_mas import LatentMASMethod
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.tracking.mlflow_tracker import get_git_commit_hash
 from .common.reporter import clean_config_args, write_json, write_jsonl, write_yaml
-from .receiver_compute_preflight.analysis import CONDITIONS, export
-from .receiver_compute_preflight.inference import length_matched_donors
-from .receiver_compute_preflight.records import trajectory_records
-from .receiver_compute_preflight.statistics import curve_metrics
-from .receiver_compute_preflight.tracing import (
-    record_agents,
-    record_budget,
-    run_identity,
-    sample_trace,
-)
-from .receiver_compute_preflight.trajectory import collect_trajectory
-from .receiver_reasoning.inference import build_upstream
+from .receiver_compute_preflight.collection import collect_samples
+from .receiver_compute_preflight.tracing import run_identity
 from .receiver_reasoning.runtime import RuntimeMeasurements
 
 
@@ -100,164 +86,27 @@ class ReceiverComputePreflightUseCase:
             directory = Path(tmp)
             write_yaml(directory / "resolved_config.yaml", config)
             try:
-                # No-handoff is U-independent: generate once per sample and reuse across U.
-                baseline_method = self._method(model, args, 0)
-                baseline = []
-                for i, item in enumerate(items):
-                    with sample_trace(
-                        tracker,
-                        runtime,
-                        args,
-                        config,
-                        item,
-                        i,
-                        ids[i],
-                        0,
-                        "baseline",
-                        manifest,
-                    ) as state:
-                        trajectory = collect_trajectory(
-                            baseline_method,
-                            item,
-                            None,
-                            args,
-                            self.evaluator,
-                            tracker,
-                            runtime,
-                            {
-                                "sample_id": ids[i],
-                                "model": args.model_name,
-                                "handoff_condition": "no_handoff",
-                            },
-                        )
-                        state["outputs"]["trajectory"] = trajectory
-                        baseline.append(trajectory)
-                for u in args.upstream_steps:
-                    method = self._method(model, args, u)
-                    contexts, traces, metadata = [], [], []
-                    upstream_ids = []
-                    for i, (sid, item) in enumerate(zip(ids, items, strict=True)):
-                        with sample_trace(
-                            tracker,
-                            runtime,
-                            args,
-                            config,
-                            item,
-                            i,
-                            sid,
-                            u,
-                            "upstream",
-                            manifest,
-                        ) as state:
-                            set_seed(args.seed)
-                            context, trace, measurements = build_upstream(
-                                method, item, u, None, f"{sid}:{u}", tracker, runtime
-                            )
-                            state["outputs"].update(
-                                upstream=measurements, agents=trace[0]
-                            )
-                            state["required_span_names"].append(f"build_upstream_{u}")
-                            state["required_span_names"].extend(
-                                record_agents(
-                                    tracker, trace[0], f"{sid}:{u}", state["trace_id"]
-                                )
-                            )
-                            upstream_ids.append(state["trace_id"])
-                            contexts.append(move_past_kv(context, "cpu"))
-                            traces.append(trace[0])
-                            metadata.append(measurements)
-                    donors = length_matched_donors(
-                        [m["handoff_positions"] for m in metadata]
-                    )
-                    for i, item in enumerate(items):
-                        with sample_trace(
-                            tracker,
-                            runtime,
-                            args,
-                            config,
-                            item,
-                            i,
-                            ids[i],
-                            u,
-                            "paired",
-                            manifest,
-                        ) as state:
-                            for condition in CONDITIONS:
-                                donor = i if condition == "matched" else donors[i]
-                                if condition == "no_handoff":
-                                    trajectory = baseline[i]
-                                    donor_id, donor_meta, donor_trace = None, {}, []
-                                else:
-                                    trajectory = collect_trajectory(
-                                        method,
-                                        item,
-                                        contexts[donor],
-                                        args,
-                                        self.evaluator,
-                                        tracker,
-                                        runtime,
-                                        {
-                                            "sample_id": ids[i],
-                                            "model": args.model_name,
-                                            "handoff_condition": condition,
-                                            "donor_id": ids[donor],
-                                            "context_id": f"{ids[donor]}:{u}",
-                                            "upstream_trace_id": upstream_ids[donor],
-                                        },
-                                    )
-                                    donor_id, donor_meta, donor_trace = (
-                                        ids[donor],
-                                        metadata[donor],
-                                        traces[donor],
-                                    )
-                                rows = trajectory_records(
-                                    model,
-                                    self.evaluator,
-                                    item,
-                                    args,
-                                    trajectory,
-                                    {
-                                        "sample_id": ids[i],
-                                        "sample_index": i,
-                                        "upstream_steps": u,
-                                        "handoff_condition": condition,
-                                        "donor_id": donor_id,
-                                        "context_id": f"{donor_id}:{u}"
-                                        if donor_id
-                                        else None,
-                                    },
-                                    metadata[i],
-                                    donor_meta,
-                                    donor_trace,
-                                )
-                                for row in rows:
-                                    row["trace_id"] = state["trace_id"]
-                                    row["upstream_trace_id"] = (
-                                        upstream_ids[donor] if donor_id else None
-                                    )
-                                    state["required_span_names"].append(
-                                        record_budget(tracker, row)
-                                    )
-                                if donor_id:
-                                    state["required_span_names"].extend(
-                                        record_agents(
-                                            tracker,
-                                            donor_trace,
-                                            f"{donor_id}:{u}",
-                                            upstream_ids[donor],
-                                            prefix=condition,
-                                        )
-                                    )
-                                state["records"].extend(rows)
-                                records.extend(rows)
-                                write_jsonl(directory / "sample_results.jsonl", records)
-                        print(
-                            f"[compute preflight] U={u} sample={i + 1}/{len(items)}",
-                            flush=True,
-                        )
-                    del contexts
-                metrics = export(directory, records, config)
-                tracker.log_metrics(curve_metrics(metrics["curves"]))
+                collect_samples(
+                    model,
+                    args,
+                    items,
+                    ids,
+                    config,
+                    tracker,
+                    self.evaluator,
+                    runtime,
+                    records,
+                    manifest,
+                    directory / "sample_results.jsonl",
+                )
+                summary = {
+                    "sample_count": len(items),
+                    "result_count": len(records),
+                    "trace_count": len(manifest),
+                    "run_id": config["run_id"],
+                    "runtime": runtime.run_peak(),
+                }
+                write_json(directory / "collection_summary.json", summary)
             except (Exception, KeyboardInterrupt):
                 write_json(
                     directory / "failure.json", {"traceback": traceback.format_exc()}
@@ -274,15 +123,4 @@ class ReceiverComputePreflightUseCase:
                 tracker.log_artifact(path, artifact_path="results")
             tracker.flush_traces()
             tracker.end_run(status="FINISHED")
-        return metrics, records
-
-    def _method(self, model, args, steps):
-        return LatentMASMethod(
-            model,
-            latent_steps=steps,
-            args=args,
-            evaluator=self.evaluator,
-            temperature=0.0,
-            top_p=1.0,
-            generate_bs=1,
-        )
+        return summary, records

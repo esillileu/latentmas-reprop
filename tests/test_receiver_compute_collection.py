@@ -1,5 +1,6 @@
 """Receiver collection reuses paired contexts and baseline trajectories."""
 
+import json
 from contextlib import contextmanager
 from types import SimpleNamespace
 
@@ -7,14 +8,22 @@ import pytest
 
 from latentmas_reprop.domain.ports.tracking_port import DummySpan, ExperimentTrackerPort
 from src.run.cli import parse_run_matrix
+from src.run.compute_preflight_analysis import main
 
 
 @pytest.mark.parametrize("persist_traces", [False, True])
 def test_collection_builds_each_context_once_and_uses_other_sample(
     monkeypatch, tmp_path, persist_traces
 ):
+    import latentmas_reprop.application.receiver_compute_preflight.analysis as analysis
+    import latentmas_reprop.application.receiver_compute_preflight.collection as collection
     import latentmas_reprop.application.receiver_compute_preflight.trajectory as trajectory
     import latentmas_reprop.application.receiver_compute_preflight_use_case as module
+
+    def forbid_analysis(*args, **kwargs):
+        raise AssertionError("Collection must not run statistical analysis")
+
+    monkeypatch.setattr(analysis, "export", forbid_analysis)
 
     class Tracker(ExperimentTrackerPort):
         def log_dict(self, *args, **kwargs):
@@ -73,7 +82,7 @@ def test_collection_builds_each_context_once_and_uses_other_sample(
             self.artifacts[path.name] = path.read_text()
 
         def log_metrics(self, metrics):
-            pass
+            raise AssertionError("Collection must not log analysis metrics")
 
         def flush_traces(self):
             pass
@@ -130,8 +139,6 @@ def test_collection_builds_each_context_once_and_uses_other_sample(
             "2,4,free",
             "--max_new_tokens",
             "8",
-            "--bootstrap_count",
-            "10",
         ]
     )[0]
     calls, generation_calls = [], []
@@ -139,6 +146,8 @@ def test_collection_builds_each_context_once_and_uses_other_sample(
     def build(method, item, step, width, context_id, tracker, runtime):
         assert width is None
         calls.append((item["question"], step))
+        with tracker.start_span(f"build_upstream_{step}", "CHAIN") as span:
+            span.set_outputs({"handoff_positions": len(item["question"])})
         return (
             None,
             [[{"latent_steps": step}]],
@@ -157,7 +166,7 @@ def test_collection_builds_each_context_once_and_uses_other_sample(
             "receiver_budget_latency_sec": {str(b): 0.05 for b in budgets},
         }
 
-    monkeypatch.setattr(module, "build_upstream", build)
+    monkeypatch.setattr(collection, "build_upstream", build)
     monkeypatch.setattr(trajectory, "generate_receiver", generate)
     model = SimpleNamespace(
         device="cpu",
@@ -180,30 +189,51 @@ def test_collection_builds_each_context_once_and_uses_other_sample(
     )
     assert all(r["valid"] for r in rows)
 
-    mismatched = [r for r in rows if r["handoff_condition"] == "mismatched"]
+    from latentmas_reprop.application.receiver_compute_preflight.answers import (
+        reevaluate_records,
+    )
+    from latentmas_reprop.infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
+
+    assert all(
+        "donor_length_delta" not in r
+        and "receiver_attention_pairs" not in r
+        and "receiver_generated_tokens_per_sec" not in r
+        and "prefix_verified" not in r
+        for r in rows
+    )
+    analyzed = reevaluate_records(rows, DEFAULT_EVALUATOR)
+    mismatched = [r for r in analyzed if r["handoff_condition"] == "mismatched"]
     assert all(r["donor_length_abs_delta"] == 1 for r in mismatched)
     assert {r["donor_length_delta"] for r in mismatched} == {-1, 1}
     assert all(
-        r["mean_receiver_latency_sec"] == 0.05
-        for r in metrics["curves"]
-        if r["receiver_budget"] == 2
+        r["receiver_latency_sec"] == 0.05 for r in analyzed if r["receiver_budget"] == 2
     )
-
-    import json
+    assert "curves" not in metrics
+    assert set(tracker.artifacts) == {
+        "sample_results.jsonl",
+        "resolved_config.yaml",
+        "collection_summary.json",
+        "trace_manifest.json",
+    }
 
     assert "Qwen3" in tracker.run_options["run_name"]
     assert "smoke" in tracker.run_options["run_name"]
     assert "_u10-20_r2-4-free_seed" in tracker.run_options["run_name"]
     if not persist_traces:
-        assert len(tracker.roots) == 10  # two baseline, four upstream, four paired
+        assert len(tracker.roots) == 10  # two no-handoff, four matched, four mismatched
         assert len([s for s in tracker.spans if s[2] == "LLM"]) == 10
-        assert len([s for s in tracker.spans if s[2] == "EVALUATOR"]) == 36
+        assert len([s for s in tracker.spans if s[2] == "EVALUATOR"]) == 30
     assert all(r["trace_id"] and r["receiver_trace_id"] for r in rows)
     assert all(r["upstream_trace_id"] for r in rows if r["donor_id"])
     manifest = json.loads(tracker.artifacts["trace_manifest.json"])
     assert len(manifest) == 10
     assert all(m["execution_success"] for m in manifest)
-    assert len([f for f in tracker.feedback if f[1].endswith("_correct")]) == 36
+    assert len(tracker.feedback) == 30
+    assert {f[1] for f in tracker.feedback} == {
+        "correct_r2",
+        "correct_r4",
+        "correct_free",
+    }
 
     if persist_traces:
         import mlflow
@@ -212,11 +242,57 @@ def test_collection_builds_each_context_once_and_uses_other_sample(
             trace = mlflow.get_trace(entry["trace_id"])
             assert trace is not None
             names = {span.name for span in trace.data.spans}
-            # The upstream builder is mocked in this test.
-            assert (
-                set(entry["required_span_names"])
-                - {"build_upstream_10", "build_upstream_20"}
-                <= names
-            )
+            assert set(entry["required_span_names"]) <= names
             assessments = {a.name for a in trace.info.assessments}
-            assert set(entry["required_assessments"]) <= assessments
+            assert assessments == {"correct_r2", "correct_r4", "correct_free"}
+            assert set(entry["required_assessments"]) == assessments
+            spans = {span.name: span for span in trace.data.spans}
+            root = next(span for span in trace.data.spans if span.parent_id is None)
+            root_children = {
+                span.name for span in trace.data.spans if span.parent_id == root.span_id
+            }
+            expected = {"receiver", "budget_evaluation"}
+            if entry["handoff_condition"] == "matched":
+                expected.add(f"build_upstream_{entry['upstream_steps']}")
+            elif entry["handoff_condition"] == "mismatched":
+                expected.add("reuse_upstream")
+            assert root_children == expected
+            assert spans["free_generation"].parent_id == spans["receiver"].span_id
+            for name, span in spans.items():
+                if name.startswith("evaluate_"):
+                    assert span.parent_id == spans["budget_evaluation"].span_id
+                    assert "receiver_prompt" not in span.outputs
+                    assert "upstream_agents" not in span.outputs
+                elif span.span_type == "LLM":
+                    assert span.parent_id == spans["free_generation"].span_id
+                    assert set(span.outputs) <= {"text", "answer", "termination_reason"}
+                    assert "prompt" in span.inputs
+
+            def assert_no_nulls(value):
+                assert value is not None
+                if isinstance(value, dict):
+                    for child in value.values():
+                        assert_no_nulls(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        assert_no_nulls(child)
+
+            for span in trace.data.spans:
+                assert_no_nulls(span.inputs or {})
+                assert_no_nulls(span.outputs or {})
+
+        # The independent analysis command can reconstruct everything from uploaded raw results.
+        monkeypatch.setenv("MLFLOW_TRACKING_URI", backend.tracking_uri)
+        output = tmp_path / "analysis"
+        main(
+            [
+                "--run-id",
+                backend.active_run_id or tracker.config["run_id"],
+                "--output-dir",
+                str(output),
+                "--bootstrap-count",
+                "10",
+            ]
+        )
+        assert (output / "budget_curves.csv").exists()
+        assert (output / "analysis_config.yaml").exists()

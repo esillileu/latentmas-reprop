@@ -101,13 +101,3 @@ def threshold_rows(curves, config):
                     )
                 rows.append(row)
     return rows
-
-
-def curve_metrics(curves):
-    return {
-        f"{key}_u{r['upstream_steps']}_{r['handoff_condition']}_r{r['receiver_budget']}": value
-        for r in curves
-        for key, value in r.items()
-        if key not in {"upstream_steps", "receiver_budget"}
-        and isinstance(value, (float, int))
-    }

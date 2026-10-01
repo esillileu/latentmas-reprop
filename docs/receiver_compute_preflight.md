@@ -12,15 +12,14 @@ just run-receiver-compute-preflight -c lmas/receiver_compute_preflight/gsm8k
 just run-receiver-compute-preflight -c lmas/receiver_compute_preflight/gsm8k \
   --model_name Qwen/Qwen3-0.6B --max_samples 2 --upstream_steps 1,2 \
   --receiver_budgets 8,16,free --max_new_tokens 32 --free_max_new_tokens 64 \
-  --bootstrap_count 100 --verify_prefix
+  --verify_prefix
 ```
 
 The preset expands Qwen3-4B/8B/14B into separate sequential MLflow runs. Each uses
 U=10/20, R=64/128/256/512/1024/free, 20 identical paired samples, and greedy decoding
 (`temperature=0`, `top_p=1`). The initial free cap is 4096 and the retry ceiling
 is 8192. Override `--model_name`, `--upstream_steps`, `--receiver_budgets`,
-`--max_new_tokens`, `--free_max_new_tokens`, `--target_accuracies`,
-`--bootstrap_count`, and `--seed`. U/R/target axes in YAML are comma-separated
+`--max_new_tokens`, `--free_max_new_tokens`, and `--seed`. U/R axes in YAML are comma-separated
 strings; top-level YAML lists expand independent runs. At least two unique
 samples are required for mismatched handoff.
 
@@ -61,8 +60,8 @@ paired comparisons involving it. No sample is dropped or quietly counted as an
 ordinary free failure. Thus a reported valid free endpoint has zero truncation;
 a remaining pathological case prevents reporting that endpoint as baseline
 performance on the full paired set. `free_initial_cap_reached`, `free_final_cap`,
-`free_retry_count`, `free_naturally_terminated` and `free_cap_reached` distinguish
-initial retries from unresolved final truncation. Natural termination alone does
+`free_naturally_terminated`, and `free_cap_reached` describe the observed termination.
+Analysis derives `free_retry_count` from the recorded attempts. Natural termination alone does
 not imply that a final answer is present or correct.
 
 ## Receiver cost
@@ -75,12 +74,13 @@ trajectory ending before R uses its full measured duration. No per-token speed
 interpolation is used. Latency includes receiver prompt prefill and autoregressive
 generation plus observer overhead; it excludes prompt preparation, CPU-to-GPU
 handoff transfer, evaluation, upstream computation, and discarded retry attempts.
-Discarded retry latency is saved separately as `receiver_retry_latency_sec`.
+Every attempt has its measured latency recorded. Analysis sums discarded attempts into
+`receiver_retry_latency_sec`.
 Checkpoints come from the final attempt. These are observed trajectory-prefix
 times, rather than separately timed capped inference runs.
 
 Let C be handed-off cache positions, P receiver prompt tokens, G generated tokens
-including EOS, and D=max(G-1,0). The first token comes from prefill. Saved proxies:
+including EOS, and D=max(G-1,0). The first token comes from prefill. Analysis computes:
 
 - `receiver_processed_positions = P + D`.
 - `receiver_attention_pairs = P*C + P*(P+1)/2 + D*(C+P) + D*(D+1)/2`.
@@ -123,11 +123,15 @@ automated interpretation or conclusions.
 ## MLflow artifacts and reanalysis
 
 MLflow is the source of truth. Execution uses temporary artifact staging, uploads
-under `results/`, then removes staging. Artifacts include `sample_results.jsonl`,
-`resolved_config.yaml`, `summary.md`, `metrics.json`, `sample_matrix.csv`,
-`budget_curves.csv`, and `bootstrap_statistics.json`. Scalar accuracy/cost means,
-CIs, and diagnostics are also logged as MLflow metrics. Failures upload available
+under `results/`, then removes staging. Collection artifacts are `sample_results.jsonl`,
+`resolved_config.yaml`, `collection_summary.json`, and `trace_manifest.json`.
+Collection performs per-answer scoring for trace feedback, but no curve aggregation,
+bootstrap, threshold analysis, or statistical metric logging. Failures upload available
 records/config and `failure.json` and mark the run FAILED.
+
+Run the separate analysis command after collection to produce `summary.md`, `metrics.json`,
+`sample_matrix.csv`, `budget_curves.csv`, and `bootstrap_statistics.json`. Analysis parameters
+belong to this command; `analysis_config.yaml` records the resolved analysis configuration.
 
 ```bash
 just analyze-receiver-compute-preflight --run-id RUN_ID \
@@ -153,18 +157,42 @@ upstream levels, receiver budgets, seed, and timestamp. Use `--run_label` to dis
 individual tests (for example `--run_label prefix-check`). Two-sample runs and prefix
 verification runs have `run_kind=smoke`; larger runs have `run_kind=experiment`.
 
-Sample traces cover baseline generation, upstream construction, and paired evaluation
-at each upstream level. Paired traces include receiver LLM spans for every actual
-attempt and prefix verification, evaluator spans for every budget and handoff condition,
-and saved upstream agent snapshots linked to their source trace. Baselines are generated
-once and referenced by `receiver_trace_id` when reused. Agent snapshots do not count
-as new inference or token usage.
+One trace owns one sample, upstream level U, and handoff condition M. Its tree is:
 
-Traces record questions, gold answers, reference solutions, resolved configuration,
-prompts and input IDs, generated IDs and raw text, predictions, correctness, answer
-completeness, termination and retry diagnostics, donor identity and cache metadata,
-latency, throughput, VRAM, and attention/position compute proxies. Ground truth and
-per-cell evaluation feedback are attached as assessments. `results/trace_manifest.json`
-lists trace IDs and assessment/span names; `sample_results.jsonl` links each result to
-its paired, receiver, and upstream traces. On failure, completed results, the manifest,
-and traceback are uploaded and traces flushed before the run is closed.
+```text
+sample / U / handoff
+├── build_upstream_U          (matched: actual inference, agent details saved here)
+│   or reuse_upstream        (mismatched: reference to the donor's matched trace)
+├── receiver
+│   ├── free_generation
+│   │   └── actual generation attempts, including cap-extension retries
+│   └── prefix_verification  (only when requested)
+│       └── actual capped generation checks
+└── budget_evaluation
+    ├── evaluate_r64
+    ├── evaluate_r128 ...
+    └── evaluate_free
+```
+
+The U-independent no-handoff condition is generated and evaluated once per sample
+with U=0; U-specific analysis rows reference that same trace. It has no upstream span.
+Cached donor reuse does not create simulated agent execution spans.
+
+Every trace with completed evaluations has the same correctness-only assessment names:
+`correct_r64`, `correct_r128`, ... and `correct_free` for the configured budget list.
+Model, U, and handoff identify the trace, and are not embedded in assessment names.
+Gold answers and reference solutions are trace inputs. Answer status, validity, termination,
+actual attempts, token counts, latency checkpoints, and VRAM are attributes.
+Assessments never contain metrics or execution diagnostics. Analysis derives throughput,
+attention/position compute proxies, donor length deltas, retry cost, and prefix equivalence
+from saved measurements, token IDs, and prompts. These derived values appear in analysis artifacts.
+
+Root outputs show the actual response, answer status, and compact budget evaluations.
+LLM inputs/outputs show the prompt and generated text; token IDs and diagnostics are
+attributes. Missing answers are identified by `no_answer` or `token_limit` status rather
+than repeated null predictions. Raw artifacts preserve the original scoring values.
+
+`trace_manifest.json` identifies each sample/U/condition trace and its required spans
+and correctness assessments. `sample_results.jsonl` links every budget result to its
+trace and donor source. On failure, completed results, the manifest, and traceback are
+uploaded and traces flushed before the run is closed.
