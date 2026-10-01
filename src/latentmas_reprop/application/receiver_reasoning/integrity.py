@@ -28,6 +28,7 @@ CONFIG_KEYS = (
     "handoff_positions",
     "include_no_handoff",
     "handoff_mode",
+    "model_dtype",
 )
 REQUIRED_CONFIG = (
     *CONFIG_KEYS[:7],

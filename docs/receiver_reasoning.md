@@ -24,7 +24,7 @@ Each preset specifies a scalar `model_name` and a comma-separated string such as
 normalized out of the positive build levels and executed exactly once per mode.
 Omitting zero still includes the same baseline. Each model creates one run with
 six cells per sample (120 receiver decodes over 20 samples), sharing its dataset
-and upstream contexts for paired comparisons. Full KV handoff and a 4096-token
+and upstream contexts for paired comparisons. FP16 model weights/KV, full KV handoff and a 4096-token
 free budget are the defaults. Each sample owns one root MLflow trace containing
 both upstream build spans and all six receiver spans, with prompts, outputs,
 correctness, truncation, scoped latency and allocated/reserved VRAM. A 20-sample
@@ -269,3 +269,7 @@ details. These tags contain measured costs, while existing provenance tags stay
 unchanged. Run metrics include core cell comparisons, run costs, execution health,
 and paired accuracy deltas. Detailed distributions remain in JSON artifacts and
 traces rather than being expanded into hundreds of run metrics.
+
+Model inference uses FP16 on every device, even when the GPU supports BF16.
+The resolved configuration records `model_dtype`, while cache diagnostics record
+the actual KV dtype. HuggingFace, vLLM and secondary HF models share this policy.

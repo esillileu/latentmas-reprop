@@ -82,8 +82,8 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
         assert run.prompt == "sequential"
 
 
-def test_cpu_dtype_is_fp32_and_unavailable_cuda_fails(monkeypatch):
-    assert resolve_model_dtype(torch.device("cpu")) is torch.float32
+def test_cpu_dtype_is_fp16_and_unavailable_cuda_fails(monkeypatch):
+    assert resolve_model_dtype(torch.device("cpu")) is torch.float16
 
     class _Cuda:
         @staticmethod
@@ -98,7 +98,7 @@ def test_cpu_dtype_is_fp32_and_unavailable_cuda_fails(monkeypatch):
         ensure_cuda_available(torch.device("cuda"))
 
 
-def test_cuda_dtype_follows_bf16_support(monkeypatch):
+def test_cuda_dtype_is_fp16_regardless_of_bf16_support(monkeypatch):
     monkeypatch.setattr(
         "latentmas_reprop.infrastructure.models.dtype.ensure_cuda_available",
         lambda device: None,
@@ -112,7 +112,7 @@ def test_cuda_dtype_follows_bf16_support(monkeypatch):
         "latentmas_reprop.infrastructure.models.dtype.torch.cuda.is_bf16_supported",
         lambda: True,
     )
-    assert resolve_model_dtype(torch.device("cuda")) is torch.bfloat16
+    assert resolve_model_dtype(torch.device("cuda")) is torch.float16
 
 
 def test_available_cuda_does_not_require_exact_compiled_arch(monkeypatch):

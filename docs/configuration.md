@@ -120,3 +120,7 @@ To create a new preset:
    ```bash
    just run -c lm_q38_aime2024
    ```
+
+Model inference precision is fixed to FP16 across hardware and backends, including
+secondary HuggingFace models. BF16 capability does not change the selected dtype.
+Numerical analysis routines retain their explicit computation dtypes.

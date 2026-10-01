@@ -58,6 +58,7 @@ class ReceiverReasoningUseCase:
         if not items:
             raise ValueError("Receiver reasoning requires a nonempty dataset")
         config = clean_config_args(args)
+        config["model_dtype"] = getattr(model, "dtype_name", None)
         config["git_commit"] = get_git_commit_hash()
         stem = build_run_stem(
             "receiver_reasoning", args.task, args.model_name, len(items)

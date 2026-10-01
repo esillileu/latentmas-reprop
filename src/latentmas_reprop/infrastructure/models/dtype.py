@@ -20,15 +20,9 @@ def ensure_cuda_available(device: torch.device) -> None:
 
 
 def resolve_model_dtype(device: torch.device) -> torch.dtype:
-    """Select BF16 on supported GPUs, FP16 otherwise, and FP32 on CPU."""
-    if device.type == "cpu":
-        return torch.float32
-    if device.type == "cuda":
-        ensure_cuda_available(device)
-        if torch.cuda.is_bf16_supported():
-            return torch.bfloat16
-        return torch.float16
-    return torch.float32
+    """Use FP16 for model inference on every device, independent of BF16 support."""
+    ensure_cuda_available(device)
+    return torch.float16
 
 
 def peak_allocated_bytes() -> int:
