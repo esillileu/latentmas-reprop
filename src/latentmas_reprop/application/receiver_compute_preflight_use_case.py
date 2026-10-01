@@ -15,11 +15,10 @@ from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.tracking.mlflow_tracker import get_git_commit_hash
 from .common.reporter import clean_config_args, write_json, write_jsonl, write_yaml
 from .receiver_compute_preflight.analysis import CONDITIONS, export
-from .receiver_compute_preflight.inference import (
-    evaluate_prefix,
-    generate_receiver,
-    length_matched_donors,
-)
+from .receiver_compute_preflight.inference import length_matched_donors
+from .receiver_compute_preflight.records import trajectory_records
+from .receiver_compute_preflight.statistics import curve_metrics
+from .receiver_compute_preflight.trajectory import collect_trajectory
 from .receiver_reasoning.inference import build_upstream
 from .receiver_reasoning.runtime import RuntimeMeasurements
 
@@ -55,7 +54,10 @@ class ReceiverComputePreflightUseCase:
             "git_commit": get_git_commit_hash(),
             "handoff_mode": "full",
             "receiver_mode": "free",
-            "donor_policy": "length_sorted_rotation",
+            "donor_policy": "minimum_total_absolute_length_derangement",
+            "answer_policy": "explicit_complete_final_answer",
+            "receiver_latency_definition": "synchronized generation including receiver prefill; excludes cache transfer, evaluation and discarded retries",
+            "compute_proxy_definition": "causal attention pairs per layer/head and processed transformer positions; not FLOPs",
         }
         tracker = self.tracker
         tracker.start_run(
@@ -76,7 +78,9 @@ class ReceiverComputePreflightUseCase:
                 # No-handoff is U-independent: generate once per sample and reuse across U.
                 baseline_method = self._method(model, args, 0)
                 baseline = [
-                    self._trajectory(baseline_method, item, None, args)
+                    collect_trajectory(
+                        baseline_method, item, None, args, self.evaluator
+                    )
                     for item in items
                 ]
                 for u in args.upstream_steps:
@@ -97,51 +101,39 @@ class ReceiverComputePreflightUseCase:
                         for condition in CONDITIONS:
                             donor = i if condition == "matched" else donors[i]
                             if condition == "no_handoff":
-                                trajectory, prompt, verified = baseline[i]
+                                trajectory = baseline[i]
                                 donor_id, donor_meta, donor_trace = None, {}, []
                             else:
-                                trajectory, prompt, verified = self._trajectory(
-                                    method, item, contexts[donor], args
+                                trajectory = collect_trajectory(
+                                    method, item, contexts[donor], args, self.evaluator
                                 )
                                 donor_id, donor_meta, donor_trace = (
                                     ids[donor],
                                     metadata[donor],
                                     traces[donor],
                                 )
-                            cap_reached = len(trajectory) >= args.max_new_tokens
-                            for budget in args.receiver_budgets:
-                                row = evaluate_prefix(
-                                    model.tokenizer,
+                            records.extend(
+                                trajectory_records(
+                                    model,
                                     self.evaluator,
                                     item,
+                                    args,
                                     trajectory,
-                                    budget,
+                                    {
+                                        "sample_id": ids[i],
+                                        "sample_index": i,
+                                        "upstream_steps": u,
+                                        "handoff_condition": condition,
+                                        "donor_id": donor_id,
+                                        "context_id": f"{donor_id}:{u}"
+                                        if donor_id
+                                        else None,
+                                    },
+                                    metadata[i],
+                                    donor_meta,
+                                    donor_trace,
                                 )
-                                row.update(
-                                    sample_id=ids[i],
-                                    sample_index=i,
-                                    question=item["question"],
-                                    gold=item.get("gold", ""),
-                                    reference_solution=item.get("solution"),
-                                    upstream_steps=u,
-                                    handoff_condition=condition,
-                                    donor_id=donor_id,
-                                    donor_sequence_length=donor_meta.get(
-                                        "handoff_positions", 0
-                                    ),
-                                    recipient_upstream_metadata=metadata[i],
-                                    upstream_metadata=donor_meta,
-                                    upstream_agents=donor_trace,
-                                    context_id=f"{donor_id}:{u}" if donor_id else None,
-                                    free_generated_tokens=len(trajectory),
-                                    free_cap_reached=cap_reached,
-                                    valid=not (budget == "free" and cap_reached),
-                                    prefix_verified=verified,
-                                    model=args.model_name,
-                                    seed=args.seed,
-                                    **prompt,
-                                )
-                                records.append(row)
+                            )
                             write_jsonl(directory / "sample_results.jsonl", records)
                         print(
                             f"[compute preflight] U={u} sample={i + 1}/{len(items)}",
@@ -149,15 +141,7 @@ class ReceiverComputePreflightUseCase:
                         )
                     del contexts
                 metrics = export(directory, records, config)
-                tracker.log_metrics(
-                    {
-                        f"accuracy_u{r['upstream_steps']}_{r['handoff_condition']}_r{r['receiver_budget']}": r[
-                            "accuracy"
-                        ]
-                        for r in metrics["curves"]
-                        if r["accuracy"] is not None
-                    }
-                )
+                tracker.log_metrics(curve_metrics(metrics["curves"]))
             except (Exception, KeyboardInterrupt):
                 write_json(
                     directory / "failure.json", {"traceback": traceback.format_exc()}
@@ -183,30 +167,3 @@ class ReceiverComputePreflightUseCase:
             top_p=1.0,
             generate_bs=1,
         )
-
-    def _trajectory(self, method, item, context, args):
-        set_seed(args.seed)
-        ids, prompt = generate_receiver(
-            method, item, context, args.max_new_tokens, True
-        )
-        verified = False
-        if args.verify_prefix:
-            for budget in args.receiver_budgets:
-                if budget == "free":
-                    continue
-                set_seed(args.seed)
-                capped, capped_prompt = generate_receiver(method, item, context, budget)
-                if capped != ids[:budget] or capped_prompt != prompt:
-                    raise ValueError(
-                        f"Greedy prefix differs from capped generation at R={budget}"
-                    )
-                expected = evaluate_prefix(
-                    method.model.tokenizer, self.evaluator, item, ids, budget
-                )
-                actual = evaluate_prefix(
-                    method.model.tokenizer, self.evaluator, item, capped, budget
-                )
-                if expected != actual:
-                    raise ValueError("Capped evaluation differs from prefix evaluation")
-            verified = True
-        return ids, prompt, verified

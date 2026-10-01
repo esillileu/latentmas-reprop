@@ -6,12 +6,16 @@ from collections import defaultdict
 
 import numpy as np
 
+from ...infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..common.reporter import write_json
+from .answers import reevaluate_records
+from .statistics import cell_cost, cost_difference, threshold_rows
 
 CONDITIONS = ("matched", "mismatched", "no_handoff")
 
 
 def analyze(records, config):
+    records = reevaluate_records(records, DEFAULT_EVALUATOR)
     groups = defaultdict(dict)
     sample_ids = sorted({r["sample_id"] for r in records})
     expected_ids = config.get("sample_ids", sample_ids)
@@ -35,7 +39,7 @@ def analyze(records, config):
     count = config["bootstrap_count"]
     rng = np.random.default_rng(config["seed"])
     indices = rng.integers(0, len(sample_ids), size=(count, len(sample_ids)))
-    distributions, curves, arrays = {}, [], {}
+    distributions, curves, arrays, cost_arrays = {}, [], {}, {}
     for key in keys:
         rows = [groups[key][sid] for sid in sample_ids]
         valid = all(r["valid"] for r in rows)
@@ -45,6 +49,15 @@ def analyze(records, config):
         label = ":".join(map(str, key))
         distributions[label] = draws.tolist() if valid else None
         low, high = np.quantile(draws, [0.025, 0.975]) if valid else (None, None)
+        cost, cost_draws, cost_arrays[key] = cell_cost(rows, indices, valid)
+        distributions.update(
+            {f"{label}:{name}": draws for name, draws in cost_draws.items()}
+        )
+        length_deltas = [
+            r["donor_length_abs_delta"]
+            for r in rows
+            if r.get("donor_length_abs_delta") is not None
+        ]
         curves.append(
             {
                 "upstream_steps": key[0],
@@ -55,9 +68,31 @@ def analyze(records, config):
                 "ci_high": float(high) if valid else None,
                 "sample_count": len(rows),
                 "invalid_count": sum(not r["valid"] for r in rows),
+                "no_answer_count": sum(r["no_answer"] for r in rows),
+                "pathological_count": sum(r.get("pathological", False) for r in rows),
+                "free_truncated_count": sum(
+                    r.get("free_cap_reached", False) for r in rows
+                )
+                if key[2] == "free"
+                else 0,
+                "valid_free_truncation_rate": 0.0
+                if key[2] == "free" and valid
+                else None,
+                "mean_generated_tokens": float(
+                    np.mean([r["generated_tokens"] for r in rows])
+                )
+                if valid
+                else None,
+                "mean_donor_length_abs_delta": float(np.mean(length_deltas))
+                if length_deltas
+                else None,
+                "max_donor_length_abs_delta": max(length_deltas)
+                if length_deltas
+                else None,
+                **cost,
             }
         )
-    comparisons = []
+    comparisons, cost_comparisons = [], []
     for u in config["upstream_steps"]:
         for b in config["receiver_budgets"]:
             for name, left, right in (
@@ -84,33 +119,46 @@ def analyze(records, config):
                         "ci_high": float(high) if valid else None,
                     }
                 )
-    thresholds = []
-    for target in config["target_accuracies"]:
-        for u in config["upstream_steps"]:
-            for m in CONDITIONS:
-                candidates = [
-                    r["receiver_budget"]
-                    for r in curves
-                    if r["upstream_steps"] == u
-                    and r["handoff_condition"] == m
-                    and r["accuracy"] is not None
-                    and r["accuracy"] >= target
-                    and r["receiver_budget"] != "free"
-                ]
-                thresholds.append(
-                    {
-                        "upstream_steps": u,
-                        "handoff_condition": m,
-                        "target_accuracy": target,
-                        "minimum_receiver_budget": min(candidates)
-                        if candidates
-                        else None,
-                    }
+                differences, draws_by_metric = cost_difference(
+                    cost_arrays[u, left, b], cost_arrays[u, right, b], indices
                 )
+                for metric, stats in differences.items():
+                    distributions[f"{label}:{metric}"] = draws_by_metric[metric]
+                    cost_comparisons.append(
+                        {
+                            "upstream_steps": u,
+                            "receiver_budget": b,
+                            "comparison": name,
+                            "metric": metric,
+                            "difference": stats["mean"],
+                            "ci_low": stats["ci_low"],
+                            "ci_high": stats["ci_high"],
+                        }
+                    )
+    pathological = [
+        {
+            k: r.get(k)
+            for k in (
+                "sample_id",
+                "sample_index",
+                "upstream_steps",
+                "handoff_condition",
+                "free_generated_tokens",
+                "free_final_cap",
+                "free_attempts",
+            )
+        }
+        for r in records
+        if r["receiver_budget"] == "free" and not r["valid"]
+    ]
+    thresholds = threshold_rows(curves, config)
     return {
         "curves": curves,
         "comparisons": comparisons,
         "thresholds": thresholds,
+        "cost_comparisons": cost_comparisons,
+        "pathological_cases": pathological,
+        "answer_policy": "explicit_complete_final_answer",
         "bootstrap_count": count,
         "seed": config["seed"],
         "sample_count": len(sample_ids),
@@ -136,6 +184,7 @@ def write_csv(path, rows):
 
 
 def export(directory, records, config):
+    records = reevaluate_records(records, DEFAULT_EVALUATOR)
     directory.mkdir(parents=True, exist_ok=True)
     metrics, bootstrap = analyze(records, config)
     write_json(directory / "metrics.json", metrics)
@@ -149,8 +198,17 @@ def export(directory, records, config):
         f"Bootstrap resamples: {metrics['bootstrap_count']}; paired percentile 95% CI.",
         "",
     ]
-    for name in ("curves", "comparisons", "thresholds"):
+    for name in (
+        "curves",
+        "comparisons",
+        "cost_comparisons",
+        "thresholds",
+        "pathological_cases",
+    ):
         rows = metrics[name]
+        if not rows:
+            lines.extend([f"## {name}", "", "Count: 0", ""])
+            continue
         fields = list(rows[0])
         lines.extend(
             [

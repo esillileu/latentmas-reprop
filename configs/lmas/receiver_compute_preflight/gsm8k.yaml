@@ -14,6 +14,7 @@ receiver_budgets: '64,128,256,512,1024,free'
 target_accuracies: '0.5,0.7,0.9'
 bootstrap_count: 2000
 max_new_tokens: 4096
+free_max_new_tokens: 8192
 temperature: 0.0
 top_p: 1.0
 device: cuda

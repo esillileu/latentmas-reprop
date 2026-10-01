@@ -18,6 +18,12 @@ def add_compute_preflight_args(parser, defaults):
         "--bootstrap_count", type=int, default=defaults.get("bootstrap_count", 2000)
     )
     parser.add_argument(
+        "--free_max_new_tokens",
+        type=int,
+        default=defaults.get("free_max_new_tokens", 8192),
+        help="Retry cap-limited free trajectories up to this ceiling; unresolved cases are pathological.",
+    )
+    parser.add_argument(
         "--verify_prefix",
         action="store_true",
         default=defaults.get("verify_prefix", False),
@@ -68,6 +74,8 @@ def validate_compute_preflight_args(parser, args):
         parser.error(
             "free cap must exceed finite budgets; bootstrap_count must be positive"
         )
+    if args.free_max_new_tokens < args.max_new_tokens:
+        parser.error("free_max_new_tokens must be at least max_new_tokens")
     if not args.target_accuracies or any(
         not 0 <= x <= 1 for x in args.target_accuracies
     ):
