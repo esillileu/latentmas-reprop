@@ -41,7 +41,8 @@ def count_new_token_ids(generated_ids: torch.Tensor, pad_token_id: int | None) -
     return int(generated_ids.shape[0])
 
 
-def generate_text_batch(
+@torch.no_grad()
+def generate_token_ids_batch(
     model: torch.nn.Module,
     tokenizer: AutoTokenizer,
     device: torch.device,
@@ -53,11 +54,8 @@ def generate_text_batch(
     top_p: float = 0.95,
     past_key_values: Any = None,
     report_progress: bool = False,
-) -> tuple[list[str], Any, list[int]]:
-    """Generate text completions using HuggingFace model.
-
-    The third value is the number of newly generated token ids per row.
-    """
+) -> tuple[list[list[int]], Any]:
+    """Return actual generate() suffix IDs and the resulting KV cache."""
     if input_ids.dim() != 2:
         raise ValueError("input_ids must be 2D with shape [batch, seq_len]")
     if attention_mask is None:
@@ -96,17 +94,53 @@ def generate_text_batch(
         past_key_values=past_key_values,
     )
     sequences = outputs.sequences
-    generations: list[str] = []
-    token_counts: list[int] = []
+    token_ids: list[list[int]] = []
     prompt_seq_len = input_ids.shape[1]
     for idx in range(input_ids.shape[0]):
         generated_ids = sequences[idx, prompt_seq_len:]
-        token_counts.append(count_new_token_ids(generated_ids, tokenizer.pad_token_id))
-        text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
-        generations.append(text)
+        token_ids.append(generated_ids.to("cpu").tolist())
+    return token_ids, outputs.past_key_values
+
+
+def generate_text_batch(
+    model: torch.nn.Module,
+    tokenizer: AutoTokenizer,
+    device: torch.device,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+    *,
+    max_new_tokens: int = 256,
+    temperature: float = 0.7,
+    top_p: float = 0.95,
+    past_key_values: Any = None,
+    report_progress: bool = False,
+) -> tuple[list[str], Any, list[int]]:
+    """Generate text completions using HuggingFace model.
+
+    The third value is the number of newly generated token ids per row.
+    """
+    token_ids, cache = generate_token_ids_batch(
+        model,
+        tokenizer,
+        device,
+        input_ids,
+        attention_mask,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        past_key_values=past_key_values,
+        report_progress=report_progress,
+    )
+    texts = [
+        tokenizer.decode(ids, skip_special_tokens=True).strip() for ids in token_ids
+    ]
+    counts = [
+        count_new_token_ids(torch.tensor(ids), tokenizer.pad_token_id)
+        for ids in token_ids
+    ]
     if report_progress:
-        print(f"[generation] finished: {token_counts} tokens", flush=True)
-    return generations, outputs.past_key_values, token_counts
+        print(f"[generation] finished: {counts} tokens", flush=True)
+    return texts, cache, counts
 
 
 def forward_next_token_batch(
