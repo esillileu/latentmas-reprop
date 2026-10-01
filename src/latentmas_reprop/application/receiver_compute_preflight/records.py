@@ -1,5 +1,6 @@
 """Sample-level answer, receiver cost, and donor diagnostics."""
 
+from .answers import verify_prefix_evaluation
 from .inference import evaluate_prefix
 
 
@@ -57,5 +58,6 @@ def trajectory_records(
         row["execution_success"] = True
         row["parse_failure"] = row["no_answer"]
         row["empty_output"] = not bool(row["raw_receiver_output"].strip())
+        verify_prefix_evaluation(row, evaluator)
         rows.append(row)
     return rows

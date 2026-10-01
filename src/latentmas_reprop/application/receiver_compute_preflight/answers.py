@@ -66,6 +66,14 @@ def evaluate_final_answer(
 
 def trajectory_diagnostics(row):
     attempts = row["free_attempts"]
+    if not attempts or any("generated_token_ids" not in a for a in attempts):
+        raise ValueError("Free attempts require original generated token IDs")
+    prompt_keys = ("receiver_prompt", "receiver_input_ids", "receiver_thinking_open")
+    for attempt in attempts:
+        if any(attempt[key] != row[key] for key in prompt_keys):
+            raise ValueError("Free retry changed receiver prompt or decoding regime")
+        if attempt["generated_tokens"] != len(attempt["generated_token_ids"]):
+            raise ValueError("Attempt token count differs from original IDs")
     for first, second in pairwise(attempts):
         if (
             second["generated_token_ids"][: len(first["generated_token_ids"])]
@@ -76,18 +84,24 @@ def trajectory_diagnostics(row):
             )
     final_ids = attempts[-1]["generated_token_ids"]
     checks = row["prefix_verification_attempts"]
+    if row.get("prefix_verification_requested"):
+        caps = [c["cap"] for c in checks]
+        if not caps or caps != row.get("prefix_verification_budgets"):
+            raise ValueError("Missing or duplicate capped prefix verification attempts")
     for check in checks:
         if check["generated_token_ids"] != final_ids[: check["cap"]] or any(
-            check[key] != row[key]
-            for key in (
-                "receiver_prompt",
-                "receiver_input_ids",
-                "receiver_thinking_open",
-            )
+            check[key] != row[key] for key in prompt_keys
         ):
             raise ValueError(
                 f"Greedy prefix differs from capped generation at R={check['cap']}"
             )
+    if "receiver_budget" in row:
+        budget = row["receiver_budget"]
+        expected = final_ids if budget == "free" else final_ids[:budget]
+        if row["generated_token_ids"] != expected or row["generated_tokens"] != len(
+            expected
+        ):
+            raise ValueError("Budget record differs from original trajectory prefix")
     return {
         "prefix_verified": bool(checks),
         "free_retry_count": len(attempts) - 1,
@@ -95,6 +109,24 @@ def trajectory_diagnostics(row):
             a["receiver_latency_sec"] for a in attempts[:-1]
         ),
     }
+
+
+def verify_prefix_evaluation(row, evaluator):
+    """Compare strict scoring of saved capped output with its budget record."""
+    for check in row.get("prefix_verification_attempts", []):
+        if check["cap"] != row["receiver_budget"]:
+            continue
+        evaluation = evaluate_final_answer(
+            evaluator,
+            check["raw_receiver_output"],
+            row["gold"],
+            check["termination_reason"] != "cap",
+            check["receiver_thinking_open"],
+        )
+        if check["raw_receiver_output"] != row["raw_receiver_output"] or any(
+            evaluation[key] != row[key] for key in evaluation
+        ):
+            raise ValueError("Capped generation differs from strict prefix evaluation")
 
 
 def reevaluate_records(records, evaluator):
@@ -144,5 +176,6 @@ def reevaluate_records(records, evaluator):
             )
         if "free_attempts" in r:
             row.update(trajectory_diagnostics(r))
+            verify_prefix_evaluation(row, evaluator)
         evaluated.append(row)
     return evaluated

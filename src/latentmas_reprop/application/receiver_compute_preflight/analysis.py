@@ -16,6 +16,16 @@ CONDITIONS = ("matched", "mismatched", "no_handoff")
 
 def analyze(records, config):
     records = reevaluate_records(records, DEFAULT_EVALUATOR)
+    if config.get("verify_prefix"):
+        expected_budgets = [b for b in config["receiver_budgets"] if b != "free"]
+        if any(
+            not r.get("prefix_verification_requested")
+            or r.get("prefix_verification_budgets") != expected_budgets
+            for r in records
+        ):
+            raise ValueError(
+                "Recorded prefix verification differs from configured budgets"
+            )
     groups = defaultdict(dict)
     sample_ids = sorted({r["sample_id"] for r in records})
     expected_ids = config.get("sample_ids", sample_ids)
@@ -152,12 +162,33 @@ def analyze(records, config):
         if r["receiver_budget"] == "free" and not r["valid"]
     ]
     thresholds = threshold_rows(curves, config)
+    verification = [
+        {
+            "sample_id": r["sample_id"],
+            "upstream_steps": r["upstream_steps"],
+            "handoff_condition": r["handoff_condition"],
+            "prefix_verification_requested": r.get("prefix_verification_requested"),
+            "prefix_verified": r.get("prefix_verified"),
+            "verified_budgets": [
+                a["cap"] for a in r.get("prefix_verification_attempts", [])
+            ],
+            "free_retry_count": r.get("free_retry_count"),
+            "free_naturally_terminated": r.get("free_naturally_terminated"),
+            "free_valid": r["valid"],
+        }
+        for r in records
+        if r["receiver_budget"] == "free"
+    ]
+    verification.sort(
+        key=lambda r: (r["upstream_steps"], r["handoff_condition"], r["sample_id"])
+    )
     return {
         "curves": curves,
         "comparisons": comparisons,
         "thresholds": thresholds,
         "cost_comparisons": cost_comparisons,
         "pathological_cases": pathological,
+        "verification": verification,
         "answer_policy": "explicit_complete_final_answer",
         "bootstrap_count": count,
         "seed": config["seed"],
@@ -204,6 +235,7 @@ def export(directory, records, config):
         "cost_comparisons",
         "thresholds",
         "pathological_cases",
+        "verification",
     ):
         rows = metrics[name]
         if not rows:

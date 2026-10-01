@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from transformers import set_seed
 
 from ...domain.ports.tracking_port import DummySpan
+from .answers import trajectory_diagnostics
 from .attempt import finish_attempt, generate_attempt
 from .inference import generate_receiver
 
@@ -111,10 +112,11 @@ def collect_trajectory(
             verification_span.set_outputs(
                 {"capped_generations": len(verification_attempts)}
             )
-    return {
+    result = {
         "token_ids": ids,
         "metadata": metadata,
         "prefix_verification_requested": args.verify_prefix,
+        "prefix_verification_budgets": budgets if args.verify_prefix else [],
         "free_attempts": attempts,
         "prefix_verification_attempts": verification_attempts,
         "free_final_cap": cap,
@@ -122,3 +124,6 @@ def collect_trajectory(
         "pathological": not natural,
         "free_initial_cap_reached": attempts[0]["termination_reason"] == "cap",
     }
+    # Refuse a successful collection before records/traces claim equivalence.
+    trajectory_diagnostics(result | metadata)
+    return result

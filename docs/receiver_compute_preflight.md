@@ -42,6 +42,13 @@ Text is decoded directly from IDs, preserving final-answer delimiters, and is
 never re-tokenized. `--verify_prefix` checks actual capped IDs, prompt metadata,
 strict predictions and correctness at every finite R. It requires exactly two
 samples. Timing differences between reruns are not treated as decoding failures.
+Collection checks token IDs, prompts and strict evaluations before marking the
+run FINISHED. Raw records retain every free retry and capped verification
+attempt's original token IDs, decoded output, prompt, cap, termination and latency.
+The requested finite verification budgets are recorded explicitly; analysis
+refuses missing checks, changed retry prompts or inconsistent budget prefixes.
+`metrics.json` and `summary.md` include a per-sample/U/handoff verification
+table listing checked budgets, retry counts, natural termination and free validity.
 
 ## Free endpoint
 
