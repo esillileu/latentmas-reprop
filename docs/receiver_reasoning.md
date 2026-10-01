@@ -43,5 +43,67 @@ is exploratory and provides no causal or statistical claim. Prediction
 concentration and raw answer-only behavior require inspection. No intervention,
 permutation test, seed repetition, or receiver budget sweep is performed.
 
-New runs can record an MLflow version tag with `--version_tag pilot-v1`
-or `version_tag: pilot-v1` in their YAML configuration.
+## Offline MLflow analysis
+
+```bash
+just analyze-handoff --version-tag pilot-v1
+just analyze-handoff --tracking-uri http://localhost:5000 \
+  --version-tag pilot-v1 --bootstrap-count 5000 --seed 0 \
+  --output-dir artifacts/latent_handoff
+```
+
+Run selection requires FINISHED status and exact equality of the MLflow
+`version_tag` tag.
+`--version-tag` is required. The selected experiment identifies the data source;
+Git commit, model, and experiment-type tags do not filter its runs. All matching
+finished runs are included, including multiple runs of the same model. Running,
+failed, and killed runs are excluded.
+Missing artifacts cause an explicit error rather than silent exclusion.
+`--run-id` and `--model-name` selection options have been removed.
+
+For new inference runs, set the tag using the existing config/CLI:
+
+```bash
+just run-receiver-reasoning -c lmas/receiver_reasoning/gsm8k \
+  --model_name Qwen/Qwen3-4B --version_tag pilot-v1
+```
+
+Git revision remains provenance metadata. Untagged historical runs do not
+match any requested version; the analyzer does not infer or assign a version.
+
+MLflow is the source for run metadata, logged metrics, resolved configuration,
+and sample records. Downloads use `PathResolver` under
+`.cache/receiver_reasoning/mlflow/<run_id>`. Execution artifacts need not exist
+locally, and model/dataset inference is never called. Tracking URI follows the
+existing local SQLite / `MLFLOW_TRACKING_URI` policy unless explicitly supplied.
+
+Each selected run is analyzed independently, including separate sample tables
+and bootstrap statistics. Results are never pooled across models or runs.
+Reports are stored under `<output>/<model>/<run_id>/`. The root `summary.md`
+links to individual reports, with its metadata in `reports.json`.
+Each report includes `summary.md`, `metrics.json`, `sample_matrix.csv`,
+`prediction_distribution.csv`, `bootstrap_statistics.json`, and full source
+records in `raw_outputs.jsonl`. Markdown reads exported JSON/CSV only.
+CSV values use ordinary quoting, with empty fields for missing values.
+Four selected raw-output excerpts are capped at 1200 characters each.
+
+Integrity checks cover duplicate/missing samples, all four sample sets,
+question/gold consistency, model/seed/generation settings, and paired context
+IDs/lengths. Invalid paired comparisons have null estimates/CIs with explicit
+reasons and appear as N/A. The analyzer never uses a sample-set intersection.
+Valid comparisons use their full identical sample sets.
+
+Bootstrap resamples whole sample rows and reuses draws for metrics with the
+same sample sets. Default: 5000 replicates, seed 0, percentile 95% CI. All
+replicate values and sample ordering are retained. D(low), D(high), both
+receiver accuracy deltas, and substitution_signal include CIs and paired n.
+
+Parse failures are missing/empty parsed predictions, shown as
+`<PARSE_FAILURE>` in frequencies and excluded from unique prediction counts.
+Truncation means reaching the configured token limit, including EOS at the
+limit. Repeated-prediction subsets select values appearing at least twice in
+a cell, excluding parse failures. No interpretation or conclusion is added.
+
+Markdown uses the original zero-based `sample_index`, unique within a run.
+Integrity checks verify one index per sample and one sample per index across
+all four cells. Original sample hashes remain in CSV/JSON for joins.

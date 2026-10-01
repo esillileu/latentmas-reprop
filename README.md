@@ -120,3 +120,14 @@ just run-receiver-reasoning -c lmas/receiver_reasoning/gsm8k \
 
 The preset runs 20 GSM8K samples with Qwen3-4B at 10 and 40 latent steps.
 See [receiver reasoning exploration](docs/receiver_reasoning.md) for artifacts and controls.
+
+Analyze saved Latent Handoff Pilot results from MLflow without inference:
+
+```bash
+just analyze-handoff --version-tag pilot-v1
+```
+
+The report and machine-readable paired/bootstrap results are written to
+`artifacts/latent_handoff/<model>/<run_id>/` by default, with a report index
+at `artifacts/latent_handoff/summary.md`. Finished runs matching the exact MLflow `version_tag` are analyzed separately
+for every model, without pooling results or filtering by model/Git commit.

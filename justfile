@@ -45,6 +45,10 @@ run-acquisition *args:
 analyze-sender-probe *args:
     uv run python -m src.run.sender_probe {{args}}
 
+# Analyze saved latent handoff pilot artifacts (no inference)
+analyze-handoff *args:
+    uv run python -m src.run.handoff_analysis {{args}}
+
 # Reanalyze saved receiver observations from MLflow (no inference)
 analyze-receiver *args:
     uv run python -m src.run.receiver_analysis {{args}}
