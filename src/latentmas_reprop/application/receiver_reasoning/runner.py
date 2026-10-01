@@ -156,9 +156,9 @@ def collect_sample(
             tracker_port.update_current_trace(
                 tags=sample_measurement_tags(sample_measurements),
                 response_preview=" | ".join(
-                    f"{key}: {value['prediction']} ({'PASS' if value['correct'] else 'FAIL'})"
+                    f"{key}: {str(value['prediction'])[:60]} ({'PASS' if value['correct'] else 'FAIL'})"
                     for key, value in outputs.items()
-                )
+                ),
             )
         trace_id = root.trace_id
     if tracker_port and trace_id:

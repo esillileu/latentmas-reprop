@@ -13,6 +13,14 @@ from ..paths.resolver import PathResolver, get_git_commit_hash, get_path_resolve
 from .span_adapter import MLflowSpanAdapter
 
 
+def _truncate_preview(text: str | None, max_length: int = 1000) -> str | None:
+    if text is None:
+        return None
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3] + "..."
+
+
 class MLflowTracker(ExperimentTrackerPort):
     """MLflow experiment tracker adapter.
 
@@ -34,19 +42,13 @@ class MLflowTracker(ExperimentTrackerPort):
 
         if tracking_uri is not None:
             self.tracking_uri = tracking_uri
-            self.is_remote = not tracking_uri.startswith(
-                "sqlite"
-            ) and not tracking_uri.startswith("file")
         elif env_uri is not None and env_uri.strip():
             self.tracking_uri = env_uri.strip()
-            self.is_remote = not self.tracking_uri.startswith(
-                "sqlite"
-            ) and not self.tracking_uri.startswith("file")
         else:
             # Default to local SQLite
             db_path = self.resolver.cache_dir / "mlflow.db"
             self.tracking_uri = f"sqlite:///{db_path.resolve()}"
-            self.is_remote = False
+        self.is_remote = not self.tracking_uri.startswith(("sqlite", "file"))
 
         mlflow.set_tracking_uri(self.tracking_uri)
 
@@ -142,6 +144,7 @@ class MLflowTracker(ExperimentTrackerPort):
             mlflow.end_run(status=status)
         self._active_run = None
 
+
     @contextmanager
     def start_sample_trace(
         self,
@@ -156,7 +159,8 @@ class MLflowTracker(ExperimentTrackerPort):
             if tags or request_preview:
                 safe_tags = {str(k): str(v) for k, v in tags.items()} if tags else None
                 mlflow.update_current_trace(
-                    tags=safe_tags, request_preview=request_preview
+                    tags=safe_tags,
+                    request_preview=_truncate_preview(request_preview),
                 )
             adapter = MLflowSpanAdapter(span)
             yield adapter
@@ -186,8 +190,8 @@ class MLflowTracker(ExperimentTrackerPort):
         safe_tags = {str(k): str(v) for k, v in tags.items()} if tags else None
         mlflow.update_current_trace(
             tags=safe_tags,
-            request_preview=request_preview,
-            response_preview=response_preview,
+            request_preview=_truncate_preview(request_preview),
+            response_preview=_truncate_preview(response_preview),
         )
 
     def log_expectation(

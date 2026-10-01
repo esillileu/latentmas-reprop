@@ -267,6 +267,7 @@ def analyze_records(records, config, metadata, *, bootstrap_count=5000, seed=0):
                 {
                     "cell": key,
                     "sample_id": r["sample_id"],
+                    "correct": r.get("correct"),
                     "raw_output": r.get("raw_receiver_output", "")[:1200],
                     "excerpt_truncated": len(r.get("raw_receiver_output", "")) > 1200,
                 }
