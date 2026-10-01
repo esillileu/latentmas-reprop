@@ -110,15 +110,30 @@ def test_cuda_dtype_follows_bf16_support(monkeypatch):
         lambda device: None,
     )
     monkeypatch.setattr(
-        "latentmas_reprop.infrastructure.models.dtype.torch.cuda.is_bf16_supported",
-        lambda: False,
+        "latentmas_reprop.infrastructure.models.dtype.torch.cuda.is_available",
+        lambda: True,
     )
-    assert resolve_model_dtype(torch.device("cuda")) is torch.float16
+    monkeypatch.setattr(
+        "latentmas_reprop.infrastructure.models.dtype.torch.cuda.current_device",
+        lambda: 0,
+    )
+    # sm_70 (e.g. V100): even if PyTorch reports is_bf16_supported=True, fallback to float16
+    monkeypatch.setattr(
+        "latentmas_reprop.infrastructure.models.dtype.torch.cuda.get_device_capability",
+        lambda idx: (7, 0),
+    )
     monkeypatch.setattr(
         "latentmas_reprop.infrastructure.models.dtype.torch.cuda.is_bf16_supported",
         lambda: True,
     )
     assert resolve_model_dtype(torch.device("cuda")) is torch.bfloat16
+
+    # sm_80 without bf16 support -> float16
+    monkeypatch.setattr(
+        "latentmas_reprop.infrastructure.models.dtype.torch.cuda.is_bf16_supported",
+        lambda: False,
+    )
+    assert resolve_model_dtype(torch.device("cuda")) is torch.float16
 
 
 def test_incompatible_cuda_arch_raises(monkeypatch):
