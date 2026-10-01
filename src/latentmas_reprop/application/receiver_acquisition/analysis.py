@@ -6,6 +6,11 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+import numpy as np
+
+from .inference import enrich_condition
+from .statistics import average, entropy, mutual_information, probability_metrics
+
 DIGITS = range(10)
 CONDITIONS = ("drop", "latent_only/own", "latent_only/cross")
 
@@ -42,6 +47,12 @@ def select_receiver_runs(
                 f"Ambiguous designated Receiver runs for {model}, steps={steps}: {ids}"
             )
         if designated:
+            if designated[0]["sample_count"] != 100 or any(
+                designated[0]["condition_counts"].get(c) != 100 for c in CONDITIONS
+            ):
+                raise ValueError(
+                    "Designated Receiver run must contain 100 samples in each condition"
+                )
             selected.append(designated[0])
             continue
         canonical = [
@@ -63,7 +74,9 @@ def select_receiver_runs(
     return selected
 
 
-def analyze_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+def analyze_records(
+    records: list[dict[str, Any]], *, permutations: int = 5000, seed: int = 0
+) -> dict[str, Any]:
     """Count predictions against the actual source digit (target for drop)."""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     drops = {}
@@ -100,13 +113,17 @@ def analyze_records(records: list[dict[str, Any]]) -> dict[str, Any]:
                     f"Invalid digit in {condition}: {true_digit}, {predicted}"
                 )
             matrix[true_digit][predicted] += 1
-            probability = record["candidate_probabilities"][str(true_digit)]
-            probabilities.append(probability)
+            probability = record.get("candidate_probabilities", {}).get(str(true_digit))
+            if probability is not None:
+                probabilities.append(probability)
             if condition != "drop" and record["sample_index"] in drops:
-                baseline = drops[record["sample_index"]]["candidate_probabilities"][
-                    str(true_digit)
-                ]
-                deltas.append(probability - baseline)
+                baseline = (
+                    drops[record["sample_index"]]
+                    .get("candidate_probabilities", {})
+                    .get(str(true_digit))
+                )
+                if probability is not None and baseline is not None:
+                    deltas.append(probability - baseline)
         counts = Counter(record["predicted_digit"] for record in group)
         top_digit, top_count = min(counts.items(), key=lambda item: (-item[1], item[0]))
         per_digit = [
@@ -122,7 +139,7 @@ def analyze_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         result[condition] = {
             "sample_count": len(group),
             "accuracy": sum(matrix[d][d] for d in DIGITS) / len(group),
-            "correct_class_probability": mean(probabilities),
+            "correct_class_probability": mean(probabilities) if probabilities else None,
             "probability_delta_vs_drop": mean(deltas) if deltas else None,
             "prediction_distribution": {
                 str(digit): {
@@ -137,113 +154,122 @@ def analyze_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             "top_prediction": top_digit,
             "top_fraction": top_count / len(group),
         }
-    drop_accuracy = result.get("drop", {}).get("accuracy")
-    for values in result.values():
+    rng = np.random.default_rng(seed)
+    for condition, values in result.items():
+        group = groups[condition]
+        labels = np.array(
+            [
+                r["target_digit"] if condition == "drop" else r["source_digit"]
+                for r in group
+            ]
+        )
+        predictions = np.array([r["predicted_digit"] for r in group])
+        source_counts = np.bincount(labels, minlength=10)
+        values["source_digit_counts"] = source_counts.tolist()
+        values["source_distribution"] = (source_counts / len(group)).tolist()
+        values["balanced_accuracy"] = mean(
+            s["accuracy"]
+            for s in values["per_digit_accuracy"]
+            if s["accuracy"] is not None
+        )
+        values["prediction_entropy"] = entropy(
+            np.bincount(predictions, minlength=10) / len(group)
+        )
+        pairs = [
+            (r, drops[r["sample_index"]]) for r in group if r["sample_index"] in drops
+        ]
+        values["paired_sample_count"] = len(pairs)
+        values["argmax_changed_fraction"] = (
+            mean(r["predicted_digit"] != d["predicted_digit"] for r, d in pairs)
+            if pairs
+            else None
+        )
+        values["matched_drop_accuracy"] = (
+            mean(
+                d["predicted_digit"]
+                == (r["target_digit"] if condition == "drop" else r["source_digit"])
+                for r, d in pairs
+            )
+            if pairs
+            else None
+        )
         values["accuracy_delta_vs_drop"] = (
-            values["accuracy"] - drop_accuracy if drop_accuracy is not None else None
+            mean(
+                (
+                    r["predicted_digit"]
+                    == (r["target_digit"] if condition == "drop" else r["source_digit"])
+                )
+                - (
+                    d["predicted_digit"]
+                    == (r["target_digit"] if condition == "drop" else r["source_digit"])
+                )
+                for r, d in pairs
+            )
+            if pairs
+            else None
+        )
+        metrics = defaultdict(list)
+        paired_metrics = defaultdict(list)
+        js = []
+        for r in group:
+            label = r["target_digit"] if condition == "drop" else r["source_digit"]
+            current = probability_metrics(r, label)
+            if current is None:
+                continue
+            for key, value in current.items():
+                if value is not None:
+                    metrics[key].append(value)
+            baseline = (
+                probability_metrics(drops[r["sample_index"]], label)
+                if r["sample_index"] in drops
+                else None
+            )
+            if baseline is not None:
+                for key in current:
+                    if current[key] is not None and baseline[key] is not None:
+                        paired_metrics[key].append(
+                            np.asarray(current[key]) - np.asarray(baseline[key])
+                        )
+                p, q = (
+                    np.array(current["normalized_digit_probabilities"]),
+                    np.array(baseline["normalized_digit_probabilities"]),
+                )
+                js.append(entropy((p + q) / 2) - (entropy(p) + entropy(q)) / 2)
+        for key in (
+            "digit_probability_mass",
+            "normalized_digit_probabilities",
+            "source_label_nll",
+            "brier_score",
+        ):
+            values[key] = average(metrics[key])
+            values[key + "_delta_vs_drop"] = average(paired_metrics[key])
+        values["probability_sample_count"] = len(metrics["digit_probability_mass"])
+        values["probability_paired_sample_count"] = len(js)
+        values["js_divergence_vs_drop"] = mean(js) if js else None
+        if condition != "drop":
+            observed = mutual_information(labels, predictions)
+            null = [
+                mutual_information(rng.permutation(labels), predictions)
+                for _ in range(permutations)
+            ]
+            source_entropy = entropy(source_counts / len(group))
+            values["dependency"] = {
+                "mutual_information": observed,
+                "source_entropy": source_entropy,
+                "normalized_mi": observed / source_entropy if source_entropy else None,
+                "permutation_p_value": (1 + sum(v >= observed for v in null))
+                / (1 + len(null))
+                if null
+                else None,
+                "permutation_statistics": null,
+                "seed": seed,
+                "permutations": permutations,
+            }
+        enrich_condition(
+            values,
+            group,
+            drop=condition == "drop",
+            permutations=permutations,
+            seed=seed,
         )
     return result
-
-
-def render_markdown(runs: list[dict[str, Any]]) -> str:
-    def fmt(value: float | None) -> str:
-        return f"{value:.4f}" if value is not None else "—"
-
-    lines = [
-        "# Receiver acquisition diagnostics",
-        "",
-        "Saved receiver sample results only; no inference was run. Accuracy, correct-class "
-        "probability, and source-to-prediction counts are observations, not automatic "
-        "acquisition labels.",
-        "",
-        "## Coverage",
-        "",
-        "One selected Receiver run per model and latent step. Sample count is the number "
-        "of distinct saved sample indices; all three reported conditions are present.",
-        "",
-        "| Model | Steps | Run ID | Samples |",
-        "|---|---:|---|---:|",
-    ]
-    for run in runs:
-        lines.append(
-            f"| {run['model']} | {run['latent_steps']} | {run['run_id']} | "
-            f"{run['sample_count']} |"
-        )
-    lines += [
-        "",
-        "## Encoding → Acquisition results",
-        "",
-        "| Model | Steps | Drop Acc | Own Acc | Cross Acc | Own Δ Acc | Cross Δ Acc | "
-        "Drop P(correct) | Own P(correct) | Cross P(correct) | Own ΔP(correct) | Cross ΔP(correct) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    for run in runs:
-        cells = run["conditions"]
-        if not all(c in cells for c in CONDITIONS):
-            continue
-        drop, own, cross = (cells[c] for c in CONDITIONS)
-        lines.append(
-            f"| {run['model']} | {run['latent_steps']} | {fmt(drop['accuracy'])} | "
-            f"{fmt(own['accuracy'])} | {fmt(cross['accuracy'])} | "
-            f"{fmt(own['accuracy_delta_vs_drop'])} | {fmt(cross['accuracy_delta_vs_drop'])} | "
-            f"{fmt(drop['correct_class_probability'])} | "
-            f"{fmt(own['correct_class_probability'])} | "
-            f"{fmt(cross['correct_class_probability'])} | "
-            f"{fmt(own['probability_delta_vs_drop'])} | "
-            f"{fmt(cross['probability_delta_vs_drop'])} |"
-        )
-    lines += [
-        "",
-        "## Receiver diagnostic summary",
-        "",
-        "| Model | Steps | Condition | Accuracy | Δ Acc | ΔP(correct) | Unique Preds | Top Prediction | Top Fraction |",
-        "|---|---:|---|---:|---:|---:|---:|---:|---:|",
-    ]
-    for run in runs:
-        for condition in CONDITIONS:
-            if condition not in run["conditions"]:
-                continue
-            values = run["conditions"][condition]
-            lines.append(
-                f"| {run['model']} | {run['latent_steps']} | {condition} | "
-                f"{fmt(values['accuracy'])} | {fmt(values['accuracy_delta_vs_drop'])} | "
-                f"{fmt(values['probability_delta_vs_drop'])} | "
-                f"{values['unique_predictions']} | {values['top_prediction']} | "
-                f"{values['top_fraction']:.2f} |"
-            )
-    lines += ["", "## Prediction distributions and source-digit detail", ""]
-    for run in runs:
-        lines += [f"### {run['model']}, steps={run['latent_steps']}", ""]
-        for condition in CONDITIONS:
-            if condition not in run["conditions"]:
-                continue
-            values = run["conditions"][condition]
-            distribution = ", ".join(
-                f"{digit}:{entry['fraction']:.0%}"
-                for digit, entry in values["prediction_distribution"].items()
-                if entry["count"]
-            )
-            lines.append(f"{condition}: {distribution}")
-            lines += [
-                "",
-                f"<details><summary>{condition}: confusion matrix and per-digit accuracy</summary>",
-                "",
-                "Rows are true/source digits; columns are predicted digits.",
-                "",
-                "| True \\ Pred | "
-                + " | ".join(map(str, DIGITS))
-                + " | Correct / Total | Accuracy |",
-                "|---:|" + "---:|" * 12,
-            ]
-            for digit, row in enumerate(values["confusion_matrix"]):
-                stat = values["per_digit_accuracy"][digit]
-                accuracy = (
-                    "—" if stat["accuracy"] is None else f"{stat['accuracy']:.0%}"
-                )
-                lines.append(
-                    f"| {digit} | "
-                    + " | ".join(map(str, row))
-                    + f" | {stat['correct_count']}/{stat['sample_count']} | {accuracy} |"
-                )
-            lines += ["", "</details>", ""]
-    return "\n".join(lines) + "\n"
