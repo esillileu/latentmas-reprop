@@ -1,6 +1,9 @@
 receiver_compute_preflight: true
 method: latent_mas
-model_name: Qwen/Qwen3-4B
+model_name: 
+  - Qwen/Qwen3-4B
+  - Qwen/Qwen3-8B
+  - Qwen/Qwen3-14B
 task: gsm8k
 split: test
 prompt: sequential
