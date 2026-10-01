@@ -13,6 +13,7 @@ from .cli_intervention import (
     add_intervention_args,
     validate_intervention_and_acquisition_args,
 )
+from .cli_receiver import add_receiver_reasoning_args, validate_receiver_reasoning_args
 
 
 def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentParser:
@@ -171,6 +172,14 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         help="Target GPU memory utilization for vLLM",
     )
 
+    add_receiver_reasoning_args(parser, defaults)
+
+    parser.add_argument(
+        "--version_tag",
+        default=defaults.get("version_tag"),
+        help="MLflow version_tag for receiver reasoning runs.",
+    )
+
     # Modular options
     add_intervention_args(parser, defaults)
     add_acquisition_args(parser, defaults)
@@ -212,6 +221,8 @@ def _parse_args(args: list[str] | None, defaults: dict[str, Any]) -> argparse.Na
         parsed.enable_prefix_caching = True
 
     validate_intervention_and_acquisition_args(parser, parsed)
+
+    validate_receiver_reasoning_args(parser, parsed)
 
     return parsed
 

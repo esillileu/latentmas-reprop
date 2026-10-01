@@ -158,3 +158,20 @@ def test_cli_override_collapses_sweep_dimension(matrix_config_path):
 def test_parse_args_rejects_multiple_runs(matrix_config_path):
     with pytest.raises(ValueError, match="expands to 6 runs"):
         parse_args(["--config", matrix_config_path])
+
+
+@pytest.mark.parametrize(
+    "preset, model, steps",
+    [
+        ("lm_q34_gsm8k", "Qwen/Qwen3-4B", [10, 20]),
+        ("lm_q30.6_gsm8k", "Qwen/Qwen3-0.6B", [5, 10]),
+    ],
+)
+def test_receiver_presets_keep_model_specific_step_matrices(preset, model, steps):
+    runs = parse_run_matrix(["-c", f"lmas/receiver_reasoning/{preset}"])
+    assert len(runs) == 1
+    assert runs[0].model_name == model
+    assert runs[0].upstream_steps == steps
+    assert runs[0].max_samples == 20
+    assert runs[0].max_new_tokens == 4096
+    assert runs[0].handoff_positions is None

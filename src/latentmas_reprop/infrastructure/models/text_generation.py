@@ -1,12 +1,37 @@
 """Text generation and forward next-token operations for HuggingFace models."""
 
+from time import perf_counter
 from typing import Any
 
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, StoppingCriteria, StoppingCriteriaList
 
 from ...domain.ports.model_port import NextTokenState
 from ...domain.services.kv_cache import get_past_kv_sequence_length
+
+
+class GenerationProgress(StoppingCriteria):
+    """Report token budget usage without changing the generation stop decision."""
+
+    def __init__(self, prompt_length: int, budget: int):
+        self.prompt_length = prompt_length
+        self.budget = budget
+        self.started = self.last_report = perf_counter()
+        print(f"[generation] started: 0/{budget} tokens", flush=True)
+
+    def __call__(self, input_ids, scores, **kwargs):
+        now = perf_counter()
+        count = input_ids.shape[-1] - self.prompt_length
+        if now - self.last_report >= 30 or count >= self.budget:
+            elapsed = now - self.started
+            print(
+                f"[generation] {count}/{self.budget} tokens "
+                f"({count / self.budget:.1%} budget), "
+                f"{elapsed:.0f}s, {count / max(elapsed, 1e-9):.1f} tokens/s",
+                flush=True,
+            )
+            self.last_report = now
+        return False
 
 
 def count_new_token_ids(generated_ids: torch.Tensor, pad_token_id: int | None) -> int:
@@ -27,6 +52,7 @@ def generate_text_batch(
     temperature: float = 0.7,
     top_p: float = 0.95,
     past_key_values: Any = None,
+    report_progress: bool = False,
 ) -> tuple[list[str], Any, list[int]]:
     """Generate text completions using HuggingFace model.
 
@@ -48,13 +74,23 @@ def generate_text_batch(
             )
             attention_mask = torch.cat([past_mask, attention_mask], dim=-1)
 
+    sampling = {"temperature": temperature, "top_p": top_p} if temperature > 0 else {}
+    progress = (
+        {
+            "stopping_criteria": StoppingCriteriaList(
+                [GenerationProgress(input_ids.shape[-1], max_new_tokens)]
+            )
+        }
+        if report_progress
+        else {}
+    )
     outputs = model.generate(
         input_ids=input_ids,
         attention_mask=attention_mask,
         max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        top_p=top_p,
-        do_sample=True,
+        **sampling,
+        **progress,
+        do_sample=temperature > 0,
         pad_token_id=tokenizer.pad_token_id,
         return_dict_in_generate=True,
         output_scores=False,
@@ -69,6 +105,8 @@ def generate_text_batch(
         token_counts.append(count_new_token_ids(generated_ids, tokenizer.pad_token_id))
         text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
         generations.append(text)
+    if report_progress:
+        print(f"[generation] finished: {token_counts} tokens", flush=True)
     return generations, outputs.past_key_values, token_counts
 
 

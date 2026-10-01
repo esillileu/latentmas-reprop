@@ -108,3 +108,33 @@ just clean-cache # Clean local execution cache
 
 This project is licensed under the [Apache License 2.0](LICENSE).
 See the [`LICENSE`](LICENSE) file for details.
+
+Explore paired receiver answer-only versus free reasoning with shared upstream caches:
+
+```bash
+just run-receiver-reasoning -c lmas/receiver_reasoning/gsm8k
+# Small-model execution check
+just run-receiver-reasoning -c lmas/receiver_reasoning/gsm8k \
+  --model_name Qwen/Qwen3-0.6B --max_samples 2
+```
+
+Model-specific 20-sample presets are available as
+`lmas/receiver_reasoning/lm_q34_gsm8k` (0/10/20 steps) and
+`lmas/receiver_reasoning/lm_q30.6_gsm8k` (0/5/10 steps). Each keeps all conditions
+in one paired run; use `--dry-run` to inspect the plan without inference.
+
+The preset runs 20 GSM8K samples with Qwen3-4B at 10 and 40 latent steps,
+passing the full upstream KV cache, plus no-handoff baselines. Both receiver
+modes use greedy decoding; free reasoning has a 4096-token budget.
+See [receiver reasoning exploration](docs/receiver_reasoning.md) for artifacts and controls.
+
+Analyze saved Latent Handoff Pilot results from MLflow without inference:
+
+```bash
+just analyze-handoff --version-tag pilot-v1
+```
+
+The report and machine-readable paired/bootstrap results are written to
+`artifacts/latent_handoff/<model>/<run_id>/` by default, with a report index
+at `artifacts/latent_handoff/summary.md`. Finished runs matching the exact MLflow `version_tag` are analyzed separately
+for every model, without pooling results or filtering by model/Git commit.

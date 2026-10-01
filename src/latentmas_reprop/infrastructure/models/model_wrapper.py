@@ -61,7 +61,7 @@ class ModelWrapper(ModelPort):
             return
 
         self.tokenizer, self.model, self.dtype = load_hf_causal_lm(
-            model_name, self.device, dtype=self.dtype
+            model_name, self.device
         )
         self.dtype_name = dtype_name(self.dtype)
         if self.latent_space_realign:
@@ -151,6 +151,7 @@ class ModelWrapper(ModelPort):
             temperature=temperature,
             top_p=top_p,
             past_key_values=past_key_values,
+            report_progress=bool(getattr(self.args, "receiver_reasoning", False)),
         )
 
     def tokenize_text(self, text: str) -> torch.Tensor:

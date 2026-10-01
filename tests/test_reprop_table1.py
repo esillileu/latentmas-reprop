@@ -8,7 +8,7 @@ from torch import nn
 
 from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
 from latentmas_reprop.infrastructure.models.dtype import (
-    ensure_cuda_architecture_supported,
+    ensure_cuda_available,
     resolve_model_dtype,
 )
 from latentmas_reprop.infrastructure.models.realignment import RealignmentManager
@@ -82,8 +82,8 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
         assert run.prompt == "sequential"
 
 
-def test_cpu_dtype_is_fp32_and_unsupported_arch_fails(monkeypatch):
-    assert resolve_model_dtype(torch.device("cpu")) is torch.float32
+def test_cpu_dtype_is_fp16_and_unavailable_cuda_fails(monkeypatch):
+    assert resolve_model_dtype(torch.device("cpu")) is torch.float16
 
     class _Cuda:
         @staticmethod
@@ -95,12 +95,12 @@ def test_cpu_dtype_is_fp32_and_unsupported_arch_fails(monkeypatch):
         _Cuda,
     )
     with pytest.raises(RuntimeError, match="no available CUDA device"):
-        ensure_cuda_architecture_supported(torch.device("cuda"))
+        ensure_cuda_available(torch.device("cuda"))
 
 
-def test_cuda_dtype_follows_bf16_support(monkeypatch):
+def test_cuda_dtype_is_fp16_regardless_of_bf16_support(monkeypatch):
     monkeypatch.setattr(
-        "latentmas_reprop.infrastructure.models.dtype.ensure_cuda_architecture_supported",
+        "latentmas_reprop.infrastructure.models.dtype.ensure_cuda_available",
         lambda device: None,
     )
     monkeypatch.setattr(
@@ -112,37 +112,14 @@ def test_cuda_dtype_follows_bf16_support(monkeypatch):
         "latentmas_reprop.infrastructure.models.dtype.torch.cuda.is_bf16_supported",
         lambda: True,
     )
-    assert resolve_model_dtype(torch.device("cuda")) is torch.bfloat16
+    assert resolve_model_dtype(torch.device("cuda")) is torch.float16
 
 
-def test_incompatible_cuda_arch_raises(monkeypatch):
-    class _Cuda:
-        @staticmethod
-        def is_available():
-            return True
-
-        @staticmethod
-        def current_device():
-            return 0
-
-        @staticmethod
-        def get_device_capability(index):
-            return (7, 0)
-
-        @staticmethod
-        def get_arch_list():
-            return ["sm_80", "sm_90"]
-
-        @staticmethod
-        def get_device_name(index):
-            return "Tesla V100"
-
-    monkeypatch.setattr(
-        "latentmas_reprop.infrastructure.models.dtype.torch.cuda",
-        _Cuda,
-    )
-    with pytest.raises(RuntimeError, match="sm_70"):
-        ensure_cuda_architecture_supported(torch.device("cuda"))
+def test_available_cuda_does_not_require_exact_compiled_arch(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda index: (8, 9))
+    monkeypatch.setattr(torch.cuda, "get_arch_list", lambda: ["sm_86", "sm_90"])
+    ensure_cuda_available(torch.device("cuda"))
 
 
 class _TinyLM(nn.Module):
