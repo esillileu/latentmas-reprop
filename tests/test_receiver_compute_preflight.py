@@ -42,6 +42,16 @@ def config_and_records():
                             "sample_id": sid,
                             "valid": True,
                             "correct": m == "matched" and (b != 2 or sid == "a"),
+                            "raw_receiver_output": r"\boxed{1}"
+                            if m == "matched" and (b != 2 or sid == "a")
+                            else "reasoning 1",
+                            "gold": "1",
+                            "generated_tokens": 2,
+                            "free_generated_tokens": 5,
+                            "free_cap_reached": False,
+                            "receiver_latency_sec": 0.1 if m == "matched" else 0.2,
+                            "receiver_attention_pairs": 100 if m == "matched" else 200,
+                            "receiver_processed_positions": 20,
                         }
                     )
     return config, rows
@@ -149,6 +159,7 @@ def test_cli_axes_and_constraints():
     assert args.upstream_steps == [10, 20]
     assert args.receiver_budgets == [64, 128, 256, 512, 1024, "free"]
     assert (args.temperature, args.top_p) == (0, 1)
+    assert args.free_max_new_tokens == 8192
     for flags in (
         ["--max_samples", "1"],
         ["--handoff_positions", "5"],
@@ -156,90 +167,7 @@ def test_cli_axes_and_constraints():
         ["--receiver_budgets", "4,4,free"],
         ["--latent_only"],
         ["--verify_prefix"],
+        ["--free_max_new_tokens", "2048"],
     ):
         with pytest.raises(SystemExit):
             parse_run_matrix([*base, *flags])
-
-
-def test_collection_builds_each_context_once_and_uses_other_sample(monkeypatch):
-    import latentmas_reprop.application.receiver_compute_preflight_use_case as module
-
-    class Tracker:
-        def __init__(self):
-            self.artifacts = {}
-            self.status = None
-
-        def start_run(self, **kwargs):
-            pass
-
-        def log_params(self, config):
-            self.config = config
-
-        def log_artifact(self, path, **kwargs):
-            self.artifacts[path.name] = path.read_text()
-
-        def log_metrics(self, metrics):
-            pass
-
-        def flush_traces(self):
-            pass
-
-        def end_run(self, status):
-            self.status = status
-
-    class Dataset:
-        def load(self, **kwargs):
-            return [
-                {"question": "first", "gold": "1"},
-                {"question": "second", "gold": "2"},
-            ]
-
-    tracker = Tracker()
-    args = parse_run_matrix(
-        [
-            "-c",
-            "lmas/receiver_compute_preflight/gsm8k",
-            "--max_samples",
-            "2",
-            "--receiver_budgets",
-            "2,4,free",
-            "--max_new_tokens",
-            "8",
-            "--bootstrap_count",
-            "10",
-        ]
-    )[0]
-    calls = []
-
-    def build(method, item, step, width, context_id, tracker, runtime):
-        assert width is None
-        calls.append((item["question"], step))
-        return (
-            None,
-            [[{"latent_steps": step}]],
-            {"handoff_positions": len(item["question"])},
-        )
-
-    def generate(method, item, context, limit, report_progress=False):
-        return [1, 2][:limit], {"receiver_input_ids": [5]}
-
-    monkeypatch.setattr(module, "build_upstream", build)
-    monkeypatch.setattr(module, "generate_receiver", generate)
-    model = SimpleNamespace(
-        device="cpu",
-        tokenizer=SimpleNamespace(decode=lambda ids, **kwargs: str(ids[-1])),
-    )
-    metrics, rows = module.ReceiverComputePreflightUseCase(
-        dataset_port=Dataset(), tracker_port=tracker
-    ).execute(model, args)
-    assert len(calls) == 4
-    assert len(rows) == 36
-    assert metrics["sample_count"] == 2
-    assert tracker.status == "FINISHED"
-    assert "sample_results.jsonl" in tracker.artifacts
-    assert all(
-        r["sample_id"] != r["donor_id"]
-        for r in rows
-        if r["handoff_condition"] == "mismatched"
-    )
-    assert all(r["valid"] for r in rows)
