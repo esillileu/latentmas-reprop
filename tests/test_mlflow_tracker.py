@@ -153,3 +153,23 @@ def test_mlflow_tracker_truncates_long_previews(tmp_path: Path, monkeypatch):
     assert len(trace.info.response_preview) <= 1000
     assert trace.info.response_preview.endswith("...")
 
+
+def test_run_tags_are_serializable_for_remote_tracking(tmp_path, monkeypatch):
+    from mlflow.entities import RunTag
+
+    tracker = MLflowTracker(
+        tracking_uri=f"sqlite:///{tmp_path / 'tags.db'}",
+        artifact_location=str(tmp_path / "artifacts"),
+    )
+    captured = {}
+
+    def start_run(**kwargs):
+        captured.update(kwargs)
+        for key, value in kwargs["tags"].items():
+            RunTag(key, value).to_proto()
+        return None
+
+    monkeypatch.setattr(mlflow, "start_run", start_run)
+    tracker.start_run("preflight-tags", tags={"seed": 42, "smoke": True})
+    assert captured["tags"]["seed"] == "42"
+    assert captured["tags"]["smoke"] == "True"

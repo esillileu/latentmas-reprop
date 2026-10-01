@@ -71,7 +71,7 @@ class MLflowTracker(ExperimentTrackerPort):
         tags: dict[str, Any] | None = None,
     ) -> Any:
         self._assessment_ready_traces.clear()
-        run_tags = dict(tags) if tags else {}
+        run_tags = {str(key): str(value) for key, value in (tags or {}).items()}
         run_tags.setdefault("git_commit", get_git_commit_hash(self.resolver.root))
 
         # Check existing experiment
