@@ -108,3 +108,15 @@ just clean-cache # Clean local execution cache
 
 This project is licensed under the [Apache License 2.0](LICENSE).
 See the [`LICENSE`](LICENSE) file for details.
+
+Explore paired receiver answer-only versus free reasoning with shared upstream caches:
+
+```bash
+just run-receiver-reasoning -c lmas/receiver_reasoning/gsm8k
+# Small-model execution check
+just run-receiver-reasoning -c lmas/receiver_reasoning/gsm8k \
+  --model_name Qwen/Qwen3-0.6B --max_samples 2
+```
+
+The preset runs 20 GSM8K samples with Qwen3-4B at 10 and 40 latent steps.
+See [receiver reasoning exploration](docs/receiver_reasoning.md) for artifacts and controls.

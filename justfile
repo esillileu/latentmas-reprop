@@ -34,6 +34,9 @@ lmas action="reprop" *args:
 run-intervention *args:
     uv run python -m src.run --intervention {{args}}
 
+run-receiver-reasoning *args:
+    uv run python -m src.run --receiver_reasoning {{args}}
+
 # Run secret-digit receiver acquisition
 run-acquisition *args:
     uv run python -m src.run --acquisition {{args}}

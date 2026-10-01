@@ -10,6 +10,7 @@ from .prompts import (
     build_agent_message_hierarchical_latent_mas,
     build_agent_message_sequential_latent_mas,
 )
+from .prompts.receiver import build_answer_only_messages
 from .token_counts import attach_token_counts
 
 
@@ -186,6 +187,8 @@ class LatentMASMethod:
         items: list[dict],
         past_kv: Any = None,
         initial_traces: list[list[dict]] | None = None,
+        receiver_mode: str = "free",
+        max_new_tokens: int | None = None,
     ) -> list[dict]:
         if len(items) > self.generate_bs:
             raise ValueError("Batch size exceeds configured generate_bs")
@@ -199,25 +202,55 @@ class LatentMASMethod:
         if judger_agent is None:
             raise RuntimeError("No judger agent found in self.agents")
 
+        if receiver_mode not in {"free", "answer_only"}:
+            raise ValueError(f"Unknown receiver mode: {receiver_mode}")
         batch_messages = self._build_messages(judger_agent.role, items)
+        if receiver_mode == "answer_only":
+            batch_messages = build_answer_only_messages(items, self.task)
+        template_options = (
+            {"chat_template_kwargs": {"enable_thinking": False}}
+            if receiver_mode == "answer_only"
+            else {}
+        )
         prompts, _, _, _ = self.model.prepare_chat_batch(
-            batch_messages, add_generation_prompt=True
+            batch_messages, add_generation_prompt=True, **template_options
         )
         past_for_decoding = past_kv if self.latent_steps > 0 else None
-        judger_prompts, judger_ids, judger_mask, tokens_batch = self._prepare_tokens(
-            prompts, self.model.device
+        answer_prefix = (
+            r"\boxed{"
+            if receiver_mode == "answer_only"
+            and self.task not in {"mbppplus", "humanevalplus"}
+            else ""
         )
+        if receiver_mode == "answer_only":
+            prompts = [prompt + answer_prefix for prompt in prompts]
+            encoded = self.model.tokenizer(
+                prompts, return_tensors="pt", padding=True, add_special_tokens=False
+            )
+            judger_prompts = prompts
+            judger_ids = encoded["input_ids"].to(self.model.device)
+            judger_mask = encoded["attention_mask"].to(self.model.device)
+            tokens_batch = [
+                self.model.tokenizer.convert_ids_to_tokens(ids[mask.bool()].tolist())
+                for ids, mask in zip(judger_ids, judger_mask, strict=True)
+            ]
+        else:
+            judger_prompts, judger_ids, judger_mask, tokens_batch = (
+                self._prepare_tokens(prompts, self.model.device)
+            )
         generated_batch, _, generated_token_counts = self.model.generate_text_batch(
             judger_ids,
             judger_mask,
-            max_new_tokens=self.judger_max_new_tokens,
+            max_new_tokens=max_new_tokens
+            if max_new_tokens is not None
+            else self.judger_max_new_tokens,
             temperature=self.temperature,
             top_p=self.top_p,
             past_key_values=past_for_decoding,
         )
         final_texts = ["" for _ in range(batch_size)]
         for idx in range(batch_size):
-            final_text = generated_batch[idx].strip()
+            final_text = answer_prefix + generated_batch[idx].strip()
             final_texts[idx] = final_text
             mask = judger_mask[idx].bool()
             agent_traces[idx].append(
