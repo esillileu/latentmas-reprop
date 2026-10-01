@@ -13,6 +13,9 @@ from latentmas_reprop.application.intervention_use_case import InterventionUseCa
 from latentmas_reprop.application.receiver_acquisition_use_case import (
     ReceiverAcquisitionUseCase,
 )
+from latentmas_reprop.application.receiver_compute_preflight_use_case import (
+    ReceiverComputePreflightUseCase,
+)
 from latentmas_reprop.application.receiver_reasoning_use_case import (
     ReceiverReasoningUseCase,
 )
@@ -46,7 +49,12 @@ def _reuse_completed_benchmark(
     """Return a finished benchmark without loading the model again."""
     if any(
         getattr(args, name, False)
-        for name in ("acquisition", "intervention", "receiver_reasoning")
+        for name in (
+            "acquisition",
+            "intervention",
+            "receiver_reasoning",
+            "receiver_compute_preflight",
+        )
     ):
         return None
     selected = resolve_model_dtype(device)
@@ -79,6 +87,11 @@ def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
     load_started = time.perf_counter()
     model = ModelWrapper(args.model_name, device, use_vllm=args.use_vllm, args=args)
     model.load_time_sec = time.perf_counter() - load_started
+
+    if getattr(args, "receiver_compute_preflight", False):
+        return ReceiverComputePreflightUseCase(tracker_port=MLflowTracker()).execute(
+            model, args
+        )
 
     if getattr(args, "receiver_reasoning", False):
         summary, records = ReceiverReasoningUseCase(

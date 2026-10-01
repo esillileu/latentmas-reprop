@@ -79,3 +79,9 @@ clean-cache:
 # Launch local MLflow UI pointing to SQLite backend
 mlflow-ui *args:
     uv run mlflow ui --backend-store-uri sqlite:///.cache/mlflow.db --default-artifact-root .cache/mlflow_artifacts {{args}}
+
+run-receiver-compute-preflight *args:
+    uv run python -m src.run --receiver_compute_preflight {{args}}
+
+analyze-receiver-compute-preflight *args:
+    uv run python -m src.run.compute_preflight_analysis {{args}}
