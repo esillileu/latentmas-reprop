@@ -151,6 +151,7 @@ class ModelWrapper(ModelPort):
             temperature=temperature,
             top_p=top_p,
             past_key_values=past_key_values,
+            report_progress=bool(getattr(self.args, "receiver_reasoning", False)),
         )
 
     def tokenize_text(self, text: str) -> torch.Tensor:

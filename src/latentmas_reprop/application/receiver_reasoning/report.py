@@ -4,14 +4,20 @@ import json
 from pathlib import Path
 
 from ..common.reporter import write_json, write_jsonl
+from .execution_report import execution_table
 from .tables import display, read_csv, table, write_csv
 
 
 def sample_table(rows):
+    keys = (
+        [key.removesuffix("_correct") for key in rows[0] if key.endswith("_correct")]
+        if rows
+        else ["low_answer_only", "low_free", "high_answer_only", "high_free"]
+    )
     values = []
     for row in rows:
         cells = []
-        for key in ("low_answer_only", "low_free", "high_answer_only", "high_free"):
+        for key in keys:
             correct = row[f"{key}_correct"]
             cells.append(
                 "N/A"
@@ -19,9 +25,7 @@ def sample_table(rows):
                 else f"{row[f'{key}_prediction']} / {correct} / {row[f'{key}_receiver_generated_tokens']}"
             )
         values.append([row["sample_index"], row["gold"], *cells])
-    return table(
-        ["sample", "gold", "low AO", "low Free", "high AO", "high Free"], values
-    )
+    return table(["sample", "gold", *keys], values)
 
 
 def render_markdown(output: Path):
@@ -94,22 +98,18 @@ def render_markdown(output: Path):
         "## Receiver Reasoning Comparison",
         "D(S) = Acc(S, free) - Acc(S, answer_only)",
     ]
+    levels = [level for level in ("low", "high") if f"{level}_free" in cells]
     sections.append(
         table(
-            ["metric", "low", "high"],
+            ["metric", *levels],
             [
                 [
                     "answer-only accuracy",
-                    cells["low_answer_only"]["accuracy"],
-                    cells["high_answer_only"]["accuracy"],
+                    *[cells[f"{v}_answer_only"]["accuracy"] for v in levels],
                 ],
-                [
-                    "free accuracy",
-                    cells["low_free"]["accuracy"],
-                    cells["high_free"]["accuracy"],
-                ],
-                ["D(S)", derived["D_low"]["estimate"], derived["D_high"]["estimate"]],
-                ["D(S) 95% CI", derived["D_low"]["ci95"], derived["D_high"]["ci95"]],
+                ["free accuracy", *[cells[f"{v}_free"]["accuracy"] for v in levels]],
+                ["D(S)", *[derived[f"D_{v}"]["estimate"] for v in levels]],
+                ["D(S) 95% CI", *[derived[f"D_{v}"]["ci95"] for v in levels]],
             ],
         )
     )
@@ -117,6 +117,9 @@ def render_markdown(output: Path):
         ("Receiver paired transitions", ("D_low", "D_high")),
         ("Upstream Compute Comparison", ("Delta_answer_only", "Delta_free")),
     ):
+        names = [name for name in names if name in derived]
+        if not names:
+            continue
         sections.append(
             "### " + title if title == "Receiver paired transitions" else "## " + title
         )
@@ -162,12 +165,17 @@ def render_markdown(output: Path):
                 ],
             )
         )
-    signal = derived["substitution_signal"]
+    sections.append("## Combined Metrics")
+    if "substitution_signal" in derived:
+        signal = derived["substitution_signal"]
+        sections += [
+            "substitution_signal = D(low) - D(high)",
+            f"substitution_signal = {display(signal['estimate'])}",
+            f"95% CI = {display(signal['ci95'])}",
+        ]
+    else:
+        sections.append("Single upstream level: compute contrasts are not estimated.")
     sections += [
-        "## Combined Metrics",
-        "substitution_signal = D(low) - D(high)",
-        f"substitution_signal = {display(signal['estimate'])}",
-        f"95% CI = {display(signal['ci95'])}",
         table(
             ["metric", "estimate", "95% CI", "paired n", "unavailable reasons"],
             [
@@ -208,6 +216,8 @@ def render_markdown(output: Path):
             ],
         ),
         "Truncation denotes reaching the configured generation limit; parse failure denotes missing or empty parsed prediction.",
+        "## Execution Diagnostics",
+        execution_table(cells),
         "## Prediction Distribution",
         table(
             ["cell", "unique predictions", "top prediction", "count", "ratio"],

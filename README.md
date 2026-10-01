@@ -118,7 +118,9 @@ just run-receiver-reasoning -c lmas/receiver_reasoning/gsm8k \
   --model_name Qwen/Qwen3-0.6B --max_samples 2
 ```
 
-The preset runs 20 GSM8K samples with Qwen3-4B at 10 and 40 latent steps.
+The preset runs 20 GSM8K samples with Qwen3-4B at 10 and 40 latent steps,
+passing the full upstream KV cache, plus no-handoff baselines. Both receiver
+modes use greedy decoding; free reasoning has a 4096-token budget.
 See [receiver reasoning exploration](docs/receiver_reasoning.md) for artifacts and controls.
 
 Analyze saved Latent Handoff Pilot results from MLflow without inference:

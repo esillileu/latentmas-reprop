@@ -8,9 +8,9 @@ max_samples: 20
 generate_bs: 1
 upstream_steps: '10,40'
 answer_only_max_new_tokens: 64
-max_new_tokens: 2048
-temperature: 0.6
-top_p: 0.95
+max_new_tokens: 4096
+temperature: 0.0
+top_p: 1.0
 device: cuda
 seed: 42
 tracking_experiment_name: latentmas_receiver_reasoning

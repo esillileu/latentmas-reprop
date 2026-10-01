@@ -1,16 +1,12 @@
-"""Paired receiver decoding across two upstream latent compute levels."""
+"""Paired receiver decoding across upstream latent compute levels."""
 
-from collections import Counter
+import traceback
+from copy import copy
 from pathlib import Path
-from statistics import mean, median
+from time import perf_counter
 from typing import Any
 
-from transformers import set_seed
-
-from ..domain.models import compute_sample_key
 from ..domain.ports.cache_port import CacheLayer
-from ..domain.services.kv_cache import clone_past_kv, get_past_kv_sequence_length
-from ..domain.services.latent_mas import LatentMASMethod
 from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
@@ -19,65 +15,15 @@ from .common.reporter import (
     build_run_stem,
     clean_config_args,
     write_json,
-    write_jsonl,
     write_yaml,
 )
-
-
-def summarize_receiver_records(records: list[dict], steps: list[int]) -> dict:
-    """Report descriptive aggregates without inferring causal effects."""
-    levels = {}
-    for step in steps:
-        cells = {}
-        paired = {}
-        for mode in ("answer_only", "free"):
-            rows = [
-                r
-                for r in records
-                if r["upstream_latent_steps"] == step and r["receiver_mode"] == mode
-            ]
-            counts = Counter(r["prediction"] for r in rows)
-            tokens = [r["receiver_generated_tokens"] for r in rows]
-            cells[mode] = {
-                "sample_count": len(rows),
-                "accuracy": mean(r["correct"] for r in rows),
-                "mean_generated_tokens": mean(tokens),
-                "median_generated_tokens": median(tokens),
-                "prediction_unique_count": len(counts),
-                "prediction_frequencies": dict(counts.most_common()),
-                "token_limit_count": sum(
-                    r["receiver_token_limit_reached"] for r in rows
-                ),
-            }
-            for row in rows:
-                paired.setdefault(row["sample_id"], {})[mode] = row["correct"]
-        transitions = Counter(
-            "both_correct"
-            if p["free"] and p["answer_only"]
-            else "free_only_correct"
-            if p["free"]
-            else "answer_only_correct"
-            if p["answer_only"]
-            else "both_incorrect"
-            for p in paired.values()
-        )
-        levels[str(step)] = {
-            "cells": cells,
-            "paired_correctness": {
-                key: transitions[key]
-                for key in (
-                    "both_correct",
-                    "free_only_correct",
-                    "answer_only_correct",
-                    "both_incorrect",
-                )
-            },
-            "D": cells["free"]["accuracy"] - cells["answer_only"]["accuracy"],
-        }
-    return {
-        "upstream_levels": levels,
-        "substitution_signal": levels[str(steps[0])]["D"] - levels[str(steps[1])]["D"],
-    }
+from .receiver_reasoning.metrics import (
+    log_summary_metrics,
+    summarize_execution,
+    summarize_receiver_records,
+)
+from .receiver_reasoning.runner import collect_sample
+from .receiver_reasoning.runtime import RuntimeMeasurements
 
 
 class ReceiverReasoningUseCase:
@@ -92,9 +38,20 @@ class ReceiverReasoningUseCase:
     def execute(self, model: Any, args: Any) -> tuple[dict, list[dict]]:
         if args.method != "latent_mas" or args.use_vllm:
             raise ValueError("Receiver reasoning requires transformers LatentMAS")
+        args = copy(args)
+        args.temperature = 0.0
+        args.top_p = 1.0
+        if args.handoff_positions is not None and args.handoff_positions <= 0:
+            raise ValueError("Handoff positions must be positive")
+        args.handoff_mode = "full" if args.handoff_positions is None else "tail"
+        args.include_no_handoff = True
         steps = args.upstream_steps
-        if len(steps) != 2 or not 0 < steps[0] < steps[1]:
-            raise ValueError("Expected two positive increasing upstream levels")
+        if (
+            len(steps) not in (1, 2)
+            or any(step <= 0 for step in steps)
+            or steps != sorted(set(steps))
+        ):
+            raise ValueError("Expected one or two positive increasing upstream levels")
         items = list(self.dataset_port.load(task=args.task, split=args.split))
         if args.max_samples > 0:
             items = items[: args.max_samples]
@@ -127,89 +84,67 @@ class ReceiverReasoningUseCase:
             )
             tracker.log_params(config)
         records = []
+        started = perf_counter()
+        runtime = RuntimeMeasurements(model)
         try:
             for index, item in enumerate(items):
-                sample_id = compute_sample_key(args.task, args.split, item["question"])
-                for step in steps:
-                    method = LatentMASMethod(
-                        model,
-                        latent_steps=step,
-                        judger_max_new_tokens=args.max_new_tokens,
-                        temperature=args.temperature,
-                        top_p=args.top_p,
-                        generate_bs=1,
-                        args=args,
-                        evaluator=self.evaluator_port,
-                    )
-                    set_seed(args.seed)
-                    context, traces = method.build_latent_contexts([item])
-                    length = get_past_kv_sequence_length(context)
-                    for mode in ("answer_only", "free"):
-                        set_seed(args.seed)
-                        limit = (
-                            args.answer_only_max_new_tokens
-                            if mode == "answer_only"
-                            else args.max_new_tokens
-                        )
-                        result = method.decode_with_context(
-                            [item],
-                            past_kv=clone_past_kv(context),
-                            initial_traces=traces,
-                            receiver_mode=mode,
-                            max_new_tokens=limit,
-                        )[0]
-                        tokens = result["agents"][-1]["generated_tokens"]
-                        records.append(
-                            {
-                                "sample_id": sample_id,
-                                "sample_index": index,
-                                "question": item["question"],
-                                "gold": item.get("gold", ""),
-                                "upstream_latent_steps": step,
-                                "receiver_mode": mode,
-                                "context_id": f"{sample_id}:{step}",
-                                "upstream_context_sequence_length": length,
-                                "prediction": result["prediction"],
-                                "raw_receiver_output": result["raw_prediction"],
-                                "correct": result["correct"],
-                                "error_msg": result.get("error_msg"),
-                                "receiver_generated_tokens": tokens,
-                                "receiver_token_limit_reached": tokens >= limit,
-                                "model": args.model_name,
-                                "seed": args.seed,
-                                "config": config,
-                                "agents": result["agents"],
-                            }
-                        )
-                        write_jsonl(records_path, records)
-                    del context
+                collect_sample(
+                    model,
+                    args,
+                    item,
+                    index,
+                    config,
+                    records,
+                    records_path,
+                    self.evaluator_port,
+                    tracker,
+                    runtime,
+                )
                 print(
                     f"[Receiver reasoning] {index + 1}/{len(items)} samples", flush=True
                 )
-            summary = summarize_receiver_records(records, steps) | {"config": config}
+            summary = summarize_receiver_records(records, steps) | {
+                "config": config,
+                **summarize_execution(
+                    records,
+                    len(items),
+                    perf_counter() - started,
+                    model,
+                    runtime.run_peak(),
+                    steps,
+                ),
+            }
             write_json(summary_path, summary)
             if tracker:
-                metrics = {"substitution_signal": summary["substitution_signal"]}
-                for step, level in summary["upstream_levels"].items():
-                    metrics[f"steps_{step}_D"] = level["D"]
-                    for mode, cell in level["cells"].items():
-                        for name in (
-                            "accuracy",
-                            "mean_generated_tokens",
-                            "median_generated_tokens",
-                            "prediction_unique_count",
-                            "token_limit_count",
-                        ):
-                            metrics[f"steps_{step}_{mode}_{name}"] = cell[name]
-                tracker.log_metrics(metrics)
+                tracker.log_metrics(log_summary_metrics(summary))
                 for path in (records_path, summary_path, config_path):
                     tracker.log_artifact(path, artifact_path="results")
+                tracker.flush_traces()
                 tracker.end_run(status="FINISHED")
             print(f"Artifacts: {directory}", flush=True)
             return summary, records
-        except Exception:
+        except (Exception, KeyboardInterrupt) as exc:
+            failure_path = directory / "failure.json"
+            failure = {
+                "failure_traceback": traceback.format_exc(),
+                **summarize_execution(
+                    records,
+                    len(items),
+                    perf_counter() - started,
+                    model,
+                    runtime.run_peak(),
+                    steps,
+                ),
+            }
+            write_json(failure_path, failure)
             if tracker:
+                tracker.log_artifact(failure_path, artifact_path="results")
+                tracker.log_artifact(config_path, artifact_path="results")
+                tracker.log_metrics(log_summary_metrics(failure))
                 if records:
                     tracker.log_artifact(records_path, artifact_path="results")
-                tracker.end_run(status="FAILED")
+                tracker.flush_traces()
+                tracker.end_run(
+                    status="KILLED" if isinstance(exc, KeyboardInterrupt) else "FAILED"
+                )
             raise

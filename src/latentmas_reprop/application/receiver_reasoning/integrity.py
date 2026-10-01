@@ -25,6 +25,9 @@ CONFIG_KEYS = (
     "device",
     "device2",
     "git_commit",
+    "handoff_positions",
+    "include_no_handoff",
+    "handoff_mode",
 )
 REQUIRED_CONFIG = (
     *CONFIG_KEYS[:7],
@@ -36,9 +39,21 @@ REQUIRED_CONFIG = (
 
 def inspect_records(records, config, params):
     steps = config.get("upstream_steps", [])
-    if not isinstance(steps, list) or len(steps) != 2 or not 0 < steps[0] < steps[1]:
-        raise ValueError("Resolved config must specify two increasing upstream_steps")
-    cells = {f"{level}_{mode}": [] for level in ("low", "high") for mode in MODES}
+    if (
+        not isinstance(steps, list)
+        or len(steps) not in (1, 2)
+        or any(step <= 0 for step in steps)
+        or steps != sorted(set(steps))
+    ):
+        raise ValueError(
+            "Resolved config must specify one or two increasing upstream_steps"
+        )
+    levels = dict(zip(steps, ("low", "high"), strict=False))
+    if config.get("include_no_handoff") or any(
+        r.get("upstream_latent_steps") == 0 for r in records
+    ):
+        levels[0] = "no_handoff"
+    cells = {f"{level}_{mode}": [] for level in levels.values() for mode in MODES}
     problems, issues = {key: [] for key in cells}, []
 
     def issue(text, affected=tuple(cells)):
@@ -54,10 +69,10 @@ def inspect_records(records, config, params):
             issue(f"MLflow parameter differs from resolved config: {key}")
     for row in records:
         step, mode = row.get("upstream_latent_steps"), row.get("receiver_mode")
-        if step not in steps or mode not in MODES:
+        if step not in levels or mode not in MODES:
             issue(f"Unexpected cell: steps={step}, mode={mode}")
             continue
-        key = f"{'low' if step == steps[0] else 'high'}_{mode}"
+        key = f"{levels[step]}_{mode}"
         cells[key].append(row)
         if not row.get("sample_id"):
             issue(f"Missing sample_id in {key}", [key])
@@ -76,6 +91,20 @@ def inspect_records(records, config, params):
         tokens = row.get("receiver_generated_tokens")
         if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens < 0:
             issue(f"Invalid token count in {key}: {row.get('sample_id')}", [key])
+        if "handoff_positions" in config:
+            expected = (
+                0
+                if step == 0
+                else row.get("upstream_source_sequence_length")
+                if config["handoff_positions"] is None
+                else config["handoff_positions"]
+            )
+            if (
+                expected is None
+                or row.get("handoff_positions") != expected
+                or row.get("upstream_context_sequence_length") != expected
+            ):
+                issue(f"Invalid handoff width in {key}: {row.get('sample_id')}", [key])
         row_config = row.get("config", {})
         for field in REQUIRED_CONFIG:
             if field not in row_config:
@@ -117,7 +146,7 @@ def inspect_records(records, config, params):
                 issue(f"Duplicate sample in {key}: {sid} ({len(group)} rows)", [key])
     if len({frozenset(ids) for ids in sets.values()}) != 1:
         issues.append(
-            "Four cell sample sets differ; no intersection is used for paired metrics."
+            "Cell sample sets differ; no intersection is used for paired metrics."
         )
     for sid in set().union(*sets.values()):
         entries = [(key, rows[sid]) for key, rows in indexed.items() if sid in rows]
@@ -127,7 +156,7 @@ def inspect_records(records, config, params):
                 > 1
             ):
                 issue(f"Sample {field} differs: {sid}", [key for key, _ in entries])
-        for level in ("low", "high"):
+        for level in levels.values():
             keys = [f"{level}_{mode}" for mode in MODES]
             pair = [indexed[key].get(sid) for key in keys]
             if all(pair):

@@ -13,6 +13,7 @@ from .cli_intervention import (
     add_intervention_args,
     validate_intervention_and_acquisition_args,
 )
+from .cli_receiver import add_receiver_reasoning_args, validate_receiver_reasoning_args
 
 
 def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentParser:
@@ -171,19 +172,7 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         help="Target GPU memory utilization for vLLM",
     )
 
-    parser.add_argument(
-        "--receiver_reasoning",
-        action="store_true",
-        default=defaults.get("receiver_reasoning", False),
-    )
-    parser.add_argument(
-        "--upstream_steps", default=defaults.get("upstream_steps", "10,40")
-    )
-    parser.add_argument(
-        "--answer_only_max_new_tokens",
-        type=int,
-        default=defaults.get("answer_only_max_new_tokens", 64),
-    )
+    add_receiver_reasoning_args(parser, defaults)
 
     parser.add_argument(
         "--version_tag",
@@ -233,24 +222,7 @@ def _parse_args(args: list[str] | None, defaults: dict[str, Any]) -> argparse.Na
 
     validate_intervention_and_acquisition_args(parser, parsed)
 
-    if parsed.receiver_reasoning:
-        try:
-            parsed.upstream_steps = [int(x) for x in parsed.upstream_steps.split(",")]
-        except ValueError:
-            parser.error("--upstream_steps requires two comma-separated integers")
-        if (
-            len(parsed.upstream_steps) != 2
-            or not 0 < parsed.upstream_steps[0] < parsed.upstream_steps[1]
-        ):
-            parser.error("--upstream_steps requires 0 < low < high")
-        if parsed.method != "latent_mas" or parsed.use_vllm:
-            parser.error("--receiver_reasoning requires latent_mas with transformers")
-        if parsed.acquisition or parsed.intervention:
-            parser.error("experiment use cases are mutually exclusive")
-        if parsed.answer_only_max_new_tokens < 2 or parsed.max_new_tokens < 2:
-            parser.error("receiver token limits must allow answer serialization")
-        if parsed.max_samples == 0:
-            parser.error("--max_samples must be positive or -1")
+    validate_receiver_reasoning_args(parser, parsed)
 
     return parsed
 

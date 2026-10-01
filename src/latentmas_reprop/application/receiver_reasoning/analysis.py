@@ -6,6 +6,7 @@ from statistics import mean, median
 
 import numpy as np
 
+from .diagnostics import RECORD_DIAGNOSTICS, cell_diagnostics
 from .integrity import inspect_records
 
 
@@ -48,6 +49,10 @@ def cell_statistics(rows):
         for p, c in predictions.most_common()
     ]
     return {
+        "execution_diagnostics": cell_diagnostics(rows),
+        "error_count": sum(bool(r.get("error_msg")) for r in rows),
+        "successful_count": sum(not bool(r.get("error_msg")) for r in rows),
+        "truncation_rate": sum(reached_token_limit(r) for r in rows) / n if n else None,
         "sample_count": n,
         "correct_count": correct,
         "accuracy": correct / n if n else None,
@@ -87,6 +92,22 @@ def analyze_records(records, config, metadata, *, bootstrap_count=5000, seed=0):
             "high_free": -1,
             "high_answer_only": 1,
         },
+    }
+    if "no_handoff_free" in cells:
+        metric_specs["D_no_handoff"] = {
+            "no_handoff_free": 1,
+            "no_handoff_answer_only": -1,
+        }
+        for level in ("low", "high"):
+            for mode in ("answer_only", "free"):
+                metric_specs[f"Handoff_gain_{level}_{mode}"] = {
+                    f"{level}_{mode}": 1,
+                    f"no_handoff_{mode}": -1,
+                }
+    metric_specs = {
+        name: weights
+        for name, weights in metric_specs.items()
+        if set(weights).issubset(cells)
     }
     # Reuse the same draw indices for every eligible metric with the same sample set.
     rng = np.random.default_rng(seed)
@@ -165,6 +186,7 @@ def analyze_records(records, config, metadata, *, bootstrap_count=5000, seed=0):
                 "prediction",
                 "correct",
                 "receiver_generated_tokens",
+                *RECORD_DIAGNOSTICS,
             ):
                 row[f"{key}_{field}"] = record.get(field) if record else None
         matrix.append(row)
@@ -188,6 +210,8 @@ def analyze_records(records, config, metadata, *, bootstrap_count=5000, seed=0):
     for row in matrix:
         sid = row["sample_id"]
         for level in ("low", "high"):
+            if f"D_{level}" not in derived:
+                continue
             values = [
                 row[f"{level}_{mode}_correct"] for mode in ("answer_only", "free")
             ]
@@ -197,15 +221,15 @@ def analyze_records(records, config, metadata, *, bootstrap_count=5000, seed=0):
                 and values[0] != values[1]
             ):
                 subsets[f"{level}_disagreement"].append(sid)
-        low, high = row["low_answer_only_correct"], row["high_answer_only_correct"]
+        low, high = row["low_answer_only_correct"], row.get("high_answer_only_correct")
         if (
-            derived["Delta_answer_only"]["estimate"] is not None
+            derived.get("Delta_answer_only", {}).get("estimate") is not None
             and low is False
             and high is True
         ):
             subsets["answer_only_wrong_to_correct"].append(sid)
         if (
-            derived["Delta_answer_only"]["estimate"] is not None
+            derived.get("Delta_answer_only", {}).get("estimate") is not None
             and low is True
             and high is False
         ):
