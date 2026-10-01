@@ -1,4 +1,4 @@
-"""Torch dtype selection and CUDA architecture checks."""
+"""Torch dtype selection and CUDA availability checks."""
 
 import torch
 
@@ -8,26 +8,14 @@ def dtype_name(dtype: torch.dtype) -> str:
     return str(dtype).removeprefix("torch.")
 
 
-def ensure_cuda_architecture_supported(device: torch.device) -> None:
-    """Fail before model load when the installed PyTorch build lacks this GPU."""
+def ensure_cuda_available(device: torch.device) -> None:
+    """Require CUDA availability; let PyTorch resolve kernel compatibility at runtime."""
     if device.type != "cuda":
         return
     if not torch.cuda.is_available():
         raise RuntimeError(
             "CUDA was requested, but this PyTorch build has no available CUDA device. "
             f"torch={torch.__version__} torch.version.cuda={torch.version.cuda}."
-        )
-    index = device.index if device.index is not None else torch.cuda.current_device()
-    major, minor = torch.cuda.get_device_capability(index)
-    arch = f"sm_{major}{minor}"
-    compiled = list(torch.cuda.get_arch_list())
-    if arch not in compiled:
-        name = torch.cuda.get_device_name(index)
-        compiled_text = ", ".join(compiled) if compiled else "none"
-        raise RuntimeError(
-            f"Installed PyTorch ({torch.__version__}, CUDA {torch.version.cuda}) "
-            f"does not include kernels for {name} ({arch}). "
-            f"Compiled architectures: {compiled_text}."
         )
 
 
@@ -36,7 +24,7 @@ def resolve_model_dtype(device: torch.device) -> torch.dtype:
     if device.type == "cpu":
         return torch.float32
     if device.type == "cuda":
-        ensure_cuda_architecture_supported(device)
+        ensure_cuda_available(device)
         if torch.cuda.is_bf16_supported():
             return torch.bfloat16
         return torch.float16
