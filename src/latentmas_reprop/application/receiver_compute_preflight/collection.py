@@ -1,5 +1,6 @@
 """Collect sample/condition traces while reusing paired KV and baseline inference."""
 
+from tqdm import tqdm
 from transformers import set_seed
 
 from ...domain.services.kv_cache import move_past_kv
@@ -163,7 +164,7 @@ def collect_samples(
         top_p=1.0,
         generate_bs=1,
     )
-    for index, item in enumerate(items):
+    for index, item in enumerate(tqdm(items, desc="No handoff · U=0", unit="sample")):
         _, rows = collect_condition(
             method,
             args,
@@ -194,7 +195,9 @@ def collect_samples(
             generate_bs=1,
         )
         donors = []
-        for index, item in enumerate(items):
+        for index, item in enumerate(
+            tqdm(items, desc=f"Matched · U={step}", unit="sample")
+        ):
             donor, rows = collect_condition(
                 method,
                 args,
@@ -226,7 +229,9 @@ def collect_samples(
         sources = length_matched_donors(
             [donor[3]["handoff_positions"] for donor in donors]
         )
-        for index, item in enumerate(items):
+        for index, item in enumerate(
+            tqdm(items, desc=f"Mismatched · U={step}", unit="sample")
+        ):
             _, rows = collect_condition(
                 method,
                 args,
@@ -245,7 +250,3 @@ def collect_samples(
             )
             records.extend(rows)
             write_jsonl(records_path, records)
-            print(
-                f"[compute preflight] U={step} sample={index + 1}/{len(items)}",
-                flush=True,
-            )

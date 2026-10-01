@@ -1,9 +1,9 @@
 """Text generation and forward next-token operations for HuggingFace models."""
 
-from time import perf_counter
 from typing import Any
 
 import torch
+from tqdm import tqdm
 from transformers import AutoTokenizer, StoppingCriteria, StoppingCriteriaList
 
 from ...domain.ports.model_port import NextTokenState
@@ -15,23 +15,24 @@ class GenerationProgress(StoppingCriteria):
 
     def __init__(self, prompt_length: int, budget: int):
         self.prompt_length = prompt_length
-        self.budget = budget
-        self.started = self.last_report = perf_counter()
-        print(f"[generation] started: 0/{budget} tokens", flush=True)
+        self.progress = tqdm(
+            total=budget,
+            desc="Generating",
+            unit="token",
+            dynamic_ncols=True,
+            mininterval=1.0,
+            leave=False,
+        )
 
     def __call__(self, input_ids, scores, **kwargs):
-        now = perf_counter()
-        count = input_ids.shape[-1] - self.prompt_length
-        if now - self.last_report >= 30 or count >= self.budget:
-            elapsed = now - self.started
-            print(
-                f"[generation] {count}/{self.budget} tokens "
-                f"({count / self.budget:.1%} budget), "
-                f"{elapsed:.0f}s, {count / max(elapsed, 1e-9):.1f} tokens/s",
-                flush=True,
-            )
-            self.last_report = now
+        self.update(input_ids.shape[-1] - self.prompt_length)
         return False
+
+    def update(self, count: int) -> None:
+        self.progress.update(count - self.progress.n)
+
+    def close(self) -> None:
+        self.progress.close()
 
 
 def count_new_token_ids(generated_ids: torch.Tensor, pad_token_id: int | None) -> int:
@@ -74,30 +75,41 @@ def generate_token_ids_batch(
 
     sampling = {"temperature": temperature, "top_p": top_p} if temperature > 0 else {}
     criteria = []
-    if report_progress:
-        criteria.append(GenerationProgress(input_ids.shape[-1], max_new_tokens))
+    token_progress = (
+        GenerationProgress(input_ids.shape[-1], max_new_tokens)
+        if report_progress
+        else None
+    )
+    if token_progress is not None:
+        criteria.append(token_progress)
     if observer is not None:
         criteria.append(observer)
     progress = {"stopping_criteria": StoppingCriteriaList(criteria)} if criteria else {}
-    outputs = model.generate(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        max_new_tokens=max_new_tokens,
-        **sampling,
-        **progress,
-        do_sample=temperature > 0,
-        pad_token_id=tokenizer.pad_token_id,
-        return_dict_in_generate=True,
-        output_scores=False,
-        past_key_values=past_key_values,
-    )
-    sequences = outputs.sequences
-    token_ids: list[list[int]] = []
-    prompt_seq_len = input_ids.shape[1]
-    for idx in range(input_ids.shape[0]):
-        generated_ids = sequences[idx, prompt_seq_len:]
-        token_ids.append(generated_ids.to("cpu").tolist())
-    return token_ids, outputs.past_key_values
+    try:
+        outputs = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            **sampling,
+            **progress,
+            do_sample=temperature > 0,
+            pad_token_id=tokenizer.pad_token_id,
+            return_dict_in_generate=True,
+            output_scores=False,
+            past_key_values=past_key_values,
+        )
+        sequences = outputs.sequences
+        if token_progress is not None:
+            token_progress.update(sequences.shape[-1] - input_ids.shape[-1])
+        token_ids: list[list[int]] = []
+        prompt_seq_len = input_ids.shape[1]
+        for idx in range(input_ids.shape[0]):
+            generated_ids = sequences[idx, prompt_seq_len:]
+            token_ids.append(generated_ids.to("cpu").tolist())
+        return token_ids, outputs.past_key_values
+    finally:
+        if token_progress is not None:
+            token_progress.close()
 
 
 def generate_text_batch(
@@ -136,8 +148,6 @@ def generate_text_batch(
         count_new_token_ids(torch.tensor(ids), tokenizer.pad_token_id)
         for ids in token_ids
     ]
-    if report_progress:
-        print(f"[generation] finished: {counts} tokens", flush=True)
     return texts, cache, counts
 
 
