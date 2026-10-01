@@ -8,6 +8,11 @@ def add_compute_preflight_args(parser, defaults):
         default=defaults.get("receiver_compute_preflight", False),
     )
     parser.add_argument(
+        "--run_label",
+        default=defaults.get("run_label"),
+        help="Label this preflight variant in run names and trace tags.",
+    )
+    parser.add_argument(
         "--receiver_budgets",
         default=defaults.get("receiver_budgets", "64,128,256,512,1024,free"),
     )

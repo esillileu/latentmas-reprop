@@ -145,3 +145,26 @@ collection require the updated execution path.
 Outputs default to `artifacts/receiver_compute_preflight/RUN_ID/` and are uploaded
 to the source run under `analysis/`. `MLFLOW_TRACKING_URI` follows the usual tracker
 configuration; `source.json` records run provenance. Run `just lint && just test`.
+
+### MLflow traces and run identity
+
+Every execution names the run with its model, task, split, sample count, run label,
+upstream levels, receiver budgets, seed, and timestamp. Use `--run_label` to distinguish
+individual tests (for example `--run_label prefix-check`). Two-sample runs and prefix
+verification runs have `run_kind=smoke`; larger runs have `run_kind=experiment`.
+
+Sample traces cover baseline generation, upstream construction, and paired evaluation
+at each upstream level. Paired traces include receiver LLM spans for every actual
+attempt and prefix verification, evaluator spans for every budget and handoff condition,
+and saved upstream agent snapshots linked to their source trace. Baselines are generated
+once and referenced by `receiver_trace_id` when reused. Agent snapshots do not count
+as new inference or token usage.
+
+Traces record questions, gold answers, reference solutions, resolved configuration,
+prompts and input IDs, generated IDs and raw text, predictions, correctness, answer
+completeness, termination and retry diagnostics, donor identity and cache metadata,
+latency, throughput, VRAM, and attention/position compute proxies. Ground truth and
+per-cell evaluation feedback are attached as assessments. `results/trace_manifest.json`
+lists trace IDs and assessment/span names; `sample_results.jsonl` links each result to
+its paired, receiver, and upstream traces. On failure, completed results, the manifest,
+and traceback are uploaded and traces flushed before the run is closed.

@@ -64,7 +64,7 @@ def test_only_cap_reaching_trajectory_retries_and_preserves_context(monkeypatch)
     calls = generator(monkeypatch, stop_at=12)
     context = object()
     result = collect_trajectory(
-        method, {"gold": "42"}, context, args, DEFAULT_EVALUATOR
+        method, {"question": "q", "gold": "42"}, context, args, DEFAULT_EVALUATOR
     )
     assert calls == [(8, context), (16, context)]
     assert result["free_naturally_terminated"] is True
@@ -78,7 +78,7 @@ def test_only_cap_reaching_trajectory_retries_and_preserves_context(monkeypatch)
 def test_natural_eos_at_cap_is_valid_and_does_not_retry(monkeypatch):
     method, args = method_and_args()
     calls = generator(monkeypatch, stop_at=8)
-    result = collect_trajectory(method, {"gold": "42"}, None, args, DEFAULT_EVALUATOR)
+    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args, DEFAULT_EVALUATOR)
     assert len(calls) == 1
     assert result["free_naturally_terminated"] is True
     assert result["pathological"] is False
@@ -93,7 +93,7 @@ def test_retry_ceiling_produces_explicit_pathological_records(monkeypatch):
     method, args = method_and_args()
     args.model_name, args.seed = "model", 0
     calls = generator(monkeypatch)
-    result = collect_trajectory(method, {"gold": "42"}, None, args, DEFAULT_EVALUATOR)
+    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args, DEFAULT_EVALUATOR)
     assert [c[0] for c in calls] == [8, 16, 32]
     assert result["pathological"] is True
     rows = trajectory_records(
@@ -118,13 +118,13 @@ def test_expansion_refuses_changed_prefix(monkeypatch):
     method, args = method_and_args()
     generator(monkeypatch, stop_at=12, mutate=True)
     with pytest.raises(ValueError, match="initial greedy prefix"):
-        collect_trajectory(method, {"gold": "42"}, None, args, DEFAULT_EVALUATOR)
+        collect_trajectory(method, {"question": "q", "gold": "42"}, None, args, DEFAULT_EVALUATOR)
 
 
 def test_actual_capped_smoke_verification_ignores_timing_variation(monkeypatch):
     method, args = method_and_args()
     args.verify_prefix = True
     calls = generator(monkeypatch, stop_at=6)
-    result = collect_trajectory(method, {"gold": "42"}, None, args, DEFAULT_EVALUATOR)
+    result = collect_trajectory(method, {"question": "q", "gold": "42"}, None, args, DEFAULT_EVALUATOR)
     assert [c[0] for c in calls] == [8, 2, 4]
     assert result["prefix_verified"] is True

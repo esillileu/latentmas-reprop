@@ -62,6 +62,7 @@ class MLflowTracker(ExperimentTrackerPort):
             self.artifact_location = None
 
         self._active_run = None
+        self._assessment_ready_traces = set()
 
     def start_run(
         self,
@@ -69,6 +70,7 @@ class MLflowTracker(ExperimentTrackerPort):
         run_name: str | None = None,
         tags: dict[str, Any] | None = None,
     ) -> Any:
+        self._assessment_ready_traces.clear()
         run_tags = dict(tags) if tags else {}
         run_tags.setdefault("git_commit", get_git_commit_hash(self.resolver.root))
 
@@ -144,7 +146,6 @@ class MLflowTracker(ExperimentTrackerPort):
             mlflow.end_run(status=status)
         self._active_run = None
 
-
     @contextmanager
     def start_sample_trace(
         self,
@@ -203,7 +204,7 @@ class MLflowTracker(ExperimentTrackerPort):
     ) -> None:
         """Log expectation (ground truth) assessment on a trace."""
         try:
-            self.flush_traces()
+            self._flush_before_assessment(trace_id)
             source = AssessmentSource(
                 source_type=AssessmentSourceType.CODE, source_id=source_id
             )
@@ -226,7 +227,7 @@ class MLflowTracker(ExperimentTrackerPort):
     ) -> None:
         """Log feedback assessment on a trace."""
         try:
-            self.flush_traces()
+            self._flush_before_assessment(trace_id)
             source = AssessmentSource(
                 source_type=AssessmentSourceType.CODE, source_id=source_id
             )
@@ -239,6 +240,12 @@ class MLflowTracker(ExperimentTrackerPort):
             )
         except Exception:
             pass
+
+    def _flush_before_assessment(self, trace_id: str) -> None:
+        # A completed trace only needs exporting once before its assessments.
+        if trace_id not in self._assessment_ready_traces:
+            self.flush_traces()
+            self._assessment_ready_traces.add(trace_id)
 
     def flush_traces(self) -> None:
         """Flush background async trace queue."""

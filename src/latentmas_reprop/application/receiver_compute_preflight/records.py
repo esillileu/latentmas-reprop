@@ -30,6 +30,7 @@ def trajectory_records(
             trajectory["free_naturally_terminated"],
             metadata["receiver_thinking_open"],
         )
+        row.update(metadata)
         row.update(identity)
         row.update(
             question=item["question"],
@@ -60,5 +61,13 @@ def trajectory_records(
             },
         )
         row.update(prefix_cost(metadata, row["generated_tokens"], budget))
+        row["receiver_generated_tokens_per_sec"] = (
+            row["generated_tokens"] / row["receiver_latency_sec"]
+            if row["receiver_latency_sec"]
+            else 0.0
+        )
+        row["execution_success"] = True
+        row["parse_failure"] = row["no_answer"]
+        row["empty_output"] = not bool(row["raw_receiver_output"].strip())
         rows.append(row)
     return rows
