@@ -79,9 +79,12 @@ scatter, see [receiver trajectory](docs/receiver_trajectory.md). Run 0.6B on the
 4B/8B/14B require a larger BF16 GPU (32GB minimum; 14B has little headroom there).
 All sweeps check exact KV/logit parity against freshly generated independent runs.
 Collection requires no local historical or analysis artifacts. Collection saves receiver records and
-raw sender states. Probe fitting and the 60/80-point scatter run later through
-`just analyze-sender-probe` and `just analyze-receiver-trajectory`.
-Results are logged to the separate MLflow experiment `latentmas_receiver_trajectory`.
+raw sender states. Probe fitting and the communication scatter run later through
+`just analyze-sender-probe --source-run-id SWEEP_RUN_ID` and
+`just analyze-stepwise-communication`. Sweep-derived probes are logged in the
+same `latentmas_receiver_trajectory` experiment with `phase=sender_probe` and
+the exact source sweep ID. Communication analysis rejects probes from any other
+source; acquisition probes are never substituted.
 
 Replace a legacy MLflow acquisition run while preserving its acquisition metrics,
 artifacts, timestamps, and traces:

@@ -101,32 +101,35 @@ added sender-state artifact. No historical run is modified or backfilled.
 
 ## Offline analysis
 
-Fit probes later using the existing `just analyze-sender-probe` command and the
-saved sender states. Once model-specific probe cells are exported, join them to
-saved receiver records without loading a language model:
+Analyze the saved sender states of each completed sweep directly from MLflow:
 
 ```bash
-just analyze-receiver-trajectory \
-  --probe-cells artifacts/receiver_acquisition/sender_probe_cells.csv
+just analyze-sender-probe --source-run-id SWEEP_RUN_ID --backend torch --permutations 5000
 ```
 
-Download the required run artifacts from MLflow into model directories named
-`Qwen_Qwen3-<size>` and pass their parent as `--input-dir` to analysis.
-These downloads are local analysis inputs, not the collection's source of truth.
-The analysis reads these complete downloaded model directories, calculates paired
-argmax change fractions, and matches each step to the full20 run's
-`latent_post_realign` probe. It writes `analysis/trajectory.csv`, `.json` and
-PNG/PDF scatter under `artifacts/receiver_trajectory/`. All four models produce
-80 rows; the first three produce 60 rows; a single model produces 20 rows.
-Missing probe cells fail explicitly. Analysis does not upload to MLflow.
+The command detects the `latentmas_receiver_trajectory` source experiment,
+reads that sweep's root `sender_latent_states.pt` and `source.json`, and creates
+its probe analysis in the same experiment. The original collection run is
+preserved. The new run has `phase=sender_probe`, an exact `source_run_id`,
+`source_artifact=sender_latent_states.pt`, model and latent-step metadata.
+All 20 steps are analyzed without loading a language model or running inference.
+Missing states are an error; no acquisition run or local file is substituted.
+Local config/state overrides and `--replace-source-run` are rejected for sweeps.
+Probe inputs must contain the full 200 examples and 20 latent steps.
 
-Columns include `model`, `latent_step`, `probe_accuracy`, `probe_null_mean`,
-`probe_effect_pp`, `probe_fwer_p`, and `receiver_changed_fraction`, plus sample
-count and probe provenance. X is probe accuracy minus null mean in pp; Y is
-receiver changed fraction × 100. Models have fixed colors and thin step-order
-connections, without regression, correlation or per-point labels.
-`just plot-receiver-trajectory --input <analysis CSV>` can redraw the scatter.
-Paths can be overridden with the commands' input/output arguments.
+For the completed 14B sweep:
+
+```bash
+just analyze-sender-probe \
+  --source-run-id 12fe75f4f0cc44c09c19ed566d40b283 \
+  --backend torch --permutations 5000
+```
+
+Run the same command for the 0.6B, 4B and 8B sweep IDs. Use the resulting probe
+run IDs with `just analyze-stepwise-communication`, described below. A probe
+from an acquisition run, an unselected sweep, an incorrect artifact path, or a
+duplicate probe for the same sweep is rejected before the communication plots
+are generated. Existing acquisition probes do not qualify as sweep probes.
 
 ## Tracking coverage
 
@@ -149,3 +152,76 @@ later analysis; fitting and aggregate statistics stay outside collection.
 Actual prompt text and full receiver logits are also recorded explicitly.
 Existing completed runs lack any data they did not originally capture; missing
 full logits or real trace contents cannot be invented retrospectively.
+
+## Strict three-model communication analysis
+
+`just analyze-stepwise-communication` reads only MLflow run artifacts for
+Qwen3-0.6B, 4B and 8B, with steps 1..20. MLflow is the sole source of truth;
+there are no local CSV input options, persistent input cache, or local fallback.
+`MLFLOW_TRACKING_URI` (loaded from `.env`) or `--tracking-uri` is required.
+Downloads are temporary and removed after the saved results have been read.
+No model loading, sender/receiver inference, probe fitting, permutation runs,
+regression, smoothing or pooled correlation is performed.
+
+Explicit run IDs prevent silently choosing the latest of multiple experiments:
+
+```bash
+just analyze-stepwise-communication \
+  --probe-run-ids PROBE_06B PROBE_4B PROBE_8B \
+  --sweep-run-ids SWEEP_06B SWEEP_4B SWEEP_8B \
+  --independent-run-ids OWN_06B_1 OWN_06B_4 OWN_06B_20 \
+    OWN_4B_1 OWN_4B_4 OWN_4B_20 OWN_8B_1 OWN_8B_4 OWN_8B_20
+```
+
+Inputs must be FINISHED runs in their respective MLflow experiments:
+
+- Three `latentmas_receiver_trajectory` probe runs with `phase=sender_probe`,
+  each referencing exactly one of the selected sweep run IDs and its root
+  `sender_latent_states.pt`. `probe/results.json` supplies observed accuracy
+  and FWER p-value;
+  `probe/null_statistics.json` supplies the saved null accuracies. Only
+  `latent_post_realign` cells are used, with the mean of each saved null column.
+- Three `latentmas_receiver_trajectory` runs with `sample_results.jsonl`,
+  `source.json` and passing `parity.json`. All 100 canonical samples must have
+  paired drop and latent-only own observations at every step 1..20.
+- Nine independent `latentmas_receiver_acquisition` runs with
+  `results/sample_results.jsonl`, at steps 1, 4 and 20 for each model. The
+  latent-only own predictions are compared against their sample-matched drop
+  observations; other acquisition conditions are not used in this metric.
+
+Missing/duplicate model-step cells, incomplete samples, invalid identities or
+handoff positions, missing metrics and nonfinite values raise errors. No cells
+are silently dropped or pooled. Exactly 60 final metric rows and nine parity
+rows are required. Parity compares the changed fraction used in the scatter;
+it does not claim full-logit equality against the historical independent runs.
+A mismatch saves the comparison tables to a FAILED analysis run before raising
+an error; plots are generated only when all nine metrics match exactly.
+
+Derived artifacts are uploaded under `communication/` in a new
+`latentmas_receiver_trajectory` run tagged `phase=analysis`:
+
+- `stepwise_communication_metrics.csv`: the exact 60 rows used by every plot,
+  including effect in percentage points, receiver changed percentage and
+  significance derived directly from FWER p < 0.05.
+- `stepwise_receiver_parity.csv`: independent/sweep changed fractions,
+  differences, run IDs and equality flags at steps 1, 4 and 20.
+- `stepwise_communication_scatter.png` / `.pdf`: model colors, thin connections
+  in step order, filled significant points and hollow nonsignificant points.
+  No default step labels; `--annotate-steps` labels only 1, 4 and 20.
+- `stepwise_communication_diagnostics.png` / `.pdf`: per-model unsmoothed
+  step curves for probe effect and receiver changed percentage. All model panels
+  share step limits/ticks; probe effect and receiver change use the same
+  measurement limits/ticks as the scatter. Probe limits span all 60 effects
+  with 2 pp ticks; receiver ticks are 0..100% in 20% increments.
+- `source_runs.json`: all input run IDs and artifact paths for reproducibility.
+
+`--output-dir` optionally exports copies of these derived artifacts locally;
+those files are never analysis inputs. The 60 points are not treated as iid
+observations. The figure shows whether the two trajectories separate under
+different conditions, without a test claiming absence of correlation.
+
+Earlier communication analysis runs used acquisition probes paired with sweep
+receiver observations. Their receiver parity checks do not validate sender
+provenance, and those figures are not a same-sweep analysis. The current
+communication command rejects those inputs; regenerate each sender probe from
+its selected sweep before producing the communication figures.

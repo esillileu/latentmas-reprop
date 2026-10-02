@@ -101,3 +101,7 @@ analyze-receiver-compute-preflight *args:
 # Analyze saved secret-digit trajectories without inference
 analyze-receiver-trajectory *args:
     uv run --frozen python -m src.run.receiver_trajectory_analysis {{args}}
+
+# Strict offline 60-cell communication metrics, parity table and plots
+analyze-stepwise-communication *args:
+    uv run --frozen python -m src.run.stepwise_communication_analysis {{args}}
