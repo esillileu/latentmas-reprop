@@ -65,6 +65,15 @@ just analyze-sender-probe \
   --source-config configs/lmas/secret_digit/preflight.yaml
 ```
 
+Generate presentation PNGs (300 dpi) and PDFs from existing analysis CSVs:
+
+```bash
+just plot-presentation
+```
+
+This reads local artifacts only and writes to `artifacts/presentation/`.
+See [presentation plots](docs/presentation_plots.md) for required inputs and sources.
+
 Replace a legacy MLflow acquisition run while preserving its acquisition metrics,
 artifacts, timestamps, and traces:
 

@@ -59,6 +59,10 @@ analyze-handoff *args:
 analyze-receiver *args:
     uv run python -m src.run.receiver_analysis {{args}}
 
+# Presentation PNG/PDF figures from existing analysis CSVs (no inference)
+plot-presentation *args:
+    uv run --frozen python -m src.run.presentation_plots {{args}}
+
 # Run test suite
 test *args:
     uv run pytest {{args}}
