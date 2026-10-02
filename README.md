@@ -74,10 +74,13 @@ just plot-presentation
 This reads local artifacts only and writes to `artifacts/presentation/`.
 See [presentation plots](docs/presentation_plots.md) for required inputs and sources.
 
-For parity-checked stepwise latent-only KV receiver evaluation and the 60-point
+For parity-checked stepwise latent-only KV receiver evaluation and the stepwise
 scatter, see [receiver trajectory](docs/receiver_trajectory.md). Run 0.6B on the local 8GB GPU with `just run-receiver-trajectory --model 0.6B`.
-4B/8B require a 32GB GPU. All sweeps require KV/logit parity with independent runs
-plus historical digit prediction parity.
+4B/8B/14B require a larger BF16 GPU (32GB minimum; 14B has little headroom there).
+All sweeps require exact KV/logit parity with independent runs; available historical
+acquisition digit predictions are checked too. Collection saves receiver records and
+raw sender states. Probe fitting and the 60/80-point scatter run later through
+`just analyze-sender-probe` and `just analyze-receiver-trajectory`.
 Results are logged to the separate MLflow experiment `latentmas_receiver_trajectory`.
 
 Replace a legacy MLflow acquisition run while preserving its acquisition metrics,

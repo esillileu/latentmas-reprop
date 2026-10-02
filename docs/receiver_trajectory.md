@@ -1,99 +1,114 @@
 # Secret-digit receiver trajectory
 
-This experiment uses the existing receiver acquisition protocol: the canonical
-100 balanced samples at seed 42, sender prompt v1, receiver prompt v2 with
-thinking disabled, `The number is ` scoring prefix, contextual single-token
-digit candidates, digit argmax, latent-only own handoff, and no-cache drop at
-receiver position zero. It does not inject saved probe vectors into the receiver
-and does not reuse the probe's 200 template/digit examples as receiver samples.
+## Collection
 
-Each canonical receiver sample gets one new 20-step sender rollout. For step k,
-copy its full KV cache, retain the first `prompt_len + k` positions, then retain
-the last k positions. Set both `original_full_seq_len` and receiver
-`position_start` to `prompt_len + k`. Original RoPE keys are retained. Never take
-the last k positions directly from full20, which would use future states.
-Evaluate k=1..20 and one shared drop for each sample.
+The collector supports Qwen3-0.6B, 4B, 8B and 14B in that order. Each model uses
+100 balanced receiver samples at seed 42, sender prompt v1, receiver prompt v2
+with thinking disabled, `The number is ` scoring prefix and contextual
+single-token digit argmax scoring. Conditions remain `latent_only/own` and
+sample-matched `drop` at receiver position zero.
+
+Build one full20 sender KV cache per receiver sample. For each k=1..20, retain
+`full[:prompt_len+k]`, then keep its final k positions. Original RoPE keys are
+retained, with `original_full_seq_len = position_start = prompt_len+k`.
+Taking the final k positions directly from full20 would include future states.
+
+```bash
+# Parity only on ten canonical representatives (one per digit)
+just run-receiver-trajectory --smoke
+# Full collection on the local 8GB GPU
+just run-receiver-trajectory --model 0.6B
+# Larger GPU; models processed sequentially
+just run-receiver-trajectory
+# 14B collection only, after same-environment 0.6B validation
+just run-receiver-trajectory --model 14B
+```
+
+BF16-capable CUDA is required. 4B/8B/14B require at least 30 GiB total VRAM.
+For 14B, that minimum is only an admission check, not a guarantee of sufficient
+free memory: BF16 weights alone occupy roughly 28 GB, so 48GB gives more room.
+No quantization, dtype change or offloading is introduced.
 
 ## Parity gate
 
-Before trajectory collection, ten representatives (one per digit, preserving
-their original sample IDs/keys from the balanced 100) are checked at k=1 and 4:
+Before collection, k=1 and 4 are compared on ten representatives to newly
+created independent k-step rollouts. Every layer's KV tensors and receiver
+next-token logits must match exactly. No override can bypass failure.
 
-- All layer key/value tensors must equal a fresh independent k-step rollout
-  exactly, with `torch.equal`.
-- Receiver next-token logits must equal exactly for both cache constructions.
-- Candidate digit predictions for own/drop, plus sample
-  identities and receiver positions, must equal the saved canonical k-step runs.
+For 0.6B/4B/8B, saved acquisition own/drop digit predictions, sample identities
+and receiver positions must also match. Historical log-probability differences
+are diagnostic; historical raw KV was not saved. Inputs are
+`artifacts/receiver_acquisition/receiver_conditions.csv` and canonical
+`.cache/receiver_acquisition/mlflow/<run_id>/sample_results.jsonl` files.
 
-Historical runs did not save raw KV. Historical cache equality cannot be claimed;
-the exact cache comparison is against freshly generated independent rollouts.
-`parity.json` records every check and historical log-probability differences.
-Log-probability differences from historical runs are recorded as diagnostics; digit argmax must match. There is no option to bypass failed KV, fresh-logit or digit-prediction checks. Failure stops
-before writing trajectory records. Full model-specific execution additionally
-requires successful 0.6B parity on the same GPU name, Git commit and library
-versions. BF16 is selected explicitly without changing other commands' FP16 defaults.
+14B has no historical acquisition references in this repository. Its gate uses
+exact fresh independent KV/logit comparisons and explicitly records historical
+checks as unavailable, rather than claiming historical parity. Model-specific
+large runs also require successful 0.6B parity on the same GPU name, Git commit
+and library versions.
 
-## Local verification
+The earlier 0.6B sweep passed KV/logit and historical digit parity, though saved
+historical log-probabilities differed. No environment or lockfile changes were
+made to force equality.
+
+## Saved data
+
+Each model directory under `artifacts/receiver_trajectory/` contains:
+
+- `sample_results.jsonl`: 2100 complete `ReceiverAcquisitionRecord` observations
+  (100 drop + 2000 own). Includes sample/source IDs and digits; ten candidate
+  probabilities/log-probabilities; argmax, candidate mass, rank, margin and
+  source/target scores; top-five vocabulary tokens; KV length/bytes/layers/dtype
+  and original/retained positions; receiver prompt length; latency and errors.
+- `sender_latent_states.pt`: the existing probe collection protocol, with 20
+  prompt templates × ten digits × 20 steps. Stores `hidden_pre_realign`,
+  `latent_post_realign`, digit labels, template groups and example metadata.
+  These 200 examples are distinct from the balanced 100 receiver samples.
+- `candidate_token_mapping.json`: token IDs, contextual candidate mapping and
+  receiver prompt hash from the acquisition scoring helper.
+- `receiver_input.json`: actual receiver input token IDs and attention mask.
+- `resolved_config.json`: the collection command options and input/output paths.
+- `source.json`: model, dtype/backend/device, seed/sample count, prompt versions
+  and templates, answer prefix, handoff positions, collection settings,
+  historical sources, Git commit, GPU and library versions.
+- `parity.json`: exact KV/logit checks and available historical comparisons.
+
+Collection loads the existing `.env` tracking URI and uploads these artifacts
+and collection counts to the separate `latentmas_receiver_trajectory` MLflow
+experiment. It does not fit probes, run permutations/bootstrap, join probe
+results, aggregate receiver statistics or generate a scatter.
+
+The original acquisition preset's optional receiver hidden states and raw KV
+were disabled; they remain disabled here. Its other carrier/condition cells
+(`full`, `prompt_only`, `cross`, `drop_position_matched`) and MLflow per-forward
+traces are not collected by this own/drop trajectory experiment.
+
+Previously completed 0.6B artifacts predate sender-state collection; that run
+contains receiver observations and probe-joined summaries, but not the newly
+added sender-state artifact. No historical run is modified or backfilled.
+
+## Offline analysis
+
+Fit probes later using the existing `just analyze-sender-probe` command and the
+saved sender states. Once model-specific probe cells are exported, join them to
+saved receiver records without loading a language model:
 
 ```bash
-just run-receiver-trajectory --smoke
+just analyze-receiver-trajectory \
+  --probe-cells artifacts/receiver_acquisition/sender_probe_cells.csv
 ```
 
-Local smoke is restricted to 0.6B. It checks k=1,4 on ten balanced representatives and saves `parity.json` under
-`artifacts/receiver_trajectory/smoke/`. The smoke command does not execute a sweep. The full 0.6B sweep is also supported
-on the local 8GB GPU:
+The analysis reads complete collected model directories, calculates paired
+argmax change fractions, and matches each step to the full20 run's
+`latent_post_realign` probe. It writes `analysis/trajectory.csv`, `.json` and
+PNG/PDF scatter under `artifacts/receiver_trajectory/`. All four models produce
+80 rows; the first three produce 60 rows; a single model produces 20 rows.
+Missing probe cells fail explicitly. Analysis does not upload to MLflow.
 
-```bash
-just run-receiver-trajectory --model 0.6B
-```
-
-This reruns parity and evaluates all 100 samples at k=1..20.
-The presentation plot refuses smoke results.
-
-The initial local check on an RTX 4060 Laptop GPU passed all 20 exact cache and
-fresh receiver-logit comparisons. Historical argmax predictions also matched
-20/20, but historical digit log-probabilities did not match exactly (maximum
-absolute difference 1.102187). The earlier exact historical log-probability gate refused collection. The current gate uses historical digit predictions, as required by the acquisition comparison; numerical differences remain diagnostic and their cause is not established. No precision, package, lockfile or
-environment changes were made to force a match.
-
-## Full execution on a 32GB GPU
-
-Prepare the same checkout, existing dependencies, source model weights, and
-the historical receiver environment. Copy these existing analysis inputs:
-
-- `artifacts/receiver_acquisition/sender_probe_cells.csv`
-- `artifacts/receiver_acquisition/receiver_conditions.csv`
-- Historical `sample_results.jsonl` for each model's canonical 1/4-step runs,
-  at `.cache/receiver_acquisition/mlflow/<run_id>/sample_results.jsonl`.
-  Run IDs are selected from `receiver_conditions.csv`, not guessed by recency.
-
-```bash
-just run-receiver-trajectory
-just plot-receiver-trajectory
-```
-
-4B/8B inference refuses devices with less than 30 GiB total VRAM and requires
-native BF16. It processes 0.6B, 4B, then 8B sequentially, checking parity for each
-model before its trajectory. KV, fresh-logit and historical digit parity must pass in the execution environment.
-
-Each model directory under `artifacts/receiver_trajectory/` contains provenance,
-parity evidence, 2100 raw receiver observations (100 drop + 2000 own), and a
-20-row `trajectory.csv` and `trajectory.json`. The combined CSV is written only after all three models
-finish. It contains exactly 60 cells, pairing each receiver change fraction to
-the existing 20-step run's post-realignment probe effect:
-
-- X: `100 * (probe OOF accuracy - permutation null mean)`, in pp.
-- Y: `100 * mean(own predicted_digit != paired drop predicted_digit)`, in %.
-
-`plot-receiver-trajectory` only reads the combined CSV and writes
-`artifacts/presentation/secret_digit_trajectory.png` (300 dpi) and `.pdf`.
-Models use consistent colors and thin step-order connections; hollow markers
-denote saved FWER-nonsignificant probe cells. No regression, correlation, CI,
-or per-point numeric labels are added. X spans all observed effects, including
-negative values and values above 10 pp; Y remains 0–100%.
-
-Paths can be overridden with `--acquisition-dir`, `--reference-dir`, and
-`--output-dir` for inference, or `--input` and `--output-dir` for plotting.
-Inference loads the existing `.env` tracking URI and logs model runs, parity evidence, step metrics and artifacts to the separate MLflow experiment `latentmas_receiver_trajectory`. A combined summary run contains the 60-row CSV/JSON and the automatically generated PNG/PDF scatter. Historical acquisition runs are preserved.
-
-The requested columns are `model`, `latent_step`, `probe_accuracy`, `probe_null_mean`, `probe_effect_pp`, `probe_fwer_p`, and `receiver_changed_fraction`; sample count, probe source and significance accompany them for provenance.
+Columns include `model`, `latent_step`, `probe_accuracy`, `probe_null_mean`,
+`probe_effect_pp`, `probe_fwer_p`, and `receiver_changed_fraction`, plus sample
+count and probe provenance. X is probe accuracy minus null mean in pp; Y is
+receiver changed fraction × 100. Models have fixed colors and thin step-order
+connections, without regression, correlation or per-point labels.
+`just plot-receiver-trajectory --input <analysis CSV>` can redraw the scatter.
+Paths can be overridden with the commands' input/output arguments.
