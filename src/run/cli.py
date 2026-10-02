@@ -8,6 +8,10 @@ import yaml
 
 from latentmas_reprop.infrastructure.paths import get_path_resolver
 
+from .cli_compute_preflight import (
+    add_compute_preflight_args,
+    validate_compute_preflight_args,
+)
 from .cli_intervention import (
     add_acquisition_args,
     add_intervention_args,
@@ -173,6 +177,7 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
     )
 
     add_receiver_reasoning_args(parser, defaults)
+    add_compute_preflight_args(parser, defaults)
 
     parser.add_argument(
         "--version_tag",
@@ -210,6 +215,21 @@ def _load_defaults(args: list[str] | None) -> dict[str, Any]:
 
 
 def _parse_args(args: list[str] | None, defaults: dict[str, Any]) -> argparse.Namespace:
+    if defaults.get("receiver_compute_preflight") or (
+        args is not None and "--receiver_compute_preflight" in args
+    ):
+        defaults = {
+            "method": "latent_mas",
+            "model_name": "Qwen/Qwen3-4B",
+            "task": "gsm8k",
+            "split": "test",
+            "upstream_steps": "10,20",
+            "max_new_tokens": 4096,
+            "max_samples": 20,
+            "generate_bs": 1,
+            "tracking_experiment_name": "latentmas_receiver_compute_preflight",
+            **defaults,
+        }
     parser = build_parser(defaults=defaults)
     parsed = parser.parse_args(args)
 
@@ -223,6 +243,7 @@ def _parse_args(args: list[str] | None, defaults: dict[str, Any]) -> argparse.Na
     validate_intervention_and_acquisition_args(parser, parsed)
 
     validate_receiver_reasoning_args(parser, parsed)
+    validate_compute_preflight_args(parser, parsed)
 
     return parsed
 

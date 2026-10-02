@@ -272,11 +272,12 @@ def render_markdown(output: Path):
     for example in metrics["selected_raw_outputs"]:
         sections += [
             table(
-                ["cell", "sample", "excerpt truncated"],
+                ["cell", "sample", "correctness", "excerpt truncated"],
                 [
                     [
                         example["cell"],
                         sample_labels[example["sample_id"]],
+                        example.get("correct"),
                         example["excerpt_truncated"],
                     ]
                 ],

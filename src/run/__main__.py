@@ -22,6 +22,12 @@ def main(argv: list[str] | None = None) -> None:
                     f"upstream_steps={[0, *run.upstream_steps]}, "
                     f"receiver_modes=answer_only/free, max_samples={run.max_samples}"
                 )
+            if run.receiver_compute_preflight:
+                details = (
+                    f"model={run.model_name}, U={run.upstream_steps}, "
+                    f"M=matched/mismatched/no_handoff, R={run.receiver_budgets}, "
+                    f"free_cap={run.max_new_tokens}, samples={run.max_samples}"
+                )
             print(f"[{index}/{len(runs)}] {details or 'single configuration'}")
         return
     for args in runs:

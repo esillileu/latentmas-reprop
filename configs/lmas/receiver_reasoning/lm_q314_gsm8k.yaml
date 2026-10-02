@@ -1,12 +1,12 @@
 receiver_reasoning: true
 method: latent_mas
-model_name: Qwen/Qwen3-4B
+model_name: Qwen/Qwen3-14B
 task: gsm8k
 split: test
 prompt: sequential
 max_samples: 20
-generate_bs: 16
-upstream_steps: 0,10,20
+generate_bs: 1
+upstream_steps: 0,10,40
 answer_only_max_new_tokens: 64
 max_new_tokens: 4096
 temperature: 0.0

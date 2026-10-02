@@ -38,9 +38,10 @@ just run -c lmas/reprop/lm_q38_gsm8k
 # Run with option overrides
 just run -c lmas/reprop/lm_q38_gsm8k --max_samples 10 --generate_bs 2
 
-# Run the TextMAS and baseline matrix (Qwen3-8B)
+# Run Single Baseline, TextMAS, or LatentMAS presets (Qwen3-8B)
 just run -c lmas/reprop/bs_q38_gsm8k
-just run -c bs_q30.6_gsm8k
+just run -c lmas/reprop/tm_q38_gsm8k
+just run -c lmas/reprop/lm_q38_gsm8k
 ```
 
 Run the secret-digit receiver acquisition experiment (transformers backend only):
@@ -138,3 +139,14 @@ The report and machine-readable paired/bootstrap results are written to
 `artifacts/latent_handoff/<model>/<run_id>/` by default, with a report index
 at `artifacts/latent_handoff/summary.md`. Finished runs matching the exact MLflow `version_tag` are analyzed separately
 for every model, without pooling results or filtering by model/Git commit.
+
+Receiver compute preflight (independent of the receiver reasoning pilot):
+
+```bash
+just run-receiver-compute-preflight -c lmas/receiver_compute_preflight/gsm8k --dry-run
+just analyze-receiver-compute-preflight --model all
+just analyze-receiver-compute-preflight --model 4B
+```
+
+See [receiver compute preflight](docs/receiver_compute_preflight.md) for full-KV
+paired budget curves, exact token-prefix smoke verification, and MLflow artifacts.

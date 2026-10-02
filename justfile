@@ -1,5 +1,7 @@
 # LatentMAS Reproduction Task Runner
 
+export PYTORCH_CUDA_ALLOC_CONF := "expandable_segments:True"
+
 # Default recipe: list all available commands
 default:
     @just --list
@@ -15,15 +17,19 @@ lmas action="reprop" *args:
     if [ "{{action}}" = "reprop" ]; then
         echo "=== [1/4] Running Reproduction: Qwen3-0.6B ==="
         uv run python -m src.run -c lmas/reprop/bs_q30.6_gsm8k {{args}}
+        uv run python -m src.run -c lmas/reprop/tm_q30.6_gsm8k {{args}}
         uv run python -m src.run -c lmas/reprop/lm_q30.6_gsm8k {{args}}
         echo "=== [2/4] Running Reproduction: Qwen3-4B ==="
         uv run python -m src.run -c lmas/reprop/bs_q34_gsm8k {{args}}
+        uv run python -m src.run -c lmas/reprop/tm_q34_gsm8k {{args}}
         uv run python -m src.run -c lmas/reprop/lm_q34_gsm8k {{args}}
         echo "=== [3/4] Running Reproduction: Qwen3-8B ==="
         uv run python -m src.run -c lmas/reprop/bs_q38_gsm8k {{args}}
+        uv run python -m src.run -c lmas/reprop/tm_q38_gsm8k {{args}}
         uv run python -m src.run -c lmas/reprop/lm_q38_gsm8k {{args}}
         echo "=== [4/4] Running Reproduction: Qwen3-14B ==="
         uv run python -m src.run -c lmas/reprop/bs_q314_gsm8k {{args}}
+        uv run python -m src.run -c lmas/reprop/tm_q314_gsm8k {{args}}
         uv run python -m src.run -c lmas/reprop/lm_q314_gsm8k {{args}}
     else
         echo "Unknown action: {{action}}. Usage: just lmas reprop [args...]"
@@ -73,3 +79,9 @@ clean-cache:
 # Launch local MLflow UI pointing to SQLite backend
 mlflow-ui *args:
     uv run mlflow ui --backend-store-uri sqlite:///.cache/mlflow.db --default-artifact-root .cache/mlflow_artifacts {{args}}
+
+run-receiver-compute-preflight *args:
+    uv run python -m src.run --receiver_compute_preflight {{args}}
+
+analyze-receiver-compute-preflight *args:
+    uv run python -m src.run.compute_preflight_analysis {{args}}

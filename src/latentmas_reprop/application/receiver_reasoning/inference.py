@@ -40,7 +40,8 @@ def build_upstream(method, item, step, width, context_id, tracker, runtime):
             {
                 "upstream_latent_steps": step,
                 "context_id": context_id,
-                "handoff_positions": width,
+                "handoff_mode": "full" if width is None else "tail",
+                **({"handoff_positions": width} if width is not None else {}),
             },
         )
         if tracker

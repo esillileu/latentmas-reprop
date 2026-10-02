@@ -1,0 +1,261 @@
+"""Strict paired bootstrap curves and descriptive artifact exports."""
+
+import csv
+import json
+from collections import defaultdict
+
+import numpy as np
+
+from ...infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
+from ..common.reporter import write_json
+from .answers import reevaluate_records
+from .statistics import cell_cost, cost_difference, threshold_rows
+
+CONDITIONS = ("matched", "mismatched", "no_handoff")
+
+
+def analyze(records, config):
+    records = reevaluate_records(records, DEFAULT_EVALUATOR)
+    if config.get("verify_prefix"):
+        expected_budgets = [b for b in config["receiver_budgets"] if b != "free"]
+        if any(
+            not r.get("prefix_verification_requested")
+            or r.get("prefix_verification_budgets") != expected_budgets
+            for r in records
+        ):
+            raise ValueError(
+                "Recorded prefix verification differs from configured budgets"
+            )
+    groups = defaultdict(dict)
+    sample_ids = sorted({r["sample_id"] for r in records})
+    expected_ids = config.get("sample_ids", sample_ids)
+    if set(sample_ids) != set(expected_ids) or not sample_ids:
+        raise ValueError("Sample set mismatch; paired analysis refused")
+    for r in records:
+        key = (r["upstream_steps"], r["handoff_condition"], r["receiver_budget"])
+        if r["sample_id"] in groups[key]:
+            raise ValueError("Duplicate sample cell")
+        groups[key][r["sample_id"]] = r
+    keys = [
+        (u, m, b)
+        for u in config["upstream_steps"]
+        for m in CONDITIONS
+        for b in config["receiver_budgets"]
+    ]
+    if set(groups) != set(keys) or any(
+        set(g) != set(sample_ids) for g in groups.values()
+    ):
+        raise ValueError("Condition sample sets mismatch; paired analysis refused")
+    count = config["bootstrap_count"]
+    rng = np.random.default_rng(config["seed"])
+    indices = rng.integers(0, len(sample_ids), size=(count, len(sample_ids)))
+    distributions, curves, arrays, cost_arrays = {}, [], {}, {}
+    for key in keys:
+        rows = [groups[key][sid] for sid in sample_ids]
+        valid = all(r["valid"] for r in rows)
+        values = np.array([r["correct"] for r in rows], dtype=float)
+        arrays[key] = values if valid else None
+        draws = values[indices].mean(axis=1) if valid else None
+        label = ":".join(map(str, key))
+        distributions[label] = draws.tolist() if valid else None
+        low, high = np.quantile(draws, [0.025, 0.975]) if valid else (None, None)
+        cost, cost_draws, cost_arrays[key] = cell_cost(rows, indices, valid)
+        distributions.update(
+            {f"{label}:{name}": draws for name, draws in cost_draws.items()}
+        )
+        length_deltas = [
+            r["donor_length_abs_delta"]
+            for r in rows
+            if r.get("donor_length_abs_delta") is not None
+        ]
+        curves.append(
+            {
+                "upstream_steps": key[0],
+                "handoff_condition": key[1],
+                "receiver_budget": key[2],
+                "accuracy": float(values.mean()) if valid else None,
+                "ci_low": float(low) if valid else None,
+                "ci_high": float(high) if valid else None,
+                "sample_count": len(rows),
+                "invalid_count": sum(not r["valid"] for r in rows),
+                "no_answer_count": sum(r["no_answer"] for r in rows),
+                "pathological_count": sum(r.get("pathological", False) for r in rows),
+                "free_truncated_count": sum(
+                    r.get("free_cap_reached", False) for r in rows
+                )
+                if key[2] == "free"
+                else 0,
+                "valid_free_truncation_rate": 0.0
+                if key[2] == "free" and valid
+                else None,
+                "mean_generated_tokens": float(
+                    np.mean([r["generated_tokens"] for r in rows])
+                )
+                if valid
+                else None,
+                "mean_donor_length_abs_delta": float(np.mean(length_deltas))
+                if length_deltas
+                else None,
+                "max_donor_length_abs_delta": max(length_deltas)
+                if length_deltas
+                else None,
+                **cost,
+            }
+        )
+    comparisons, cost_comparisons = [], []
+    for u in config["upstream_steps"]:
+        for b in config["receiver_budgets"]:
+            for name, left, right in (
+                ("pairing_gain", "matched", "mismatched"),
+                ("matched_vs_no_handoff", "matched", "no_handoff"),
+                ("mismatched_vs_no_handoff", "mismatched", "no_handoff"),
+            ):
+                a, c = arrays[u, left, b], arrays[u, right, b]
+                valid = a is not None and c is not None
+                diff = a - c if valid else None
+                draws = diff[indices].mean(axis=1) if valid else None
+                label = f"{u}:{name}:{b}"
+                distributions[label] = draws.tolist() if valid else None
+                low, high = (
+                    np.quantile(draws, [0.025, 0.975]) if valid else (None, None)
+                )
+                comparisons.append(
+                    {
+                        "upstream_steps": u,
+                        "receiver_budget": b,
+                        "comparison": name,
+                        "difference": float(diff.mean()) if valid else None,
+                        "ci_low": float(low) if valid else None,
+                        "ci_high": float(high) if valid else None,
+                    }
+                )
+                differences, draws_by_metric = cost_difference(
+                    cost_arrays[u, left, b], cost_arrays[u, right, b], indices
+                )
+                for metric, stats in differences.items():
+                    distributions[f"{label}:{metric}"] = draws_by_metric[metric]
+                    cost_comparisons.append(
+                        {
+                            "upstream_steps": u,
+                            "receiver_budget": b,
+                            "comparison": name,
+                            "metric": metric,
+                            "difference": stats["mean"],
+                            "ci_low": stats["ci_low"],
+                            "ci_high": stats["ci_high"],
+                        }
+                    )
+    pathological = [
+        {
+            k: r.get(k)
+            for k in (
+                "sample_id",
+                "sample_index",
+                "upstream_steps",
+                "handoff_condition",
+                "free_generated_tokens",
+                "free_final_cap",
+                "free_attempts",
+            )
+        }
+        for r in records
+        if r["receiver_budget"] == "free" and not r["valid"]
+    ]
+    thresholds = threshold_rows(curves, config)
+    verification = [
+        {
+            "sample_id": r["sample_id"],
+            "upstream_steps": r["upstream_steps"],
+            "handoff_condition": r["handoff_condition"],
+            "prefix_verification_requested": r.get("prefix_verification_requested"),
+            "prefix_verified": r.get("prefix_verified"),
+            "verified_budgets": [
+                a["cap"] for a in r.get("prefix_verification_attempts", [])
+            ],
+            "free_retry_count": r.get("free_retry_count"),
+            "free_naturally_terminated": r.get("free_naturally_terminated"),
+            "free_valid": r["valid"],
+        }
+        for r in records
+        if r["receiver_budget"] == "free"
+    ]
+    verification.sort(
+        key=lambda r: (r["upstream_steps"], r["handoff_condition"], r["sample_id"])
+    )
+    return {
+        "curves": curves,
+        "comparisons": comparisons,
+        "thresholds": thresholds,
+        "cost_comparisons": cost_comparisons,
+        "pathological_cases": pathological,
+        "verification": verification,
+        "answer_policy": "explicit_complete_final_answer",
+        "bootstrap_count": count,
+        "seed": config["seed"],
+        "sample_count": len(sample_ids),
+    }, {
+        "sample_ids": sample_ids,
+        "resample_indices": indices.tolist(),
+        "distributions": distributions,
+        "ci_method": "paired percentile 95%",
+    }
+
+
+def write_csv(path, rows):
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(
+            {
+                k: json.dumps(v) if isinstance(v, (dict, list)) else v
+                for k, v in r.items()
+            }
+            for r in rows
+        )
+
+
+def export(directory, records, config):
+    records = reevaluate_records(records, DEFAULT_EVALUATOR)
+    directory.mkdir(parents=True, exist_ok=True)
+    metrics, bootstrap = analyze(records, config)
+    write_json(directory / "metrics.json", metrics)
+    write_json(directory / "bootstrap_statistics.json", bootstrap)
+    write_csv(directory / "sample_matrix.csv", records)
+    write_csv(directory / "budget_curves.csv", metrics["curves"])
+    lines = [
+        "# Receiver compute preflight",
+        "",
+        f"Samples: {metrics['sample_count']}",
+        f"Bootstrap resamples: {metrics['bootstrap_count']}; paired percentile 95% CI.",
+        "",
+    ]
+    for name in (
+        "curves",
+        "comparisons",
+        "cost_comparisons",
+        "thresholds",
+        "pathological_cases",
+        "verification",
+    ):
+        rows = metrics[name]
+        if not rows:
+            lines.extend([f"## {name}", "", "Count: 0", ""])
+            continue
+        fields = list(rows[0])
+        lines.extend(
+            [
+                f"## {name}",
+                "",
+                "| " + " | ".join(fields) + " |",
+                "| " + " | ".join(["---"] * len(fields)) + " |",
+            ]
+        )
+        lines.extend(
+            "| "
+            + " | ".join("N/A" if r[k] is None else str(r[k]) for k in fields)
+            + " |"
+            for r in rows
+        )
+        lines.append("")
+    (directory / "summary.md").write_text("\n".join(lines), encoding="utf-8")
+    return metrics

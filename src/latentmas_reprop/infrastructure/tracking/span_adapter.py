@@ -42,7 +42,9 @@ class MLflowSpanAdapter(LiveSpanPort):
 
     def set_status(self, status: str, description: str | None = None) -> None:
         if self._span is not None:
-            self._span.set_status(status, description=description)
+            self._span.set_status(status)
+            if description:
+                self._span.set_attribute("error.message", description)
 
     @property
     def trace_id(self) -> str | None:

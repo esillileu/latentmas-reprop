@@ -7,6 +7,7 @@ from typing import Any
 from ...domain.models import BenchmarkMetrics
 from ...domain.ports.cache_port import CacheLayer, CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
+from ...infrastructure.models.dtype import peak_allocated_bytes
 from ..common.reporter import clean_config_args, write_jsonl
 
 
@@ -76,6 +77,8 @@ def trace_benchmark_sample(
     pred = str(res.get("prediction", ""))
     raw_pred = str(res.get("raw_prediction", ""))
     correct = bool(res.get("correct", False))
+    vram_bytes = peak_allocated_bytes()
+    vram_gb = round(vram_bytes / (1024**3), 3)
 
     with tracker_port.start_sample_trace(
         name=f"sample_{problem_idx}",
@@ -85,6 +88,7 @@ def trace_benchmark_sample(
             "model": str(args.model_name),
             "method": str(args.method),
             "correct": str(correct),
+            "peak_vram_gb": str(vram_gb),
         },
         request_preview=q[:100],
     ) as root_span:
@@ -109,6 +113,8 @@ def trace_benchmark_sample(
                 "prediction": pred,
                 "raw_prediction": raw_pred,
                 "correct": correct,
+                "peak_vram_gb": vram_gb,
+                "peak_vram_bytes": vram_bytes,
             }
         )
 
@@ -126,6 +132,13 @@ def trace_benchmark_sample(
                 value=correct,
                 source_id="evaluator",
                 rationale=f"prediction='{pred}'; expected='{gold}'",
+            )
+            tracker_port.log_feedback(
+                trace_id=trace_id,
+                name="peak_vram_gb",
+                value=vram_gb,
+                source_id="profiler",
+                rationale=f"peak_vram={vram_gb} GB ({vram_bytes} bytes)",
             )
 
 

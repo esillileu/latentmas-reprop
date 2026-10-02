@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import mlflow
+
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
@@ -116,3 +118,74 @@ def test_mlflow_tracker_tracing_and_assessments(tmp_path: Path):
     assessment_names = [a.name for a in assessments]
     assert "expected_answer" in assessment_names
     assert "own_correct" in assessment_names
+
+
+def test_mlflow_tracker_truncates_long_previews(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    resolver = PathResolver(tmp_path)
+    test_db = tmp_path / "test_preview.db"
+    test_artifacts = tmp_path / "test_preview_artifacts"
+    tracker = MLflowTracker(
+        tracking_uri=f"sqlite:///{test_db}",
+        artifact_location=str(test_artifacts),
+        path_resolver=resolver,
+    )
+    tracker.start_run(experiment_name="test_preview_exp", run_name="preview_test")
+
+    long_request = "Q" * 1500
+    long_response = "A" * 2000
+
+    with tracker.start_sample_trace(
+        name="long_preview_sample",
+        inputs={"q": "question"},
+        request_preview=long_request,
+    ) as root:
+        tracker.update_current_trace(response_preview=long_response)
+        trace_id = root.trace_id
+
+    tracker.flush_traces()
+    tracker.end_run()
+
+    trace = mlflow.get_trace(trace_id)
+    assert trace is not None
+    assert len(trace.info.request_preview) <= 1000
+    assert trace.info.request_preview.endswith("...")
+    assert len(trace.info.response_preview) <= 1000
+    assert trace.info.response_preview.endswith("...")
+
+
+def test_run_tags_are_serializable_for_remote_tracking(tmp_path, monkeypatch):
+    from mlflow.entities import RunTag
+
+    tracker = MLflowTracker(
+        tracking_uri=f"sqlite:///{tmp_path / 'tags.db'}",
+        artifact_location=str(tmp_path / "artifacts"),
+    )
+    captured = {}
+
+    def start_run(**kwargs):
+        captured.update(kwargs)
+        for key, value in kwargs["tags"].items():
+            RunTag(key, value).to_proto()
+        return None
+
+    monkeypatch.setattr(mlflow, "start_run", start_run)
+    tracker.start_run("preflight-tags", tags={"seed": 42, "smoke": True})
+    assert captured["tags"]["seed"] == "42"
+    assert captured["tags"]["smoke"] == "True"
+
+
+def test_span_error_status_preserves_message(tmp_path):
+    tracker = MLflowTracker(
+        tracking_uri=f"sqlite:///{tmp_path / 'failure.db'}",
+        artifact_location=str(tmp_path / "artifacts"),
+    )
+    tracker.start_run("failed-inference")
+    with tracker.start_sample_trace("sample", {"question": "q"}) as root:
+        root.set_status("ERROR", "generation failed")
+        trace_id = root.trace_id
+    tracker.flush_traces()
+    tracker.end_run("FAILED")
+    trace = mlflow.get_trace(trace_id)
+    assert trace.data.spans[0].status.status_code == "ERROR"
+    assert trace.data.spans[0].attributes["error.message"] == "generation failed"
