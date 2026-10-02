@@ -41,7 +41,10 @@ file is required to start collection. GPU and library versions remain provenance
 
 ## Saved data
 
-Each model directory under `artifacts/receiver_trajectory/` contains:
+MLflow is the source of truth. Each model uses a temporary staging directory;
+artifacts are uploaded before that directory is automatically removed, including
+on failure or interruption. Collection has no `--output-dir` option.
+Each MLflow run contains:
 
 - `sample_results.jsonl` and `.json`: 2100 complete `ReceiverAcquisitionRecord` observations
   (100 drop + 2000 own). Includes sample/source IDs and digits; ten candidate
@@ -65,7 +68,7 @@ Each model directory under `artifacts/receiver_trajectory/` contains:
 - `candidate_token_mapping.json`: token IDs, contextual candidate mapping and
   actual receiver prompt and its hash from the acquisition scoring helper.
 - `receiver_input.json`: actual receiver prompt/messages, token IDs and attention mask.
-- `resolved_config.json`: the collection command options and input/output paths.
+- `resolved_config.json`: the collection command options and protocol settings.
 - `source.json`: model, dtype/backend/device, seed/sample count, prompt versions
   and templates, answer prefix, handoff positions, collection settings,
   Git commit, GPU and library versions.
@@ -107,7 +110,10 @@ just analyze-receiver-trajectory \
   --probe-cells artifacts/receiver_acquisition/sender_probe_cells.csv
 ```
 
-The analysis reads complete collected model directories, calculates paired
+Download the required run artifacts from MLflow into model directories named
+`Qwen_Qwen3-<size>` and pass their parent as `--input-dir` to analysis.
+These downloads are local analysis inputs, not the collection's source of truth.
+The analysis reads these complete downloaded model directories, calculates paired
 argmax change fractions, and matches each step to the full20 run's
 `latent_post_realign` probe. It writes `analysis/trajectory.csv`, `.json` and
 PNG/PDF scatter under `artifacts/receiver_trajectory/`. All four models produce
