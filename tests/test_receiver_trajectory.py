@@ -14,6 +14,8 @@ from latentmas_reprop.application.receiver_acquisition.sampling import (
 )
 from latentmas_reprop.application.receiver_acquisition.trajectory import (
     latent_prefix,
+)
+from latentmas_reprop.application.receiver_acquisition.trajectory_analysis import (
     summarize_trajectory,
 )
 
