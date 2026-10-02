@@ -22,13 +22,13 @@ their original sample IDs/keys from the balanced 100) are checked at k=1 and 4:
 - All layer key/value tensors must equal a fresh independent k-step rollout
   exactly, with `torch.equal`.
 - Receiver next-token logits must equal exactly for both cache constructions.
-- Candidate digit log-probabilities and predictions for own/drop, plus sample
+- Candidate digit predictions for own/drop, plus sample
   identities and receiver positions, must equal the saved canonical k-step runs.
 
 Historical runs did not save raw KV. Historical cache equality cannot be claimed;
 the exact cache comparison is against freshly generated independent rollouts.
 `parity.json` records every check and historical log-probability differences.
-There is no tolerance override or option to bypass a failed check. Failure stops
+Log-probability differences from historical runs are recorded as diagnostics; digit argmax must match. There is no option to bypass failed KV, fresh-logit or digit-prediction checks. Failure stops
 before writing trajectory records. Full model-specific execution additionally
 requires successful 0.6B parity on the same GPU name, Git commit and library
 versions. BF16 is selected explicitly without changing other commands' FP16 defaults.
@@ -39,17 +39,21 @@ versions. BF16 is selected explicitly without changing other commands' FP16 defa
 just run-receiver-trajectory --smoke
 ```
 
-Local smoke is restricted to 0.6B. If parity passes, it evaluates the 20 steps on
-ten balanced representatives, saves raw records and a 20-row smoke CSV under
-`artifacts/receiver_trajectory/smoke/`. This is not the final 100-sample experiment.
+Local smoke is restricted to 0.6B. It checks k=1,4 on ten balanced representatives and saves `parity.json` under
+`artifacts/receiver_trajectory/smoke/`. The smoke command does not execute a sweep. The full 0.6B sweep is also supported
+on the local 8GB GPU:
+
+```bash
+just run-receiver-trajectory --model 0.6B
+```
+
+This reruns parity and evaluates all 100 samples at k=1..20.
 The presentation plot refuses smoke results.
 
 The initial local check on an RTX 4060 Laptop GPU passed all 20 exact cache and
 fresh receiver-logit comparisons. Historical argmax predictions also matched
 20/20, but historical digit log-probabilities did not match exactly (maximum
-absolute difference 1.102187). Accordingly, the parity gate refused trajectory
-collection. This documents an unresolved historical numerical reproducibility
-difference; it does not establish its cause. No precision, package, lockfile or
+absolute difference 1.102187). The earlier exact historical log-probability gate refused collection. The current gate uses historical digit predictions, as required by the acquisition comparison; numerical differences remain diagnostic and their cause is not established. No precision, package, lockfile or
 environment changes were made to force a match.
 
 ## Full execution on a 32GB GPU
@@ -68,14 +72,13 @@ just run-receiver-trajectory
 just plot-receiver-trajectory
 ```
 
-Full inference refuses devices with less than 30 GiB total VRAM and requires
+4B/8B inference refuses devices with less than 30 GiB total VRAM and requires
 native BF16. It processes 0.6B, 4B, then 8B sequentially, checking parity for each
-model before its trajectory. Historical exact parity must first be resolved in
-the intended execution environment; a 32GB GPU alone does not guarantee it.
+model before its trajectory. KV, fresh-logit and historical digit parity must pass in the execution environment.
 
 Each model directory under `artifacts/receiver_trajectory/` contains provenance,
 parity evidence, 2100 raw receiver observations (100 drop + 2000 own), and a
-20-row `trajectory.csv`. The combined CSV is written only after all three models
+20-row `trajectory.csv` and `trajectory.json`. The combined CSV is written only after all three models
 finish. It contains exactly 60 cells, pairing each receiver change fraction to
 the existing 20-step run's post-realignment probe effect:
 
@@ -91,4 +94,6 @@ negative values and values above 10 pp; Y remains 0–100%.
 
 Paths can be overridden with `--acquisition-dir`, `--reference-dir`, and
 `--output-dir` for inference, or `--input` and `--output-dir` for plotting.
-These commands write only local artifacts and do not modify historical MLflow runs.
+Inference loads the existing `.env` tracking URI and logs model runs, parity evidence, step metrics and artifacts to the separate MLflow experiment `latentmas_receiver_trajectory`. A combined summary run contains the 60-row CSV/JSON and the automatically generated PNG/PDF scatter. Historical acquisition runs are preserved.
+
+The requested columns are `model`, `latent_step`, `probe_accuracy`, `probe_null_mean`, `probe_effect_pp`, `probe_fwer_p`, and `receiver_changed_fraction`; sample count, probe source and significance accompany them for provenance.

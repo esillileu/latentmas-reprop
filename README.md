@@ -75,9 +75,10 @@ This reads local artifacts only and writes to `artifacts/presentation/`.
 See [presentation plots](docs/presentation_plots.md) for required inputs and sources.
 
 For parity-checked stepwise latent-only KV receiver evaluation and the 60-point
-scatter, see [receiver trajectory](docs/receiver_trajectory.md). Local validation
-is limited to `just run-receiver-trajectory --smoke` (0.6B); full runs require a
-32GB GPU and exact parity with historical acquisition results.
+scatter, see [receiver trajectory](docs/receiver_trajectory.md). Run 0.6B on the local 8GB GPU with `just run-receiver-trajectory --model 0.6B`.
+4B/8B require a 32GB GPU. All sweeps require KV/logit parity with independent runs
+plus historical digit prediction parity.
+Results are logged to the separate MLflow experiment `latentmas_receiver_trajectory`.
 
 Replace a legacy MLflow acquisition run while preserving its acquisition metrics,
 artifacts, timestamps, and traces:
