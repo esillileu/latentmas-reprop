@@ -3,6 +3,7 @@
 import argparse
 import gc
 import json
+import tempfile
 import traceback
 from contextlib import contextmanager
 from pathlib import Path
@@ -92,7 +93,7 @@ def tracked_model(directory, name, smoke):
     try:
         yield tracker
         status = "FINISHED"
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         tracker.log_params({"failure_traceback": traceback.format_exc()[:500]})
         tracker.log_dict({"traceback": traceback.format_exc()}, "failure.json")
         raise
@@ -127,7 +128,6 @@ def main(argv=None):
         help="0.6B steps 1..20 on ten balanced representatives from the canonical 100.",
     )
     parser.add_argument("--model", choices=("0.6B", "4B", "8B", "14B", "all"))
-    parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args(argv)
     git_commit = get_git_commit_hash()
     if args.smoke and args.model not in (None, "0.6B"):
@@ -156,15 +156,14 @@ def main(argv=None):
     representatives = [
         next(s for s in samples if s.digit == digit) for digit in range(10)
     ]
-    output = args.output_dir or Path(
-        "artifacts/receiver_trajectory" + ("/smoke" if args.smoke else "")
-    )
     torch.manual_seed(42)
     for size in models:
         name = f"Qwen/Qwen3-{size}"
-        directory = output / name.replace("/", "_")
-        directory.mkdir(parents=True, exist_ok=True)
-        with tracked_model(directory, name, args.smoke) as tracker:
+        with (
+            tempfile.TemporaryDirectory(prefix="receiver-trajectory-") as temporary,
+            tracked_model(Path(temporary), name, args.smoke) as tracker,
+        ):
+            directory = Path(temporary)
             model = ModelWrapper(name, device, model_dtype=torch.bfloat16)
             receiver = prepare_receiver_scoring(model)
             tracker.log_params(
@@ -234,7 +233,11 @@ def main(argv=None):
             tracker.log_metrics({"parity_passed": 1})
             selected = representatives if args.smoke else samples
             records = collect_trajectory(
-                model, selected, receiver, directory / "sample_results.jsonl", tracker
+                model,
+                selected,
+                receiver,
+                directory / "sample_results.jsonl",
+                tracker,
             )
             (directory / "sample_results.json").write_text(json.dumps(records) + "\n")
             states = collect_sender_states(model, latent_steps=20, template_count=20)
@@ -287,7 +290,7 @@ def main(argv=None):
         del model, receiver
         gc.collect()
         torch.cuda.empty_cache()
-    print(f"Saved receiver trajectory: {output}")
+    print("Receiver trajectory artifacts uploaded to MLflow.")
 
 
 if __name__ == "__main__":
