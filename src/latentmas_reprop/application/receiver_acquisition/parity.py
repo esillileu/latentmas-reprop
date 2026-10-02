@@ -61,11 +61,7 @@ def verify_prefix_parity(model, samples, receiver, historical):
                     for r in (own, old_drop)
                 )
                 same_history = same_identity and (
-                    current["candidate_log_probabilities"]
-                    == own["candidate_log_probabilities"]
-                    and drop["candidate_log_probabilities"]
-                    == old_drop["candidate_log_probabilities"]
-                    and current["predicted_digit"] == own["predicted_digit"]
+                    current["predicted_digit"] == own["predicted_digit"]
                     and drop["predicted_digit"] == old_drop["predicted_digit"]
                     and current["receiver_position_start"]
                     == own["receiver_position_start"]

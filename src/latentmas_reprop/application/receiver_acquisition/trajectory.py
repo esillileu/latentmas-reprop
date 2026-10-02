@@ -147,15 +147,16 @@ def summarize_trajectory(records, probe_cells, model, expected_samples=100):
         result.append(
             {
                 "model": model,
-                "step": step,
+                "latent_step": step,
                 "sample_count": expected_samples,
                 "probe_run_id": probe["run_id"],
                 "probe_accuracy": float(probe["probe_accuracy"]),
-                "null_mean_accuracy": float(probe["null_mean_accuracy"]),
+                "probe_null_mean": float(probe["null_mean_accuracy"]),
+                "probe_fwer_p": float(probe["fwer_p_value"]),
                 "probe_effect_pp": 100
                 * (float(probe["probe_accuracy"]) - float(probe["null_mean_accuracy"])),
                 "probe_significant": probe["significance"].lower() == "true",
-                "argmax_changed_fraction": changed / expected_samples,
+                "receiver_changed_fraction": changed / expected_samples,
             }
         )
     return result

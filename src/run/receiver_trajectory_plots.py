@@ -13,7 +13,10 @@ def plot_trajectory(path, output):
         rows = list(csv.DictReader(stream))
     models = ("0.6B", "4B", "8B")
     expected = {(f"Qwen/Qwen3-{m}", k) for m in models for k in range(1, 21)}
-    if len(rows) != 60 or {(r["model"], int(r["step"])) for r in rows} != expected:
+    if (
+        len(rows) != 60
+        or {(r["model"], int(r["latent_step"])) for r in rows} != expected
+    ):
         raise ValueError("The presentation requires exactly 60 unique model/step cells")
     if any(r["sample_count"] != "100" for r in rows):
         raise ValueError("Smoke results cannot be used in the 60-point presentation")
@@ -22,10 +25,10 @@ def plot_trajectory(path, output):
     for model, color in zip(models, ("#7B3294", "#0072B2", "#D55E00"), strict=True):
         cells = sorted(
             (r for r in rows if r["model"] == f"Qwen/Qwen3-{model}"),
-            key=lambda r: int(r["step"]),
+            key=lambda r: int(r["latent_step"]),
         )
         xs = [float(r["probe_effect_pp"]) for r in cells]
-        ys = [100 * float(r["argmax_changed_fraction"]) for r in cells]
+        ys = [100 * float(r["receiver_changed_fraction"]) for r in cells]
         if any(not math.isfinite(x) for x in xs) or any(not 0 <= y <= 100 for y in ys):
             raise ValueError("Invalid scatter coordinates")
         all_x.extend(xs)
@@ -38,9 +41,7 @@ def plot_trajectory(path, output):
                 markersize=10,
                 markeredgewidth=2,
                 markeredgecolor=color,
-                markerfacecolor=color
-                if row["probe_significant"] == "True"
-                else "white",
+                markerfacecolor=color if float(row["probe_fwer_p"]) < 0.05 else "white",
                 linestyle="none",
                 clip_on=False,
             )
@@ -59,7 +60,9 @@ def plot_trajectory(path, output):
         ylim=(0, 100),
         xlim=(math.floor(min(all_x)) - 0.5, math.ceil(max(all_x)) + 0.5),
     )
-    ax.set_title("Different aspects of “communication” do not move together", pad=65)
+    ax.set_title(
+        "Sender digit signal and receiver response across latent steps", pad=65
+    )
     ax.set_yticks(range(0, 101, 20))
     ax.grid(False)
     ax.legend(

@@ -4,10 +4,12 @@ import argparse
 import csv
 import gc
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import torch
 import transformers
+from dotenv import load_dotenv
 
 from latentmas_reprop.application.receiver_acquisition.parity import (
     verify_prefix_parity,
@@ -24,6 +26,7 @@ from latentmas_reprop.application.receiver_acquisition.trajectory import (
 )
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
 from latentmas_reprop.infrastructure.paths.resolver import get_git_commit_hash
+from latentmas_reprop.infrastructure.tracking import MLflowTracker
 
 
 def load_history(acquisition, reference_dir, model):
@@ -77,12 +80,48 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
+@contextmanager
+def tracked_model(directory, name, smoke):
+    """Keep parity evidence and trajectories in a separate MLflow experiment."""
+    tracker = MLflowTracker()
+    tracker.start_run(
+        experiment_name="latentmas_receiver_trajectory",
+        run_name=f"{name.split('/')[-1]}-{'parity' if smoke else 'steps-1-20'}",
+        tags={
+            "protocol": "receiver_acquisition",
+            "phase": "parity" if smoke else "sweep",
+        },
+    )
+    tracker.log_params(
+        {
+            "model": name,
+            "sender_latent_steps": 20,
+            "handoff_cuts": list(range(1, 21)),
+            "sample_count": 100,
+            "seed": 42,
+            "dtype": "bfloat16",
+            "condition": "latent_only/own + matched drop",
+            "parity_only": smoke,
+        }
+    )
+    status = "FAILED"
+    try:
+        yield tracker
+        status = "FINISHED"
+    finally:
+        for path in directory.iterdir():
+            if path.is_file():
+                tracker.log_artifact(path)
+        tracker.end_run(status)
+
+
 def main(argv=None):
+    load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help="0.6B only; ten balanced representatives from the canonical 100 samples.",
+        help="0.6B parity only; ten balanced representatives from the canonical 100 samples.",
     )
     parser.add_argument("--model", choices=("0.6B", "4B", "8B", "all"))
     parser.add_argument(
@@ -100,9 +139,10 @@ def main(argv=None):
         raise RuntimeError("This protocol requires a BF16-capable CUDA device")
     if (
         not args.smoke
+        and args.model != "0.6B"
         and torch.cuda.get_device_properties(device).total_memory < 30 * 1024**3
     ):
-        raise RuntimeError("Full trajectories require a 32GB GPU; use --smoke locally")
+        raise RuntimeError("4B/8B trajectories require a 32GB GPU; use --model 0.6B locally")
     models = (
         ["0.6B"]
         if args.smoke
@@ -143,57 +183,98 @@ def main(argv=None):
         name = f"Qwen/Qwen3-{size}"
         directory = output / name.replace("/", "_")
         directory.mkdir(parents=True, exist_ok=True)
-        model = ModelWrapper(name, device, model_dtype=torch.bfloat16)
-        receiver = prepare_receiver_scoring(model)
-        history, sources = historical[size]
-        parity = verify_prefix_parity(model, representatives, receiver, history)
-        parity.update(
-            model=name,
-            dtype="bfloat16",
-            historical_runs=sources,
-            gpu=torch.cuda.get_device_name(device),
-            git_commit=get_git_commit_hash(),
-            torch_version=torch.__version__,
-            transformers_version=transformers.__version__,
-        )
-        (directory / "parity.json").write_text(json.dumps(parity, indent=2) + "\n")
-        if not parity["passed"]:
-            raise ValueError(
-                f"Exact parity failed; no trajectory was run. See {directory / 'parity.json'}"
+        with tracked_model(directory, name, args.smoke) as tracker:
+            model = ModelWrapper(name, device, model_dtype=torch.bfloat16)
+            receiver = prepare_receiver_scoring(model)
+            history, sources = historical[size]
+            parity = verify_prefix_parity(model, representatives, receiver, history)
+            parity.update(
+                model=name,
+                dtype="bfloat16",
+                historical_runs=sources,
+                gpu=torch.cuda.get_device_name(device),
+                git_commit=get_git_commit_hash(),
+                torch_version=torch.__version__,
+                transformers_version=transformers.__version__,
             )
-        selected = representatives if args.smoke else samples
-        records = collect_trajectory(
-            model, selected, receiver, directory / "sample_results.jsonl"
-        )
-        rows = summarize_trajectory(
-            records, probes, name, expected_samples=len(selected)
-        )
-        write_csv(directory / "trajectory.csv", rows)
-        (directory / "source.json").write_text(
-            json.dumps(
-                {
-                    "model": name,
-                    "sample_count": len(selected),
-                    "seed": 42,
-                    "dtype": "bfloat16",
-                    "handoff": "full20[:prompt_len+k] then last k positions",
-                    "receiver_position_start": "prompt_len+k",
-                    "historical_runs": sources,
-                    "probe_run_id": rows[0]["probe_run_id"],
-                    "smoke": args.smoke,
-                    "gpu": torch.cuda.get_device_name(device),
-                    "git_commit": get_git_commit_hash(),
-                },
-                indent=2,
+            (directory / "parity.json").write_text(json.dumps(parity, indent=2) + "\n")
+            if not parity["passed"]:
+                raise ValueError(
+                    f"Exact parity failed; no trajectory was run. See {directory / 'parity.json'}"
+                )
+            tracker.log_metrics({"parity_passed": 1})
+            if args.smoke:
+                del model, receiver
+                gc.collect()
+                torch.cuda.empty_cache()
+                continue
+            selected = samples
+            records = collect_trajectory(
+                model, selected, receiver, directory / "sample_results.jsonl"
             )
-            + "\n"
-        )
-        combined.extend(rows)
+            rows = summarize_trajectory(
+                records, probes, name, expected_samples=len(selected)
+            )
+            write_csv(directory / "trajectory.csv", rows)
+            (directory / "trajectory.json").write_text(
+                json.dumps(rows, indent=2) + "\n"
+            )
+            for row in rows:
+                tracker.log_metrics(
+                    {
+                        key: row[key]
+                        for key in (
+                            "probe_accuracy",
+                            "probe_null_mean",
+                            "probe_effect_pp",
+                            "probe_fwer_p",
+                            "receiver_changed_fraction",
+                        )
+                    },
+                    step=row["latent_step"],
+                )
+            (directory / "source.json").write_text(
+                json.dumps(
+                    {
+                        "model": name,
+                        "sample_count": len(selected),
+                        "seed": 42,
+                        "dtype": "bfloat16",
+                        "handoff": "full20[:prompt_len+k] then last k positions",
+                        "receiver_position_start": "prompt_len+k",
+                        "historical_runs": sources,
+                        "probe_run_id": rows[0]["probe_run_id"],
+                        "smoke": args.smoke,
+                        "gpu": torch.cuda.get_device_name(device),
+                        "git_commit": get_git_commit_hash(),
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            combined.extend(rows)
         del model, receiver
         gc.collect()
         torch.cuda.empty_cache()
     if models == ["0.6B", "4B", "8B"]:
         write_csv(output / "trajectory.csv", combined)
+        (output / "trajectory.json").write_text(json.dumps(combined, indent=2) + "\n")
+        from .presentation_plots import STYLE, plt
+        from .receiver_trajectory_plots import plot_trajectory
+
+        with plt.rc_context(STYLE):
+            plot_trajectory(output / "trajectory.csv", output / "plots")
+        tracker = MLflowTracker()
+        tracker.start_run(
+            "latentmas_receiver_trajectory", run_name="all-models-summary"
+        )
+        try:
+            tracker.log_artifact(output / "trajectory.csv")
+            tracker.log_artifact(output / "trajectory.json")
+            for path in (output / "plots").iterdir():
+                tracker.log_artifact(path, artifact_path="plots")
+        finally:
+            tracker.end_run()
     print(f"Saved receiver trajectory: {output}")
 
 
