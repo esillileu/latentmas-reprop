@@ -140,7 +140,10 @@ class ModelWrapper(ModelPort):
         temperature: float = 0.7,
         top_p: float = 0.95,
         past_key_values: Any = None,
+        report_progress: bool | None = None,
     ) -> tuple[list[str], Any, list[int]]:
+        if report_progress is None:
+            report_progress = not bool(getattr(self.args, "no_progress", False))
         return generate_text_batch(
             self.model,
             self.tokenizer,
@@ -151,7 +154,7 @@ class ModelWrapper(ModelPort):
             temperature=temperature,
             top_p=top_p,
             past_key_values=past_key_values,
-            report_progress=bool(getattr(self.args, "receiver_reasoning", False)),
+            report_progress=report_progress,
         )
 
     def tokenize_text(self, text: str) -> torch.Tensor:

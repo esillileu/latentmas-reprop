@@ -64,7 +64,8 @@ def _reuse_completed_benchmark(
         return None
     metrics, preds = store.load_finished()
     print(f"Reusing completed run {run_id}")
-    print(json.dumps(metrics.to_dict(), ensure_ascii=False))
+    if getattr(args, "print_summary", False):
+        print(json.dumps(metrics.to_dict(), ensure_ascii=False))
     return metrics.to_dict(), preds
 
 
@@ -124,7 +125,7 @@ def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
     metrics, preds = use_case.execute(model, args)
 
     metrics_dict = metrics.to_dict()
-    # Output final summary JSON
-    print(json.dumps(metrics_dict, ensure_ascii=False))
+    if getattr(args, "print_summary", False):
+        print(json.dumps(metrics_dict, ensure_ascii=False))
 
     return metrics_dict, preds
