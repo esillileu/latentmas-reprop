@@ -11,7 +11,6 @@ import transformers
 from dotenv import load_dotenv
 
 from latentmas_reprop.application.receiver_acquisition.parity import (
-    load_history,
     verify_prefix_parity,
 )
 from latentmas_reprop.application.receiver_acquisition.sampling import (
@@ -90,14 +89,9 @@ def main(argv=None):
         help="0.6B parity only; ten balanced representatives from the canonical 100 samples.",
     )
     parser.add_argument("--model", choices=("0.6B", "4B", "8B", "14B", "all"))
-    parser.add_argument(
-        "--acquisition-dir", type=Path, default=Path("artifacts/receiver_acquisition")
-    )
-    parser.add_argument(
-        "--reference-dir", type=Path, default=Path(".cache/receiver_acquisition/mlflow")
-    )
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args(argv)
+    git_commit = get_git_commit_hash()
     if args.smoke and args.model not in (None, "0.6B"):
         parser.error("Local smoke is restricted to 0.6B")
     device = torch.device("cuda")
@@ -127,13 +121,6 @@ def main(argv=None):
     output = args.output_dir or Path(
         "artifacts/receiver_trajectory" + ("/smoke" if args.smoke else "")
     )
-    # Validate all historical inputs before loading any weights.
-    historical = {
-        m: (None, {})
-        if m == "14B"
-        else load_history(args.acquisition_dir, args.reference_dir, f"Qwen/Qwen3-{m}")
-        for m in models
-    }
     torch.manual_seed(42)
     for size in models:
         name = f"Qwen/Qwen3-{size}"
@@ -162,14 +149,12 @@ def main(argv=None):
                 )
                 + "\n"
             )
-            history, sources = historical[size]
-            parity = verify_prefix_parity(model, representatives, receiver, history)
+            parity = verify_prefix_parity(model, representatives, receiver)
             parity.update(
                 model=name,
                 dtype="bfloat16",
-                historical_runs=sources,
                 gpu=torch.cuda.get_device_name(device),
-                git_commit=get_git_commit_hash(),
+                git_commit=git_commit,
                 torch_version=torch.__version__,
                 transformers_version=transformers.__version__,
             )
@@ -202,7 +187,6 @@ def main(argv=None):
                         "dtype": "bfloat16",
                         "handoff": "full20[:prompt_len+k] then last k positions",
                         "receiver_position_start": "prompt_len+k",
-                        "historical_runs": sources,
                         "sender_prompt_template": SENDER_PROMPT_TEMPLATE,
                         "sender_prompt_template_version": SENDER_PROMPT_TEMPLATE_VERSION,
                         "receiver_prompt_template": RECEIVER_PROMPT,
@@ -219,7 +203,7 @@ def main(argv=None):
                         "latent_space_realign": False,
                         "smoke": args.smoke,
                         "gpu": torch.cuda.get_device_name(device),
-                        "git_commit": get_git_commit_hash(),
+                        "git_commit": git_commit,
                     },
                     indent=2,
                 )
