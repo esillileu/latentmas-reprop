@@ -143,7 +143,9 @@ def collect_sample(
                 for r in sample_records
             }
             sample_measurements.update(inference_costs(sample_records))
-            counts = execution_counts(sample_records, 2 * (1 + len(args.upstream_steps)))
+            counts = execution_counts(
+                sample_records, 2 * (1 + len(args.upstream_steps))
+            )
             for name, value in {**sample_measurements, **counts}.items():
                 root.set_attribute(name, value)
             for row in sample_records:

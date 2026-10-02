@@ -61,8 +61,7 @@ def find_runs_by_model(
     exact_matches = [
         (m, rid)
         for m, rid in latest_by_model.items()
-        if m.lower() == query_lower
-        or sanitize_model_name(m).lower() == query_lower
+        if m.lower() == query_lower or sanitize_model_name(m).lower() == query_lower
     ]
     if exact_matches:
         return [rid for _, rid in exact_matches]
@@ -80,18 +79,14 @@ def find_runs_by_model(
     # Priority 3: Word/size boundary match (e.g. '4b' matches 'Qwen3-4B' but not '14B')
     pattern = re.compile(rf"(?<!\d){re.escape(query_lower)}(?!\d)")
     boundary_matches = [
-        (m, rid)
-        for m, rid in latest_by_model.items()
-        if pattern.search(m.lower())
+        (m, rid) for m, rid in latest_by_model.items() if pattern.search(m.lower())
     ]
     if boundary_matches:
         return [rid for _, rid in boundary_matches]
 
     # Priority 4: General substring match
     sub_matches = [
-        (m, rid)
-        for m, rid in latest_by_model.items()
-        if query_lower in m.lower()
+        (m, rid) for m, rid in latest_by_model.items() if query_lower in m.lower()
     ]
     if sub_matches:
         return [rid for _, rid in sub_matches]
@@ -117,7 +112,9 @@ def analyze_run(
         run.info.status != "FINISHED"
         or run.data.tags.get("experiment_type") != "receiver_compute_preflight"
     ):
-        raise ValueError(f"Expected a FINISHED receiver compute preflight run: {run_id}")
+        raise ValueError(
+            f"Expected a FINISHED receiver compute preflight run: {run_id}"
+        )
 
     with tempfile.TemporaryDirectory(prefix="preflight-analysis-") as tmp:
         records_path = client.download_artifacts(
@@ -163,7 +160,9 @@ def analyze_run(
             ]
             content = summary_path.read_text(encoding="utf-8")
             if "## plots" not in content:
-                summary_path.write_text(content + "\n".join(plot_section), encoding="utf-8")
+                summary_path.write_text(
+                    content + "\n".join(plot_section), encoding="utf-8"
+                )
 
     (output / "analysis_config.yaml").write_text(
         yaml.safe_dump(config, sort_keys=False)
