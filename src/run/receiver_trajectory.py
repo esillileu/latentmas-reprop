@@ -43,10 +43,10 @@ def tracked_model(directory, name, smoke):
     tracker = MLflowTracker()
     tracker.start_run(
         experiment_name="latentmas_receiver_trajectory",
-        run_name=f"{name.split('/')[-1]}-{'parity' if smoke else 'steps-1-20'}",
+        run_name=f"{name.split('/')[-1]}-{'smoke' if smoke else 'steps-1-20'}",
         tags={
             "protocol": "receiver_acquisition",
-            "phase": "parity" if smoke else "sweep",
+            "phase": "smoke" if smoke else "sweep",
             "experiment_type": "receiver_acquisition",
             "model": name,
             "task": "secret_digit",
@@ -60,11 +60,11 @@ def tracked_model(directory, name, smoke):
             "model": name,
             "sender_latent_steps": 20,
             "handoff_cuts": list(range(1, 21)),
-            "sample_count": 100,
+            "sample_count": 10 if smoke else 100,
             "seed": 42,
             "dtype": "bfloat16",
             "condition": "latent_only/own + matched drop",
-            "parity_only": smoke,
+            "smoke": smoke,
             "task": "secret_digit",
             "method": "latent_mas",
             "backend": "transformers",
@@ -124,7 +124,7 @@ def main(argv=None):
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help="0.6B parity only; ten balanced representatives from the canonical 100 samples.",
+        help="0.6B steps 1..20 on ten balanced representatives from the canonical 100.",
     )
     parser.add_argument("--model", choices=("0.6B", "4B", "8B", "14B", "all"))
     parser.add_argument("--output-dir", type=Path)
@@ -187,7 +187,7 @@ def main(argv=None):
                         "method": "latent_mas",
                         "latent_steps": 20,
                         "seed": 42,
-                        "max_samples": 100,
+                        "max_samples": 10 if args.smoke else 100,
                         "backend": "transformers",
                         "dtype": "bfloat16",
                         "context_modes": ["latent_only"],
@@ -232,12 +232,7 @@ def main(argv=None):
                     f"Exact parity failed; no trajectory was run. See {directory / 'parity.json'}"
                 )
             tracker.log_metrics({"parity_passed": 1})
-            if args.smoke:
-                del model, receiver
-                gc.collect()
-                torch.cuda.empty_cache()
-                continue
-            selected = samples
+            selected = representatives if args.smoke else samples
             records = collect_trajectory(
                 model, selected, receiver, directory / "sample_results.jsonl", tracker
             )
