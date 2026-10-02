@@ -21,9 +21,11 @@ def ensure_pad_token(tokenizer: AutoTokenizer) -> None:
 def load_hf_causal_lm(
     model_name: str,
     device: torch.device,
+    *,
+    dtype: torch.dtype | None = None,
 ) -> tuple[AutoTokenizer, AutoModelForCausalLM, torch.dtype]:
-    """Load FP16 weights and verify the actual model parameter dtype."""
-    selected = resolve_model_dtype(device)
+    """Load the requested dtype (FP16 by default), verifying parameter precision."""
+    selected = dtype or resolve_model_dtype(device)
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     ensure_pad_token(tokenizer)
     with torch.no_grad():

@@ -9,8 +9,29 @@ from ...domain.services.prompts.acquisition import (
     CANDIDATE_DIGITS,
     RECEIVER_ANSWER_PREFIX,
     RECEIVER_PROMPT_TEMPLATE_VERSION,
+    build_receiver_messages,
 )
 from ...infrastructure.models.model_wrapper import ModelWrapper
+
+
+def prepare_receiver_scoring(model: ModelWrapper):
+    """Canonical non-thinking receiver prompt and contextual digit mapping."""
+    prompts, _, _, _ = model.prepare_chat_batch(
+        [build_receiver_messages()],
+        add_generation_prompt=True,
+        chat_template_kwargs={"enable_thinking": False},
+    )
+    mapping = validate_digit_candidates(model, prompts[0])
+    encoded = model.tokenizer(
+        prompts[0] + RECEIVER_ANSWER_PREFIX,
+        return_tensors="pt",
+        add_special_tokens=False,
+    )
+    return (
+        encoded["input_ids"].to(model.device),
+        encoded["attention_mask"].to(model.device),
+        mapping,
+    )
 
 
 def validate_digit_candidates(
