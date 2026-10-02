@@ -1,0 +1,16 @@
+receiver_reasoning: true
+method: latent_mas
+model_name: Qwen/Qwen3-14B
+task: gsm8k
+split: test
+prompt: sequential
+max_samples: 20
+generate_bs: 1
+upstream_steps: 0,10,40
+answer_only_max_new_tokens: 64
+max_new_tokens: 4096
+temperature: 0.0
+top_p: 1.0
+device: cuda
+seed: 42
+tracking_experiment_name: latentmas_receiver_reasoning

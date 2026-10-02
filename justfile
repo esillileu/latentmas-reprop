@@ -40,6 +40,9 @@ lmas action="reprop" *args:
 run-intervention *args:
     uv run python -m src.run --intervention {{args}}
 
+run-receiver-reasoning *args:
+    uv run python -m src.run --receiver_reasoning {{args}}
+
 # Run secret-digit receiver acquisition
 run-acquisition *args:
     uv run python -m src.run --acquisition {{args}}
@@ -47,6 +50,14 @@ run-acquisition *args:
 # Analyze previously collected sender latent states
 analyze-sender-probe *args:
     uv run python -m src.run.sender_probe {{args}}
+
+# Analyze saved latent handoff pilot artifacts (no inference)
+analyze-handoff *args:
+    uv run python -m src.run.handoff_analysis {{args}}
+
+# Reanalyze saved receiver observations from MLflow (no inference)
+analyze-receiver *args:
+    uv run python -m src.run.receiver_analysis {{args}}
 
 # Run test suite
 test *args:
@@ -68,3 +79,9 @@ clean-cache:
 # Launch local MLflow UI pointing to SQLite backend
 mlflow-ui *args:
     uv run mlflow ui --backend-store-uri sqlite:///.cache/mlflow.db --default-artifact-root .cache/mlflow_artifacts {{args}}
+
+run-receiver-compute-preflight *args:
+    uv run python -m src.run --receiver_compute_preflight {{args}}
+
+analyze-receiver-compute-preflight *args:
+    uv run python -m src.run.compute_preflight_analysis {{args}}

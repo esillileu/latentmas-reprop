@@ -3,10 +3,36 @@
 from typing import Any
 
 import torch
-from transformers import AutoTokenizer
+from tqdm import tqdm
+from transformers import AutoTokenizer, StoppingCriteria, StoppingCriteriaList
 
 from ...domain.ports.model_port import NextTokenState
 from ...domain.services.kv_cache import get_past_kv_sequence_length
+
+
+class GenerationProgress(StoppingCriteria):
+    """Report token budget usage without changing the generation stop decision."""
+
+    def __init__(self, prompt_length: int, budget: int):
+        self.prompt_length = prompt_length
+        self.progress = tqdm(
+            total=budget,
+            desc="Generating",
+            unit="token",
+            dynamic_ncols=True,
+            mininterval=1.0,
+            leave=False,
+        )
+
+    def __call__(self, input_ids, scores, **kwargs):
+        self.update(input_ids.shape[-1] - self.prompt_length)
+        return False
+
+    def update(self, count: int) -> None:
+        self.progress.update(count - self.progress.n)
+
+    def close(self) -> None:
+        self.progress.close()
 
 
 def count_new_token_ids(generated_ids: torch.Tensor, pad_token_id: int | None) -> int:
@@ -16,7 +42,8 @@ def count_new_token_ids(generated_ids: torch.Tensor, pad_token_id: int | None) -
     return int(generated_ids.shape[0])
 
 
-def generate_text_batch(
+@torch.no_grad()
+def generate_token_ids_batch(
     model: torch.nn.Module,
     tokenizer: AutoTokenizer,
     device: torch.device,
@@ -27,11 +54,10 @@ def generate_text_batch(
     temperature: float = 0.7,
     top_p: float = 0.95,
     past_key_values: Any = None,
-) -> tuple[list[str], Any, list[int]]:
-    """Generate text completions using HuggingFace model.
-
-    The third value is the number of newly generated token ids per row.
-    """
+    report_progress: bool = False,
+    observer: StoppingCriteria | None = None,
+) -> tuple[list[list[int]], Any]:
+    """Return actual generate() suffix IDs and the resulting KV cache."""
     if input_ids.dim() != 2:
         raise ValueError("input_ids must be 2D with shape [batch, seq_len]")
     if attention_mask is None:
@@ -47,28 +73,82 @@ def generate_text_batch(
             )
             attention_mask = torch.cat([past_mask, attention_mask], dim=-1)
 
-    outputs = model.generate(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
+    sampling = {"temperature": temperature, "top_p": top_p} if temperature > 0 else {}
+    criteria = []
+    token_progress = (
+        GenerationProgress(input_ids.shape[-1], max_new_tokens)
+        if report_progress
+        else None
+    )
+    if token_progress is not None:
+        criteria.append(token_progress)
+    if observer is not None:
+        criteria.append(observer)
+    progress = {"stopping_criteria": StoppingCriteriaList(criteria)} if criteria else {}
+    try:
+        outputs = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            **sampling,
+            **progress,
+            do_sample=temperature > 0,
+            pad_token_id=tokenizer.pad_token_id,
+            return_dict_in_generate=True,
+            output_scores=False,
+            past_key_values=past_key_values,
+        )
+        sequences = outputs.sequences
+        if token_progress is not None:
+            token_progress.update(sequences.shape[-1] - input_ids.shape[-1])
+        token_ids: list[list[int]] = []
+        prompt_seq_len = input_ids.shape[1]
+        for idx in range(input_ids.shape[0]):
+            generated_ids = sequences[idx, prompt_seq_len:]
+            token_ids.append(generated_ids.to("cpu").tolist())
+        return token_ids, outputs.past_key_values
+    finally:
+        if token_progress is not None:
+            token_progress.close()
+
+
+def generate_text_batch(
+    model: torch.nn.Module,
+    tokenizer: AutoTokenizer,
+    device: torch.device,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+    *,
+    max_new_tokens: int = 256,
+    temperature: float = 0.7,
+    top_p: float = 0.95,
+    past_key_values: Any = None,
+    report_progress: bool = False,
+) -> tuple[list[str], Any, list[int]]:
+    """Generate text completions using HuggingFace model.
+
+    The third value is the number of newly generated token ids per row.
+    """
+    token_ids, cache = generate_token_ids_batch(
+        model,
+        tokenizer,
+        device,
+        input_ids,
+        attention_mask,
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         top_p=top_p,
-        do_sample=True,
-        pad_token_id=tokenizer.pad_token_id,
-        return_dict_in_generate=True,
-        output_scores=False,
         past_key_values=past_key_values,
+        report_progress=report_progress,
     )
-    sequences = outputs.sequences
-    generations: list[str] = []
-    token_counts: list[int] = []
-    prompt_seq_len = input_ids.shape[1]
-    for idx in range(input_ids.shape[0]):
-        generated_ids = sequences[idx, prompt_seq_len:]
-        token_counts.append(count_new_token_ids(generated_ids, tokenizer.pad_token_id))
-        text = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
-        generations.append(text)
-    return generations, outputs.past_key_values, token_counts
+    texts = [
+        tokenizer.decode(ids, skip_special_tokens=True).strip() for ids in token_ids
+    ]
+    counts = [
+        count_new_token_ids(torch.tensor(ids), tokenizer.pad_token_id)
+        for ids in token_ids
+    ]
+    return texts, cache, counts
 
 
 def forward_next_token_batch(

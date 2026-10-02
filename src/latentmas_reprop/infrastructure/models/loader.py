@@ -21,15 +21,9 @@ def ensure_pad_token(tokenizer: AutoTokenizer) -> None:
 def load_hf_causal_lm(
     model_name: str,
     device: torch.device,
-    dtype: torch.dtype | None = None,
 ) -> tuple[AutoTokenizer, AutoModelForCausalLM, torch.dtype]:
-    """Load HuggingFace causal LM and tokenizer.
-
-    BF16 is used only when the selected CUDA device supports it. V100-class
-    GPUs use FP16. CPU loads use FP32. The returned dtype is the one requested
-    from ``from_pretrained``.
-    """
-    selected = dtype if dtype is not None else resolve_model_dtype(device)
+    """Load FP16 weights and verify the actual model parameter dtype."""
+    selected = resolve_model_dtype(device)
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     ensure_pad_token(tokenizer)
     with torch.no_grad():
@@ -70,6 +64,7 @@ def init_vllm_backend(
     ):
         vllm_engine = LLM(
             model=model_name,
+            dtype="float16",
             tensor_parallel_size=tp_size,
             gpu_memory_utilization=gpu_util,
             enable_prefix_caching=True,
@@ -78,6 +73,7 @@ def init_vllm_backend(
     else:
         vllm_engine = LLM(
             model=model_name,
+            dtype="float16",
             tensor_parallel_size=tp_size,
             gpu_memory_utilization=gpu_util,
         )

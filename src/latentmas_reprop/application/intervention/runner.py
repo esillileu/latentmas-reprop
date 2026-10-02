@@ -48,7 +48,7 @@ def _finalize_root_span(
     root_span.set_outputs(root_outputs)
     if tracker_port:
         resp = " | ".join(
-            f"{c}: {cond_preds[c][0]} ({'PASS' if cond_preds[c][1] else 'FAIL'})"
+            f"{c}: {str(cond_preds[c][0])[:60]} ({'PASS' if cond_preds[c][1] else 'FAIL'})"
             for c in conditions
             if c in cond_preds
         )

@@ -8,11 +8,16 @@ import yaml
 
 from latentmas_reprop.infrastructure.paths import get_path_resolver
 
+from .cli_compute_preflight import (
+    add_compute_preflight_args,
+    validate_compute_preflight_args,
+)
 from .cli_intervention import (
     add_acquisition_args,
     add_intervention_args,
     validate_intervention_and_acquisition_args,
 )
+from .cli_receiver import add_receiver_reasoning_args, validate_receiver_reasoning_args
 
 
 def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentParser:
@@ -171,6 +176,15 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         help="Target GPU memory utilization for vLLM",
     )
 
+    add_receiver_reasoning_args(parser, defaults)
+    add_compute_preflight_args(parser, defaults)
+
+    parser.add_argument(
+        "--version_tag",
+        default=defaults.get("version_tag"),
+        help="MLflow version_tag for receiver reasoning runs.",
+    )
+
     # Modular options
     add_intervention_args(parser, defaults)
     add_acquisition_args(parser, defaults)
@@ -201,6 +215,21 @@ def _load_defaults(args: list[str] | None) -> dict[str, Any]:
 
 
 def _parse_args(args: list[str] | None, defaults: dict[str, Any]) -> argparse.Namespace:
+    if defaults.get("receiver_compute_preflight") or (
+        args is not None and "--receiver_compute_preflight" in args
+    ):
+        defaults = {
+            "method": "latent_mas",
+            "model_name": "Qwen/Qwen3-4B",
+            "task": "gsm8k",
+            "split": "test",
+            "upstream_steps": "10,20",
+            "max_new_tokens": 4096,
+            "max_samples": 20,
+            "generate_bs": 1,
+            "tracking_experiment_name": "latentmas_receiver_compute_preflight",
+            **defaults,
+        }
     parser = build_parser(defaults=defaults)
     parsed = parser.parse_args(args)
 
@@ -212,6 +241,9 @@ def _parse_args(args: list[str] | None, defaults: dict[str, Any]) -> argparse.Na
         parsed.enable_prefix_caching = True
 
     validate_intervention_and_acquisition_args(parser, parsed)
+
+    validate_receiver_reasoning_args(parser, parsed)
+    validate_compute_preflight_args(parser, parsed)
 
     return parsed
 
