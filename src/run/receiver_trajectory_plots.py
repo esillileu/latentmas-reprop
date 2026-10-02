@@ -1,4 +1,4 @@
-"""Read-only presentation scatter of all 60 probe/receiver trajectory cells."""
+"""Read-only presentation scatter of collected probe/receiver trajectory cells."""
 
 import argparse
 import csv
@@ -11,18 +11,30 @@ from .presentation_plots import STYLE, plt, save
 def plot_trajectory(path, output):
     with path.open(newline="") as stream:
         rows = list(csv.DictReader(stream))
-    models = ("0.6B", "4B", "8B")
+    supported = ("0.6B", "4B", "8B", "14B")
+    present = {r["model"] for r in rows}
+    models = tuple(m for m in supported if f"Qwen/Qwen3-{m}" in present)
     expected = {(f"Qwen/Qwen3-{m}", k) for m in models for k in range(1, 21)}
     if (
-        len(rows) != 60
+        not models
+        or len(rows) != 20 * len(models)
         or {(r["model"], int(r["latent_step"])) for r in rows} != expected
     ):
-        raise ValueError("The presentation requires exactly 60 unique model/step cells")
+        raise ValueError(
+            "The presentation requires 20 unique steps for each supported model"
+        )
     if any(r["sample_count"] != "100" for r in rows):
-        raise ValueError("Smoke results cannot be used in the 60-point presentation")
+        raise ValueError("Smoke results cannot be used in the presentation")
     fig, ax = plt.subplots(figsize=(16, 9), layout="constrained")
     all_x = []
-    for model, color in zip(models, ("#7B3294", "#0072B2", "#D55E00"), strict=True):
+    for model, color in zip(
+        models,
+        tuple(
+            {"0.6B": "#7B3294", "4B": "#0072B2", "8B": "#D55E00", "14B": "#009E73"}[m]
+            for m in models
+        ),
+        strict=True,
+    ):
         cells = sorted(
             (r for r in rows if r["model"] == f"Qwen/Qwen3-{model}"),
             key=lambda r: int(r["latent_step"]),
@@ -69,7 +81,7 @@ def plot_trajectory(path, output):
         loc="lower left",
         bbox_to_anchor=(0, 1.02),
         frameon=False,
-        ncol=3,
+        ncol=len(models),
         prop={"size": 22, "weight": "bold"},
     )
     output.mkdir(parents=True, exist_ok=True)
@@ -81,7 +93,7 @@ def main(argv=None):
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("artifacts/receiver_trajectory/trajectory.csv"),
+        default=Path("artifacts/receiver_trajectory/analysis/trajectory.csv"),
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("artifacts/presentation")

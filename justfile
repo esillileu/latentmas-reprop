@@ -97,3 +97,7 @@ run-receiver-compute-preflight *args:
 
 analyze-receiver-compute-preflight *args:
     uv run python -m src.run.compute_preflight_analysis {{args}}
+
+# Analyze saved secret-digit trajectories without inference
+analyze-receiver-trajectory *args:
+    uv run --frozen python -m src.run.receiver_trajectory_analysis {{args}}
