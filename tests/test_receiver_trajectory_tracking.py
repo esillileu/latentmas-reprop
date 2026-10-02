@@ -1,5 +1,7 @@
 """Exercise actual MLflow export for every receiver cut and execution failures."""
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import mlflow
@@ -161,7 +163,10 @@ def test_sample_trace_exports_all_steps_or_records_forward_failure(
         mlflow.set_tracking_uri(previous_uri)
 
 
-def test_run_uploads_prompt_artifacts_and_all_raw_logits(tmp_path, monkeypatch):
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_run_uploads_prompt_artifacts_and_all_raw_logits(
+    tmp_path, monkeypatch, interrupted
+):
     from src.run import receiver_trajectory as cli
 
     previous_uri = mlflow.get_tracking_uri()
@@ -171,8 +176,8 @@ def test_run_uploads_prompt_artifacts_and_all_raw_logits(tmp_path, monkeypatch):
         path_resolver=PathResolver(tmp_path),
     )
     monkeypatch.setattr(cli, "MLflowTracker", lambda: tracker)
-    directory = tmp_path / "collection"
-    directory.mkdir()
+    staging = TemporaryDirectory(prefix="receiver-trajectory-", dir=tmp_path)
+    directory = Path(staging.name)
     (directory / "receiver_outputs").mkdir()
     torch.save(
         {"none/drop/step_20": torch.arange(32)[None]},
@@ -184,11 +189,19 @@ def test_run_uploads_prompt_artifacts_and_all_raw_logits(tmp_path, monkeypatch):
     )
     (directory / "receiver_input.json").write_text('{"prompt":"actual receiver"}')
     try:
-        with cli.tracked_model(directory, "Qwen/Qwen3-0.6B", False):
-            rid = tracker.active_run_id
+        try:
+            with staging, cli.tracked_model(directory, "Qwen/Qwen3-0.6B", False):
+                rid = tracker.active_run_id
+                if interrupted:
+                    raise KeyboardInterrupt
+        except KeyboardInterrupt:
+            assert interrupted
+        assert not directory.exists()
         client = MlflowClient(tracking_uri=tracker.tracking_uri)
         run = client.get_run(rid)
-        assert run.info.status == "FINISHED"
+        assert run.info.status == ("FAILED" if interrupted else "FINISHED")
+        if interrupted:
+            assert "failure.json" in {f.path for f in client.list_artifacts(rid)}
         assert run.data.params["save_receiver_logits"] == "True"
         assert "sender_prompt_template" in run.data.params
         assert "receiver_prompt_template" in run.data.params
