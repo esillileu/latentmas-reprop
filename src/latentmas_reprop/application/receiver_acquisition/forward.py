@@ -88,6 +88,8 @@ def forward_receiver_observation(
                 "source_digit": source.digit if source else None,
                 "context_mode": mode,
                 "condition": condition,
+                "latent_steps": args.latent_steps,
+                "original_full_seq_len": original_full_seq_len,
             },
         )
         if tracker_port
@@ -162,6 +164,10 @@ def forward_receiver_observation(
                     scored
                     | {
                         "cache_sequence_length": cache_seq_len,
+                        "original_full_seq_len": original_full_seq_len,
+                        "receiver_position_start": receiver_position_start,
+                        "retained_tail_start_position": retained_start,
+                        "retained_original_position_end": retained_end,
                         "latency_sec": time.perf_counter() - started,
                     }
                 )

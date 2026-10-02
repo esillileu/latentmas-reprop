@@ -77,6 +77,7 @@ def tracked_model(directory, name, smoke):
             path = directory / filename
             if path.is_file():
                 tracker.log_artifact(path)
+        tracker.flush_traces()
         tracker.end_run(status)
 
 
@@ -185,7 +186,7 @@ def main(argv=None):
                 continue
             selected = samples
             records = collect_trajectory(
-                model, selected, receiver, directory / "sample_results.jsonl"
+                model, selected, receiver, directory / "sample_results.jsonl", tracker
             )
             states = collect_sender_states(model, latent_steps=20, template_count=20)
             torch.save(states.payload(), directory / "sender_latent_states.pt")
