@@ -141,6 +141,10 @@ Run the separate analysis command after collection to produce `summary.md`, `met
 belong to this command; `analysis_config.yaml` records the resolved analysis configuration.
 
 ```bash
+# Analyze by model name or 'all'
+just analyze-receiver-compute-preflight --model 4B
+just analyze-receiver-compute-preflight --model all --target-accuracies 0.5,0.7,0.9
+# Or analyze specific run ID
 just analyze-receiver-compute-preflight --run-id RUN_ID \
   --target-accuracies 0.5,0.7,0.9 --bootstrap-count 2000
 ```
@@ -153,9 +157,10 @@ latency cannot be recovered from text. Reanalysis performs no inference and
 cannot extend a previously truncated trajectory. Updated endpoint retry and cost
 collection require the updated execution path.
 
-Outputs default to `artifacts/receiver_compute_preflight/RUN_ID/` and are uploaded
-to the source run under `analysis/`. `MLFLOW_TRACKING_URI` follows the usual tracker
-configuration; `source.json` records run provenance. Run `just lint && just test`.
+Outputs default to `artifacts/receiver_compute_preflight/<model_name>/` and are uploaded
+to the source run under `analysis/`, including diagnostic curve plots (`budget_accuracy_curve.png`,
+`pairing_gain_curve.png`, `latency_accuracy_tradeoff.png`, and `tokens_cost_curve.png`).
+`MLFLOW_TRACKING_URI` follows the usual tracker configuration; `source.json` records run provenance. Run `just lint && just test`.
 
 ### MLflow traces and run identity
 

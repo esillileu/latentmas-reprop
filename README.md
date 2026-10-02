@@ -144,7 +144,8 @@ Receiver compute preflight (independent of the receiver reasoning pilot):
 
 ```bash
 just run-receiver-compute-preflight -c lmas/receiver_compute_preflight/gsm8k --dry-run
-just analyze-receiver-compute-preflight --run-id RUN_ID
+just analyze-receiver-compute-preflight --model all
+just analyze-receiver-compute-preflight --model 4B
 ```
 
 See [receiver compute preflight](docs/receiver_compute_preflight.md) for full-KV

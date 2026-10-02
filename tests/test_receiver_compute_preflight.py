@@ -171,3 +171,24 @@ def test_cli_axes_and_constraints():
     ):
         with pytest.raises(SystemExit):
             parse_run_matrix([*base, *flags])
+
+
+def test_generate_all_plots_exports_four_figures(tmp_path):
+    from latentmas_reprop.application.receiver_compute_preflight.plots import (
+        generate_all_plots,
+    )
+
+    config, rows = config_and_records()
+    metrics, _ = analyze(rows, config)
+    generated = generate_all_plots(tmp_path, metrics, model_name="TestModel")
+    assert len(generated) == 4
+    for p in generated:
+        assert p.exists()
+        assert p.stat().st_size > 0
+    assert {p.name for p in tmp_path.glob("*.png")} == {
+        "budget_accuracy_curve.png",
+        "pairing_gain_curve.png",
+        "latency_accuracy_tradeoff.png",
+        "tokens_cost_curve.png",
+    }
+
