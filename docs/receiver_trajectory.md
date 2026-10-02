@@ -79,8 +79,16 @@ results, aggregate receiver statistics or generate a scatter.
 
 The original acquisition preset's optional receiver hidden states and raw KV
 were disabled; they remain disabled here. Its other carrier/condition cells
-(`full`, `prompt_only`, `cross`, `drop_position_matched`) and MLflow per-forward
-traces are not collected by this own/drop trajectory experiment.
+(`full`, `prompt_only`, `cross`, `drop_position_matched`) are not collected by this own/drop trajectory experiment.
+
+Each receiver sample has a `secret_digit_sample` MLflow trace, with one sender
+context span and 21 receiver forward spans (drop plus steps 1..20). Span inputs
+identify the step and condition; outputs include digit scores and cache/position
+metadata. Root outputs retain all 21 observations without overwriting steps.
+Target-digit expectations, source-follow feedback and execution status follow
+the existing acquisition tracker. Traces are flushed before the run ends.
+Runs completed before this tracing fix have artifacts but no sample traces;
+real forward traces require a new execution.
 
 Previously completed 0.6B artifacts predate sender-state collection; that run
 contains receiver observations and probe-joined summaries, but not the newly
