@@ -20,7 +20,7 @@ just run-receiver-trajectory --smoke
 just run-receiver-trajectory --model 0.6B
 # Larger GPU; models processed sequentially
 just run-receiver-trajectory
-# 14B collection only, after same-environment 0.6B validation
+# 14B collection only
 just run-receiver-trajectory --model 14B
 ```
 
@@ -43,9 +43,8 @@ are diagnostic; historical raw KV was not saved. Inputs are
 
 14B has no historical acquisition references in this repository. Its gate uses
 exact fresh independent KV/logit comparisons and explicitly records historical
-checks as unavailable, rather than claiming historical parity. Model-specific
-large runs also require successful 0.6B parity on the same GPU name, Git commit
-and library versions.
+checks as unavailable, rather than claiming historical parity. Each model checks its own independent k-step parity before collecting.
+No prior 0.6B artifact or matching GPU/commit/library record is required.
 
 The earlier 0.6B sweep passed KV/logit and historical digit parity, though saved
 historical log-probabilities differed. No environment or lockfile changes were

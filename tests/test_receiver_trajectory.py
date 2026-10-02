@@ -262,3 +262,23 @@ def test_offline_analysis_matches_saved_receiver_results(tmp_path, monkeypatch):
     assert len(rows) == 40
     assert all(r["receiver_changed_fraction"] == 0.3 for r in rows)
     assert len(json.loads((tmp_path / "analysis/trajectory.json").read_text())) == 40
+
+
+def test_large_model_does_not_require_a_previous_small_model_run(monkeypatch, tmp_path):
+    from src.run import receiver_trajectory as cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(cli.torch.cuda, "is_bf16_supported", lambda: True)
+    monkeypatch.setattr(
+        cli.torch.cuda,
+        "get_device_properties",
+        lambda _: SimpleNamespace(total_memory=48 * 1024**3),
+    )
+
+    def historical_lookup(*args):
+        raise RuntimeError("model-specific historical lookup reached")
+
+    monkeypatch.setattr(cli, "load_history", historical_lookup)
+    with pytest.raises(RuntimeError, match="model-specific historical lookup reached"):
+        cli.main(["--model", "4B"])

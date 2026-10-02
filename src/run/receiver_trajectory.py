@@ -119,21 +119,6 @@ def main(argv=None):
             else ["0.6B", "4B", "8B", "14B"]
         )
     )
-    if models[0] != "0.6B":
-        gate = Path("artifacts/receiver_trajectory/Qwen_Qwen3-0.6B/parity.json")
-        evidence = json.loads(gate.read_text()) if gate.exists() else {}
-        if not evidence.get("passed") or any(
-            evidence.get(key) != value
-            for key, value in {
-                "gpu": torch.cuda.get_device_name(device),
-                "torch_version": torch.__version__,
-                "transformers_version": transformers.__version__,
-                "git_commit": get_git_commit_hash(),
-            }.items()
-        ):
-            raise ValueError(
-                "First run 0.6B parity on this execution environment using --model 0.6B"
-            )
     samples = generate_secret_digit_samples(100, 42)
     representatives = [
         next(s for s in samples if s.digit == digit) for digit in range(10)
