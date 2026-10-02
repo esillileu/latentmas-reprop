@@ -44,7 +44,7 @@ def test_prefix_excludes_prompt_and_future_positions_without_mutating_full20(dyn
         latent_prefix(full, 21)
 
 
-@pytest.mark.parametrize("mismatch", [None, "cache", "logits", "history"])
+@pytest.mark.parametrize("mismatch", [None, "cache", "logits", "history", "prediction"])
 def test_exact_parity_refuses_any_cache_output_or_historical_difference(
     monkeypatch, mismatch
 ):
@@ -79,6 +79,8 @@ def test_exact_parity_refuses_any_cache_output_or_historical_difference(
         history[1][representatives[0].sample_id, "own"][
             "candidate_log_probabilities"
         ] = {"5": -0.10001}
+    if mismatch == "prediction":
+        history[1][representatives[0].sample_id, "own"]["predicted_digit"] = 6
     counter = 0
 
     def forward(*args, **kwargs):
@@ -97,7 +99,7 @@ def test_exact_parity_refuses_any_cache_output_or_historical_difference(
         model, representatives, (None, None, None), history
     )
     assert len(report["checks"]) == 20
-    assert report["passed"] == (mismatch is None)
+    assert report["passed"] == (mismatch in (None, "history"))
 
 
 def trajectory_fixture():
@@ -140,6 +142,7 @@ def trajectory_fixture():
             "probe_accuracy": "0.19",
             "null_mean_accuracy": "0.11",
             "significance": "True",
+            "fwer_p_value": "0.01",
         }
         for k in range(1, 21)
     ]
@@ -151,7 +154,7 @@ def test_summary_pairs_canonical_receiver_samples_and_uses_probe_null_not_chance
     rows = summarize_trajectory(records, probes, "Qwen/Qwen3-0.6B")
     assert len(rows) == 20
     assert all(r["probe_effect_pp"] == pytest.approx(8.0) for r in rows)
-    assert all(r["argmax_changed_fraction"] == pytest.approx(0.3) for r in rows)
+    assert all(r["receiver_changed_fraction"] == pytest.approx(0.3) for r in rows)
 
 
 @pytest.mark.parametrize("corruption", ["duplicate", "identity", "position", "missing"])
@@ -174,7 +177,11 @@ def test_scatter_rejects_smoke_or_missing_model_step_cells(tmp_path, corruption)
     from src.run.receiver_trajectory_plots import plot_trajectory
 
     rows = [
-        {"model": f"Qwen/Qwen3-{model}", "step": str(step), "sample_count": "100"}
+        {
+            "model": f"Qwen/Qwen3-{model}",
+            "latent_step": str(step),
+            "sample_count": "100",
+        }
         for model in ("0.6B", "4B", "8B")
         for step in range(1, 21)
     ]
@@ -190,3 +197,30 @@ def test_scatter_rejects_smoke_or_missing_model_step_cells(tmp_path, corruption)
     with pytest.raises(ValueError):
         plot_trajectory(path, tmp_path / "plots")
     assert not (tmp_path / "plots").exists()
+
+
+def test_scatter_accepts_complete_requested_schema_and_connects_step_order(
+    tmp_path, monkeypatch
+):
+    from src.run import receiver_trajectory_plots as plots
+
+    records, probes = trajectory_fixture()
+    base = summarize_trajectory(records, probes, "Qwen/Qwen3-0.6B")
+    rows = [
+        row | {"model": f"Qwen/Qwen3-{size}"}
+        for size in ("0.6B", "4B", "8B")
+        for row in reversed(base)
+    ]
+    path = tmp_path / "trajectory.csv"
+    with path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    figures = []
+    monkeypatch.setattr(plots, "save", lambda fig, *args: figures.append(fig))
+    plots.plot_trajectory(path, tmp_path / "plots")
+    ax = figures[0].axes[0]
+    connections = [line for line in ax.lines if len(line.get_xdata()) == 20]
+    assert len(connections) == 3
+    assert all(list(line.get_ydata()) == [30.0] * 20 for line in connections)
+    plots.plt.close(figures[0])
