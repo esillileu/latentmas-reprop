@@ -35,20 +35,9 @@ Before collection, k=1 and 4 are compared on ten representatives to newly
 created independent k-step rollouts. Every layer's KV tensors and receiver
 next-token logits must match exactly. No override can bypass failure.
 
-For 0.6B/4B/8B, saved acquisition own/drop digit predictions, sample identities
-and receiver positions must also match. Historical log-probability differences
-are diagnostic; historical raw KV was not saved. Inputs are
-`artifacts/receiver_acquisition/receiver_conditions.csv` and canonical
-`.cache/receiver_acquisition/mlflow/<run_id>/sample_results.jsonl` files.
-
-14B has no historical acquisition references in this repository. Its gate uses
-exact fresh independent KV/logit comparisons and explicitly records historical
-checks as unavailable, rather than claiming historical parity. Each model checks its own independent k-step parity before collecting.
-No prior 0.6B artifact or matching GPU/commit/library record is required.
-
-The earlier 0.6B sweep passed KV/logit and historical digit parity, though saved
-historical log-probabilities differed. No environment or lockfile changes were
-made to force equality.
+Parity uses freshly generated independent rollouts only. No prior run,
+matching GPU/commit/library record, local acquisition CSV/JSONL, or probe analysis
+file is required to start collection. GPU and library versions remain provenance.
 
 ## Saved data
 
@@ -69,8 +58,8 @@ Each model directory under `artifacts/receiver_trajectory/` contains:
 - `resolved_config.json`: the collection command options and input/output paths.
 - `source.json`: model, dtype/backend/device, seed/sample count, prompt versions
   and templates, answer prefix, handoff positions, collection settings,
-  historical sources, Git commit, GPU and library versions.
-- `parity.json`: exact KV/logit checks and available historical comparisons.
+  Git commit, GPU and library versions.
+- `parity.json`: exact KV/logit/position checks against fresh independent rollouts.
 
 Collection loads the existing `.env` tracking URI and uploads these artifacts
 and collection counts to the separate `latentmas_receiver_trajectory` MLflow
