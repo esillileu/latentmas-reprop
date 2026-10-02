@@ -100,6 +100,11 @@ def test_exact_parity_refuses_any_cache_output_or_historical_difference(
     )
     assert len(report["checks"]) == 20
     assert report["passed"] == (mismatch in (None, "history"))
+    if mismatch is None:
+        fresh = parity.verify_prefix_parity(model, representatives, (None, None, None))
+        assert fresh["passed"]
+        assert not fresh["historical_reference_available"]
+        assert all(c["historical_output_exact"] is None for c in fresh["checks"])
 
 
 def trajectory_fixture():
@@ -208,7 +213,7 @@ def test_scatter_accepts_complete_requested_schema_and_connects_step_order(
     base = summarize_trajectory(records, probes, "Qwen/Qwen3-0.6B")
     rows = [
         row | {"model": f"Qwen/Qwen3-{size}"}
-        for size in ("0.6B", "4B", "8B")
+        for size in ("0.6B", "4B", "8B", "14B")
         for row in reversed(base)
     ]
     path = tmp_path / "trajectory.csv"
@@ -221,6 +226,39 @@ def test_scatter_accepts_complete_requested_schema_and_connects_step_order(
     plots.plot_trajectory(path, tmp_path / "plots")
     ax = figures[0].axes[0]
     connections = [line for line in ax.lines if len(line.get_xdata()) == 20]
-    assert len(connections) == 3
+    assert len(connections) == 4
     assert all(list(line.get_ydata()) == [30.0] * 20 for line in connections)
     plots.plt.close(figures[0])
+
+
+def test_offline_analysis_matches_saved_receiver_results(tmp_path, monkeypatch):
+    import json
+
+    from src.run import receiver_trajectory_analysis as analysis
+
+    records, probes = trajectory_fixture()
+    for size in ("0.6B", "14B"):
+        model = f"Qwen/Qwen3-{size}"
+        directory = tmp_path / model.replace("/", "_")
+        directory.mkdir()
+        (directory / "source.json").write_text(
+            json.dumps({"smoke": False, "sample_count": 100})
+        )
+        (directory / "parity.json").write_text(json.dumps({"passed": True}))
+        (directory / "sample_results.jsonl").write_text(
+            "\n".join(json.dumps(r | {"model": model}) for r in records)
+        )
+    probe_path = tmp_path / "probes.csv"
+    with probe_path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(probes[0]))
+        writer.writeheader()
+        writer.writerows(
+            p | {"model": f"Qwen/Qwen3-{size}"}
+            for size in ("0.6B", "14B")
+            for p in probes
+        )
+    monkeypatch.setattr(analysis, "plot_trajectory", lambda *args: None)
+    rows = analysis.analyze_trajectory(tmp_path, probe_path, tmp_path / "analysis")
+    assert len(rows) == 40
+    assert all(r["receiver_changed_fraction"] == 0.3 for r in rows)
+    assert len(json.loads((tmp_path / "analysis/trajectory.json").read_text())) == 40
