@@ -3,6 +3,7 @@
 import argparse
 import gc
 import json
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from latentmas_reprop.application.receiver_acquisition.trajectory import (
 )
 from latentmas_reprop.application.sender_probe import collect_sender_states
 from latentmas_reprop.domain.services.prompts.acquisition import (
+    CANDIDATE_DIGITS,
     RECEIVER_ANSWER_PREFIX,
     RECEIVER_PROMPT,
     RECEIVER_PROMPT_TEMPLATE_VERSION,
@@ -45,6 +47,12 @@ def tracked_model(directory, name, smoke):
         tags={
             "protocol": "receiver_acquisition",
             "phase": "parity" if smoke else "sweep",
+            "experiment_type": "receiver_acquisition",
+            "model": name,
+            "task": "secret_digit",
+            "method": "latent_mas",
+            "seed": "42",
+            "latent_steps": "20",
         },
     )
     tracker.log_params(
@@ -57,16 +65,44 @@ def tracked_model(directory, name, smoke):
             "dtype": "bfloat16",
             "condition": "latent_only/own + matched drop",
             "parity_only": smoke,
+            "task": "secret_digit",
+            "method": "latent_mas",
+            "backend": "transformers",
+            "device": "cuda",
+            "config_path": None,
+            "context_modes": "latent_only",
+            "carrier_modes": "latent_only",
+            "acquisition_conditions": "own,drop",
+            "candidate_digits": list(CANDIDATE_DIGITS),
+            "sender_prompt_template_version": SENDER_PROMPT_TEMPLATE_VERSION,
+            "sender_prompt_template": SENDER_PROMPT_TEMPLATE,
+            "receiver_prompt_template_version": RECEIVER_PROMPT_TEMPLATE_VERSION,
+            "receiver_prompt_template": RECEIVER_PROMPT,
+            "receiver_answer_prefix": RECEIVER_ANSWER_PREFIX,
+            "save_hidden_states": False,
+            "save_raw_cache": False,
+            "latent_space_realign": False,
+            "probe_sender_latents": True,
+            "probe_prompt_templates": 20,
+            "save_latent_states": True,
+            "save_receiver_logits": True,
         }
     )
     status = "FAILED"
     try:
         yield tracker
         status = "FINISHED"
+    except Exception:
+        tracker.log_params({"failure_traceback": traceback.format_exc()[:500]})
+        tracker.log_dict({"traceback": traceback.format_exc()}, "failure.json")
+        raise
     finally:
         for filename in (
             "parity.json",
             "sample_results.jsonl",
+            "sample_results.json",
+            "sender_contexts.jsonl",
+            "sender_probe_inputs.jsonl",
             "sender_latent_states.pt",
             "candidate_token_mapping.json",
             "source.json",
@@ -76,6 +112,8 @@ def tracked_model(directory, name, smoke):
             path = directory / filename
             if path.is_file():
                 tracker.log_artifact(path)
+        for path in sorted((directory / "receiver_outputs").glob("*.pt")):
+            tracker.log_artifact(path, artifact_path="receiver_outputs")
         tracker.flush_traces()
         tracker.end_run(status)
 
@@ -129,11 +167,39 @@ def main(argv=None):
         with tracked_model(directory, name, args.smoke) as tracker:
             model = ModelWrapper(name, device, model_dtype=torch.bfloat16)
             receiver = prepare_receiver_scoring(model)
+            tracker.log_params(
+                {
+                    "gpu": torch.cuda.get_device_name(device),
+                    "git_commit": git_commit,
+                    "torch_version": torch.__version__,
+                    "transformers_version": transformers.__version__,
+                }
+            )
             (directory / "resolved_config.json").write_text(
                 json.dumps(
                     {
-                        k: str(v) if isinstance(v, Path) else v
-                        for k, v in vars(args).items()
+                        **{
+                            k: str(v) if isinstance(v, Path) else v
+                            for k, v in vars(args).items()
+                        },
+                        "model_name": name,
+                        "task": "secret_digit",
+                        "method": "latent_mas",
+                        "latent_steps": 20,
+                        "seed": 42,
+                        "max_samples": 100,
+                        "backend": "transformers",
+                        "dtype": "bfloat16",
+                        "context_modes": ["latent_only"],
+                        "carrier_modes": ["latent_only"],
+                        "acquisition_conditions": ["own", "drop"],
+                        "save_hidden_states": False,
+                        "save_raw_cache": False,
+                        "latent_space_realign": False,
+                        "save_receiver_logits": True,
+                        "probe_sender_latents": True,
+                        "probe_prompt_templates": 20,
+                        "save_latent_states": True,
                     },
                     indent=2,
                 )
@@ -142,6 +208,8 @@ def main(argv=None):
             (directory / "receiver_input.json").write_text(
                 json.dumps(
                     {
+                        "prompt": receiver[2]["prompt"],
+                        "messages": receiver[2]["messages"],
                         "input_ids": receiver[0].cpu().tolist(),
                         "attention_mask": receiver[1].cpu().tolist(),
                     },
@@ -173,8 +241,12 @@ def main(argv=None):
             records = collect_trajectory(
                 model, selected, receiver, directory / "sample_results.jsonl", tracker
             )
+            (directory / "sample_results.json").write_text(json.dumps(records) + "\n")
             states = collect_sender_states(model, latent_steps=20, template_count=20)
             torch.save(states.payload(), directory / "sender_latent_states.pt")
+            (directory / "sender_probe_inputs.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in states.metadata) + "\n"
+            )
             (directory / "candidate_token_mapping.json").write_text(
                 json.dumps(receiver[2], indent=2) + "\n"
             )
@@ -200,6 +272,7 @@ def main(argv=None):
                         "sender_state_examples": 200,
                         "save_hidden_states": False,
                         "save_raw_cache": False,
+                        "save_receiver_logits": True,
                         "latent_space_realign": False,
                         "smoke": args.smoke,
                         "gpu": torch.cuda.get_device_name(device),

@@ -27,6 +27,7 @@ class SenderCacheBundle:
     prompt_len: int
     full_len: int
     build_latency_sec: float
+    prompt_input: dict[str, Any]
 
 
 def generate_secret_digit_samples(

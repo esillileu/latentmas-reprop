@@ -3,7 +3,7 @@
 import torch
 
 from ...domain.services.kv_cache import clone_past_kv, move_past_kv
-from .forward import build_sender_cache
+from .sender import build_sender_cache
 from .trajectory import acquisition_args, latent_prefix
 
 

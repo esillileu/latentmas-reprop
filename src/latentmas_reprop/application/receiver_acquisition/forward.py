@@ -15,48 +15,10 @@ from ...domain.services.kv_cache import (
     get_past_kv_num_layers,
     get_past_kv_sequence_length,
     move_past_kv,
-    retain_past_kv_prefix,
-    truncate_past_kv,
 )
-from ...domain.services.prompts import build_sender_messages
 from ...infrastructure.models.model_wrapper import ModelWrapper
-from .sampling import SecretDigitSample, SenderCacheBundle
+from .sampling import SecretDigitSample
 from .scoring import score_digit_logits
-
-
-def build_sender_cache(
-    model: ModelWrapper, args: Any, sample: SecretDigitSample
-) -> SenderCacheBundle:
-    """Run sender agent and construct full, prompt-only, and latent-only KV caches."""
-    _, ids, mask, _ = model.prepare_chat_batch(
-        [build_sender_messages(sample.digit)], add_generation_prompt=True
-    )
-    started = time.perf_counter()
-    full = model.generate_latent_batch(
-        ids, attention_mask=mask, latent_steps=args.latent_steps
-    )
-    latency = time.perf_counter() - started
-    prompt_len = int(mask.sum().item())
-    expected = prompt_len + args.latent_steps
-    if get_past_kv_sequence_length(full) != expected:
-        raise RuntimeError(
-            f"sender cache length mismatch: expected {expected}, got {get_past_kv_sequence_length(full)}"
-        )
-    full = move_past_kv(full, "cpu")
-    latent = truncate_past_kv(clone_past_kv(full), args.latent_steps)
-    prompt = retain_past_kv_prefix(clone_past_kv(full), prompt_len)
-    if get_past_kv_sequence_length(latent) != args.latent_steps:
-        raise RuntimeError("latent-only cache length mismatch")
-    if get_past_kv_sequence_length(prompt) != prompt_len:
-        raise RuntimeError("prompt-only cache length mismatch")
-    return SenderCacheBundle(
-        full=full,
-        prompt_only=prompt,
-        latent_only=latent,
-        prompt_len=prompt_len,
-        full_len=expected,
-        build_latency_sec=latency,
-    )
 
 
 def forward_receiver_observation(
@@ -72,8 +34,20 @@ def forward_receiver_observation(
     mapping: dict[str, Any],
     original_full_seq_len: int,
     tracker_port: ExperimentTrackerPort | None,
+    raw_logits: dict[str, torch.Tensor] | None = None,
 ) -> tuple[ReceiverAcquisitionRecord, Any]:
     """Execute a single receiver forward observation under a specified cache condition."""
+    active_ids = receiver_ids[0][receiver_mask[0].bool()].cpu().tolist()
+    receiver_input = {
+        "messages": mapping["messages"],
+        "prompt": mapping["prompt"],
+        "input_ids": receiver_ids[0].cpu().tolist(),
+        "attention_mask": receiver_mask[0].cpu().tolist(),
+        "tokens": model.tokenizer.convert_ids_to_tokens(active_ids),
+        "chat_template_kwargs": mapping["chat_template_kwargs"],
+        "answer_prefix": mapping["answer_prefix"],
+    }
+    raw_output = {}
     span_name = (
         f"receiver_forward_{condition}"
         if condition == "drop"
@@ -90,6 +64,7 @@ def forward_receiver_observation(
                 "condition": condition,
                 "latent_steps": args.latent_steps,
                 "original_full_seq_len": original_full_seq_len,
+                **receiver_input,
             },
         )
         if tracker_port
@@ -144,6 +119,9 @@ def forward_receiver_observation(
                 position_start=receiver_position_start,
             )
             state_hidden = state.hidden_states
+            logits_key = f"{mode}/{condition}/step_{args.latent_steps}"
+            if raw_logits is not None:
+                raw_logits[logits_key] = state.logits.detach().cpu().clone()
             scored = score_digit_logits(
                 state.logits, mapping, source.digit if source else None, target.digit
             )
@@ -159,10 +137,33 @@ def forward_receiver_observation(
                 }
                 for value, token_id in zip(top_values, top_ids, strict=True)
             ]
+            vocabulary_id = int(state.logits[0].argmax().item())
+            digit = str(scored["predicted_digit"])
+            digit_id = mapping["candidates"][digit]["contextual_token_id"]
+            raw_output = {
+                "type": "next_token_logits",
+                "digit_argmax": {
+                    "digit": int(digit),
+                    "token_id": digit_id,
+                    "text": model.tokenizer.decode([digit_id]),
+                },
+                "vocabulary_argmax": {
+                    "token_id": vocabulary_id,
+                    "text": model.tokenizer.decode([vocabulary_id]),
+                    "logit": float(state.logits[0, vocabulary_id].item()),
+                },
+                "logits_shape": list(state.logits.shape),
+                "logits_dtype": str(state.logits.dtype),
+                "logits_artifact": f"receiver_outputs/{target.sample_id}.pt"
+                if raw_logits is not None
+                else None,
+                "logits_key": logits_key if raw_logits is not None else None,
+            }
             if span is not None:
                 span.set_outputs(
                     scored
                     | {
+                        "raw_output": raw_output,
                         "cache_sequence_length": cache_seq_len,
                         "original_full_seq_len": original_full_seq_len,
                         "receiver_position_start": receiver_position_start,
@@ -209,6 +210,8 @@ def forward_receiver_observation(
             source_sample_index=source.sample_index if source else None,
             source_sample_key=source.sample_key if source else None,
             source_digit=source.digit if source else None,
+            receiver_input=receiver_input,
+            raw_output=raw_output,
             context_mode=mode,
             condition=condition,
             **values,

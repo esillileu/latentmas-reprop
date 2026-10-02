@@ -5,7 +5,7 @@ import csv
 import json
 from pathlib import Path
 
-from latentmas_reprop.application.receiver_acquisition.trajectory import (
+from latentmas_reprop.application.receiver_acquisition.trajectory_analysis import (
     summarize_trajectory,
 )
 

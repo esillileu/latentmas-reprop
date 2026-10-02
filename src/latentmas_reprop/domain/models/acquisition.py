@@ -14,6 +14,8 @@ class ReceiverAcquisitionRecord:
     source_sample_index: int | None
     source_sample_key: str | None
     source_digit: int | None
+    receiver_input: dict[str, Any]
+    raw_output: dict[str, Any]
     context_mode: str
     condition: str
     candidate_probabilities: dict[str, float]
