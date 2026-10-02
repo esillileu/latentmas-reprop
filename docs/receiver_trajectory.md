@@ -14,7 +14,7 @@ retained, with `original_full_seq_len = position_start = prompt_len+k`.
 Taking the final k positions directly from full20 would include future states.
 
 ```bash
-# Parity only on ten canonical representatives (one per digit)
+# Parity and steps 1..20 on ten canonical samples (one per digit), with full tracking
 just run-receiver-trajectory --smoke
 # Full collection on the local 8GB GPU
 just run-receiver-trajectory --model 0.6B
