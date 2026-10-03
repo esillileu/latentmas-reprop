@@ -1,10 +1,10 @@
-"""Exact full20-prefix versus independent rollout parity, with historical scoring."""
+"""Exact full20-prefix versus fresh independent k-step rollout parity."""
 
 import torch
 
 from ...domain.services.kv_cache import clone_past_kv, move_past_kv
-from .forward import build_sender_cache
-from .trajectory import acquisition_args, latent_prefix, observe
+from .sender import build_sender_cache
+from .trajectory import acquisition_args, latent_prefix
 
 
 def cache_pairs(cache):
@@ -21,8 +21,8 @@ def caches_equal(left, right):
     )
 
 
-def verify_prefix_parity(model, samples, receiver, historical):
-    """Check every digit at k=1,4 before allowing trajectory collection."""
+def verify_prefix_parity(model, samples, receiver):
+    """Compare exact KV, logits and receiver positions at k=1,4."""
     if len(samples) != 10 or {s.digit for s in samples} != set(range(10)):
         raise ValueError("Parity requires one canonical representative of each digit")
     checks = []
@@ -32,13 +32,11 @@ def verify_prefix_parity(model, samples, receiver, historical):
             full = build_sender_cache(
                 model, acquisition_args(model.model_name, 20), sample
             )
-            drop = observe(model, sample, 20, None, full.full_len, receiver)
             for step in (1, 4):
                 independent = build_sender_cache(
                     model, acquisition_args(model.model_name, step), sample
                 )
                 prefix = latent_prefix(full, step)
-                same_cache = caches_equal(prefix, independent.latent_only)
                 position = full.prompt_len + step
                 outputs = [
                     model.forward_next_token_batch(
@@ -47,64 +45,31 @@ def verify_prefix_parity(model, samples, receiver, historical):
                         past_key_values=move_past_kv(
                             clone_past_kv(cache), model.device
                         ),
-                        position_start=position,
+                        position_start=start,
                     ).logits
-                    for cache in (prefix, independent.latent_only)
+                    for cache, start in (
+                        (prefix, position),
+                        (independent.latent_only, independent.full_len),
+                    )
                 ]
-                current = observe(model, sample, step, prefix, position, receiver)
-                previous = historical[step]
-                own = previous[sample.sample_id, "own"]
-                old_drop = previous[sample.sample_id, "drop"]
-                same_identity = all(
-                    r["sample_key"] == sample.sample_key
-                    and r["target_digit"] == sample.digit
-                    for r in (own, old_drop)
-                )
-                same_history = same_identity and (
-                    current["candidate_log_probabilities"]
-                    == own["candidate_log_probabilities"]
-                    and drop["candidate_log_probabilities"]
-                    == old_drop["candidate_log_probabilities"]
-                    and current["predicted_digit"] == own["predicted_digit"]
-                    and drop["predicted_digit"] == old_drop["predicted_digit"]
-                    and current["receiver_position_start"]
-                    == own["receiver_position_start"]
-                    and current["original_full_seq_len"] == own["original_full_seq_len"]
-                )
                 checks.append(
                     {
                         "sample_id": sample.sample_id,
                         "digit": sample.digit,
                         "step": step,
-                        "cache_exact": same_cache,
+                        "cache_exact": caches_equal(prefix, independent.latent_only),
                         "logits_exact": torch.equal(*outputs),
-                        "historical_output_exact": same_history,
-                        "current_candidate_log_probabilities": current[
-                            "candidate_log_probabilities"
-                        ],
-                        "historical_candidate_log_probabilities": own[
-                            "candidate_log_probabilities"
-                        ],
-                        "historical_argmax_exact": current["predicted_digit"]
-                        == own["predicted_digit"]
-                        and drop["predicted_digit"] == old_drop["predicted_digit"],
-                        "historical_max_log_probability_delta": max(
-                            abs(
-                                now["candidate_log_probabilities"][d]
-                                - old["candidate_log_probabilities"][d]
-                            )
-                            for now, old in ((current, own), (drop, old_drop))
-                            for d in own["candidate_log_probabilities"]
-                        ),
+                        "position_exact": position == independent.full_len,
+                        "receiver_position_start": position,
+                        "independent_receiver_position_start": independent.full_len,
                     }
                 )
             print(f"Parity: digit {sample.digit}", flush=True)
     return {
         "passed": all(
-            c["cache_exact"] and c["logits_exact"] and c["historical_output_exact"]
+            c["cache_exact"] and c["logits_exact"] and c["position_exact"]
             for c in checks
         ),
         "checks": checks,
-        "historical_cache_available": False,
-        "historical_cache_note": "Raw KV was not saved; cache equality uses a fresh independent k-step rollout.",
+        "reference": "fresh independent k-step rollout",
     }

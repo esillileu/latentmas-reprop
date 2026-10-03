@@ -87,6 +87,10 @@ def validate_digit_candidates(
                 "prefix_unchanged": prefix_ok,
             }
     return {
+        "prompt": scoring_prompt,
+        "rendered_receiver_prompt": rendered_prompt,
+        "messages": build_receiver_messages(),
+        "chat_template_kwargs": {"enable_thinking": False},
         "candidates": mapping,
         "candidate_variants": variants,
         "answer_prefix": RECEIVER_ANSWER_PREFIX,

@@ -1,13 +1,16 @@
 """Evaluate full20 latent-only KV prefixes; BF16, parity-gated, no vector injection."""
 
 import argparse
-import csv
 import gc
 import json
+import tempfile
+import traceback
+from contextlib import contextmanager
 from pathlib import Path
 
 import torch
 import transformers
+from dotenv import load_dotenv
 
 from latentmas_reprop.application.receiver_acquisition.parity import (
     verify_prefix_parity,
@@ -20,79 +23,113 @@ from latentmas_reprop.application.receiver_acquisition.scoring import (
 )
 from latentmas_reprop.application.receiver_acquisition.trajectory import (
     collect_trajectory,
-    summarize_trajectory,
+)
+from latentmas_reprop.application.sender_probe import collect_sender_states
+from latentmas_reprop.domain.services.prompts.acquisition import (
+    CANDIDATE_DIGITS,
+    RECEIVER_ANSWER_PREFIX,
+    RECEIVER_PROMPT,
+    RECEIVER_PROMPT_TEMPLATE_VERSION,
+    SENDER_PROMPT_TEMPLATE,
+    SENDER_PROMPT_TEMPLATE_VERSION,
 )
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
 from latentmas_reprop.infrastructure.paths.resolver import get_git_commit_hash
+from latentmas_reprop.infrastructure.tracking import MLflowTracker
 
 
-def load_history(acquisition, reference_dir, model):
-    with (acquisition / "receiver_conditions.csv").open(newline="") as stream:
-        cells = list(csv.DictReader(stream))
-    history, sources = {}, {}
-    for step in (1, 4):
-        matches = [
-            c
-            for c in cells
-            if c["model"] == model
-            and c["latent_steps"] == str(step)
-            and c["condition"] == "drop"
-            and c["sample_count"] == "100"
-        ]
-        if len(matches) != 1:
-            raise ValueError(
-                f"Expected one canonical historical run for {model}, k={step}"
-            )
-        run_id = matches[0]["run_id"]
-        path = reference_dir / run_id / "sample_results.jsonl"
-        records = [json.loads(line) for line in path.read_text().splitlines() if line]
-        selected = [
-            r
-            for r in records
-            if r["condition"] == "drop"
-            or (r["condition"] == "own" and r["context_mode"] == "latent_only")
-        ]
-        if len(selected) != 200 or any(
-            r["model"] != model
-            or r["latent_steps"] != step
-            or r["error"]
-            or r["seed"] != 42
-            for r in selected
+@contextmanager
+def tracked_model(directory, name, smoke):
+    """Keep parity evidence and trajectories in a separate MLflow experiment."""
+    tracker = MLflowTracker()
+    tracker.start_run(
+        experiment_name="latentmas_receiver_trajectory",
+        run_name=f"{name.split('/')[-1]}-{'smoke' if smoke else 'steps-1-20'}",
+        tags={
+            "protocol": "receiver_acquisition",
+            "phase": "smoke" if smoke else "sweep",
+            "experiment_type": "receiver_acquisition",
+            "model": name,
+            "task": "secret_digit",
+            "method": "latent_mas",
+            "seed": "42",
+            "latent_steps": "20",
+        },
+    )
+    tracker.log_params(
+        {
+            "model": name,
+            "sender_latent_steps": 20,
+            "handoff_cuts": list(range(1, 21)),
+            "sample_count": 10 if smoke else 100,
+            "seed": 42,
+            "dtype": "bfloat16",
+            "condition": "latent_only/own + matched drop",
+            "smoke": smoke,
+            "task": "secret_digit",
+            "method": "latent_mas",
+            "backend": "transformers",
+            "device": "cuda",
+            "config_path": None,
+            "context_modes": "latent_only",
+            "carrier_modes": "latent_only",
+            "acquisition_conditions": "own,drop",
+            "candidate_digits": list(CANDIDATE_DIGITS),
+            "sender_prompt_template_version": SENDER_PROMPT_TEMPLATE_VERSION,
+            "sender_prompt_template": SENDER_PROMPT_TEMPLATE,
+            "receiver_prompt_template_version": RECEIVER_PROMPT_TEMPLATE_VERSION,
+            "receiver_prompt_template": RECEIVER_PROMPT,
+            "receiver_answer_prefix": RECEIVER_ANSWER_PREFIX,
+            "save_hidden_states": False,
+            "save_raw_cache": False,
+            "latent_space_realign": False,
+            "probe_sender_latents": True,
+            "probe_prompt_templates": 20,
+            "save_latent_states": True,
+            "save_receiver_logits": True,
+        }
+    )
+    status = "FAILED"
+    try:
+        yield tracker
+        status = "FINISHED"
+    except (Exception, KeyboardInterrupt):
+        tracker.log_params({"failure_traceback": traceback.format_exc()[:500]})
+        tracker.log_dict({"traceback": traceback.format_exc()}, "failure.json")
+        raise
+    finally:
+        for filename in (
+            "parity.json",
+            "sample_results.jsonl",
+            "sample_results.json",
+            "sender_contexts.jsonl",
+            "sender_probe_inputs.jsonl",
+            "sender_latent_states.pt",
+            "candidate_token_mapping.json",
+            "source.json",
+            "resolved_config.json",
+            "receiver_input.json",
         ):
-            raise ValueError(f"Invalid historical receiver run: {run_id}")
-        for r in selected:
-            if r["cache_present"] and r["cache_dtype"] != "torch.bfloat16":
-                raise ValueError("Historical handoff must use BF16")
-        history[step] = {(r["sample_id"], r["condition"]): r for r in selected}
-        if len(history[step]) != 200:
-            raise ValueError("Duplicate historical sample/condition")
-        sources[str(step)] = run_id
-    return history, sources
-
-
-def write_csv(path, rows):
-    with path.open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
+            path = directory / filename
+            if path.is_file():
+                tracker.log_artifact(path)
+        for path in sorted((directory / "receiver_outputs").glob("*.pt")):
+            tracker.log_artifact(path, artifact_path="receiver_outputs")
+        tracker.flush_traces()
+        tracker.end_run(status)
 
 
 def main(argv=None):
+    load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--smoke",
         action="store_true",
-        help="0.6B only; ten balanced representatives from the canonical 100 samples.",
+        help="0.6B steps 1..20 on ten balanced representatives from the canonical 100.",
     )
-    parser.add_argument("--model", choices=("0.6B", "4B", "8B", "all"))
-    parser.add_argument(
-        "--acquisition-dir", type=Path, default=Path("artifacts/receiver_acquisition")
-    )
-    parser.add_argument(
-        "--reference-dir", type=Path, default=Path(".cache/receiver_acquisition/mlflow")
-    )
-    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--model", choices=("0.6B", "4B", "8B", "14B", "all"))
     args = parser.parse_args(argv)
+    git_commit = get_git_commit_hash()
     if args.smoke and args.model not in (None, "0.6B"):
         parser.error("Local smoke is restricted to 0.6B")
     device = torch.device("cuda")
@@ -100,101 +137,160 @@ def main(argv=None):
         raise RuntimeError("This protocol requires a BF16-capable CUDA device")
     if (
         not args.smoke
+        and args.model != "0.6B"
         and torch.cuda.get_device_properties(device).total_memory < 30 * 1024**3
     ):
-        raise RuntimeError("Full trajectories require a 32GB GPU; use --smoke locally")
+        raise RuntimeError(
+            "4B/8B/14B trajectories require a 32GB GPU; use --model 0.6B locally"
+        )
     models = (
         ["0.6B"]
         if args.smoke
-        else ([args.model] if args.model not in (None, "all") else ["0.6B", "4B", "8B"])
+        else (
+            [args.model]
+            if args.model not in (None, "all")
+            else ["0.6B", "4B", "8B", "14B"]
+        )
     )
-    if models[0] != "0.6B":
-        gate = Path("artifacts/receiver_trajectory/Qwen_Qwen3-0.6B/parity.json")
-        evidence = json.loads(gate.read_text()) if gate.exists() else {}
-        if not evidence.get("passed") or any(
-            evidence.get(key) != value
-            for key, value in {
-                "gpu": torch.cuda.get_device_name(device),
-                "torch_version": torch.__version__,
-                "transformers_version": transformers.__version__,
-                "git_commit": get_git_commit_hash(),
-            }.items()
-        ):
-            raise ValueError(
-                "First run 0.6B parity on this execution environment using --model 0.6B"
-            )
     samples = generate_secret_digit_samples(100, 42)
     representatives = [
         next(s for s in samples if s.digit == digit) for digit in range(10)
     ]
-    output = args.output_dir or Path(
-        "artifacts/receiver_trajectory" + ("/smoke" if args.smoke else "")
-    )
-    with (args.acquisition_dir / "sender_probe_cells.csv").open(newline="") as stream:
-        probes = list(csv.DictReader(stream))
-    # Validate all historical inputs before loading any weights.
-    historical = {
-        m: load_history(args.acquisition_dir, args.reference_dir, f"Qwen/Qwen3-{m}")
-        for m in models
-    }
-    combined = []
     torch.manual_seed(42)
     for size in models:
         name = f"Qwen/Qwen3-{size}"
-        directory = output / name.replace("/", "_")
-        directory.mkdir(parents=True, exist_ok=True)
-        model = ModelWrapper(name, device, model_dtype=torch.bfloat16)
-        receiver = prepare_receiver_scoring(model)
-        history, sources = historical[size]
-        parity = verify_prefix_parity(model, representatives, receiver, history)
-        parity.update(
-            model=name,
-            dtype="bfloat16",
-            historical_runs=sources,
-            gpu=torch.cuda.get_device_name(device),
-            git_commit=get_git_commit_hash(),
-            torch_version=torch.__version__,
-            transformers_version=transformers.__version__,
-        )
-        (directory / "parity.json").write_text(json.dumps(parity, indent=2) + "\n")
-        if not parity["passed"]:
-            raise ValueError(
-                f"Exact parity failed; no trajectory was run. See {directory / 'parity.json'}"
-            )
-        selected = representatives if args.smoke else samples
-        records = collect_trajectory(
-            model, selected, receiver, directory / "sample_results.jsonl"
-        )
-        rows = summarize_trajectory(
-            records, probes, name, expected_samples=len(selected)
-        )
-        write_csv(directory / "trajectory.csv", rows)
-        (directory / "source.json").write_text(
-            json.dumps(
+        with (
+            tempfile.TemporaryDirectory(prefix="receiver-trajectory-") as temporary,
+            tracked_model(Path(temporary), name, args.smoke) as tracker,
+        ):
+            directory = Path(temporary)
+            model = ModelWrapper(name, device, model_dtype=torch.bfloat16)
+            receiver = prepare_receiver_scoring(model)
+            tracker.log_params(
                 {
-                    "model": name,
-                    "sample_count": len(selected),
-                    "seed": 42,
-                    "dtype": "bfloat16",
-                    "handoff": "full20[:prompt_len+k] then last k positions",
-                    "receiver_position_start": "prompt_len+k",
-                    "historical_runs": sources,
-                    "probe_run_id": rows[0]["probe_run_id"],
-                    "smoke": args.smoke,
                     "gpu": torch.cuda.get_device_name(device),
-                    "git_commit": get_git_commit_hash(),
-                },
-                indent=2,
+                    "git_commit": git_commit,
+                    "torch_version": torch.__version__,
+                    "transformers_version": transformers.__version__,
+                }
             )
-            + "\n"
-        )
-        combined.extend(rows)
+            (directory / "resolved_config.json").write_text(
+                json.dumps(
+                    {
+                        **{
+                            k: str(v) if isinstance(v, Path) else v
+                            for k, v in vars(args).items()
+                        },
+                        "model_name": name,
+                        "task": "secret_digit",
+                        "method": "latent_mas",
+                        "latent_steps": 20,
+                        "seed": 42,
+                        "max_samples": 10 if args.smoke else 100,
+                        "backend": "transformers",
+                        "dtype": "bfloat16",
+                        "context_modes": ["latent_only"],
+                        "carrier_modes": ["latent_only"],
+                        "acquisition_conditions": ["own", "drop"],
+                        "save_hidden_states": False,
+                        "save_raw_cache": False,
+                        "latent_space_realign": False,
+                        "save_receiver_logits": True,
+                        "probe_sender_latents": True,
+                        "probe_prompt_templates": 20,
+                        "save_latent_states": True,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            (directory / "receiver_input.json").write_text(
+                json.dumps(
+                    {
+                        "prompt": receiver[2]["prompt"],
+                        "messages": receiver[2]["messages"],
+                        "input_ids": receiver[0].cpu().tolist(),
+                        "attention_mask": receiver[1].cpu().tolist(),
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            parity = verify_prefix_parity(model, representatives, receiver)
+            parity.update(
+                model=name,
+                dtype="bfloat16",
+                gpu=torch.cuda.get_device_name(device),
+                git_commit=git_commit,
+                torch_version=torch.__version__,
+                transformers_version=transformers.__version__,
+            )
+            (directory / "parity.json").write_text(json.dumps(parity, indent=2) + "\n")
+            if not parity["passed"]:
+                raise ValueError(
+                    f"Exact parity failed; no trajectory was run. See {directory / 'parity.json'}"
+                )
+            tracker.log_metrics({"parity_passed": 1})
+            selected = representatives if args.smoke else samples
+            records = collect_trajectory(
+                model,
+                selected,
+                receiver,
+                directory / "sample_results.jsonl",
+                tracker,
+            )
+            (directory / "sample_results.json").write_text(json.dumps(records) + "\n")
+            states = collect_sender_states(model, latent_steps=20, template_count=20)
+            torch.save(states.payload(), directory / "sender_latent_states.pt")
+            (directory / "sender_probe_inputs.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in states.metadata) + "\n"
+            )
+            (directory / "candidate_token_mapping.json").write_text(
+                json.dumps(receiver[2], indent=2) + "\n"
+            )
+            (directory / "source.json").write_text(
+                json.dumps(
+                    {
+                        "model": name,
+                        "sample_count": len(selected),
+                        "seed": 42,
+                        "dtype": "bfloat16",
+                        "handoff": "full20[:prompt_len+k] then last k positions",
+                        "receiver_position_start": "prompt_len+k",
+                        "sender_prompt_template": SENDER_PROMPT_TEMPLATE,
+                        "sender_prompt_template_version": SENDER_PROMPT_TEMPLATE_VERSION,
+                        "receiver_prompt_template": RECEIVER_PROMPT,
+                        "receiver_prompt_template_version": RECEIVER_PROMPT_TEMPLATE_VERSION,
+                        "receiver_answer_prefix": RECEIVER_ANSWER_PREFIX,
+                        "backend": "transformers",
+                        "device": str(device),
+                        "transformers_version": transformers.__version__,
+                        "torch_version": torch.__version__,
+                        "sender_state_templates": 20,
+                        "sender_state_examples": 200,
+                        "save_hidden_states": False,
+                        "save_raw_cache": False,
+                        "save_receiver_logits": True,
+                        "latent_space_realign": False,
+                        "smoke": args.smoke,
+                        "gpu": torch.cuda.get_device_name(device),
+                        "git_commit": git_commit,
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            tracker.log_metrics(
+                {
+                    "count/observations": len(records),
+                    "count/sender_state_examples": len(states.labels),
+                }
+            )
+            del states, records
         del model, receiver
         gc.collect()
         torch.cuda.empty_cache()
-    if models == ["0.6B", "4B", "8B"]:
-        write_csv(output / "trajectory.csv", combined)
-    print(f"Saved receiver trajectory: {output}")
+    print("Receiver trajectory artifacts uploaded to MLflow.")
 
 
 if __name__ == "__main__":

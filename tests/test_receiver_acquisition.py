@@ -71,6 +71,8 @@ def _record(condition="own", mode="full", source_digit=2, source_prob=0.7):
         source_sample_index=1 if source_digit is not None else None,
         source_sample_key="source" if source_digit is not None else None,
         source_digit=source_digit,
+        receiver_input={},
+        raw_output={},
         context_mode=mode,
         condition=condition,
         candidate_probabilities=probs,
@@ -255,9 +257,13 @@ def test_latent_only_preserves_positions_unless_compact_debug(
     )
     cache = ((torch.zeros(1, 1, 4, 1), torch.zeros(1, 1, 4, 1)),)
     mapping = {
+        "messages": [],
+        "prompt": "receiver",
+        "chat_template_kwargs": {"enable_thinking": False},
+        "answer_prefix": "The number is ",
         "candidates": {
             str(digit): {"contextual_token_id": digit} for digit in range(10)
-        }
+        },
     }
     args = SimpleNamespace(
         save_hidden_states=False,

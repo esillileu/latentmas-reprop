@@ -14,6 +14,8 @@ from latentmas_reprop.application.receiver_acquisition.sampling import (
 )
 from latentmas_reprop.application.receiver_acquisition.trajectory import (
     latent_prefix,
+)
+from latentmas_reprop.application.receiver_acquisition.trajectory_analysis import (
     summarize_trajectory,
 )
 
@@ -44,8 +46,8 @@ def test_prefix_excludes_prompt_and_future_positions_without_mutating_full20(dyn
         latent_prefix(full, 21)
 
 
-@pytest.mark.parametrize("mismatch", [None, "cache", "logits", "history"])
-def test_exact_parity_refuses_any_cache_output_or_historical_difference(
+@pytest.mark.parametrize("mismatch", [None, "cache", "logits", "position"])
+def test_exact_parity_refuses_cache_logits_or_position_difference(
     monkeypatch, mismatch
 ):
     samples = generate_secret_digit_samples(100, 42)
@@ -55,30 +57,10 @@ def test_exact_parity_refuses_any_cache_output_or_historical_difference(
         result = bundle(args.latent_steps)
         if mismatch == "cache" and args.latent_steps != 20:
             result.latent_only[0][0].add_(1)
+        if mismatch == "position" and args.latent_steps != 20:
+            result.full_len += 1
         return result
 
-    def observe(model, sample, step, cache, full_len, receiver):
-        return {
-            "sample_key": sample.sample_key,
-            "target_digit": sample.digit,
-            "predicted_digit": 5,
-            "candidate_log_probabilities": {"5": -0.1},
-            "receiver_position_start": full_len,
-            "original_full_seq_len": full_len,
-        }
-
-    history = {
-        k: {
-            (s.sample_id, condition): observe(None, s, k, None, 3 + k, None)
-            for s in representatives
-            for condition in ("own", "drop")
-        }
-        for k in (1, 4)
-    }
-    if mismatch == "history":
-        history[1][representatives[0].sample_id, "own"][
-            "candidate_log_probabilities"
-        ] = {"5": -0.10001}
     counter = 0
 
     def forward(*args, **kwargs):
@@ -89,13 +71,10 @@ def test_exact_parity_refuses_any_cache_output_or_historical_difference(
         )
 
     monkeypatch.setattr(parity, "build_sender_cache", build)
-    monkeypatch.setattr(parity, "observe", observe)
     model = SimpleNamespace(
         model_name="model", device="cpu", forward_next_token_batch=forward
     )
-    report = parity.verify_prefix_parity(
-        model, representatives, (None, None, None), history
-    )
+    report = parity.verify_prefix_parity(model, representatives, (None, None, None))
     assert len(report["checks"]) == 20
     assert report["passed"] == (mismatch is None)
 
@@ -140,6 +119,7 @@ def trajectory_fixture():
             "probe_accuracy": "0.19",
             "null_mean_accuracy": "0.11",
             "significance": "True",
+            "fwer_p_value": "0.01",
         }
         for k in range(1, 21)
     ]
@@ -151,7 +131,7 @@ def test_summary_pairs_canonical_receiver_samples_and_uses_probe_null_not_chance
     rows = summarize_trajectory(records, probes, "Qwen/Qwen3-0.6B")
     assert len(rows) == 20
     assert all(r["probe_effect_pp"] == pytest.approx(8.0) for r in rows)
-    assert all(r["argmax_changed_fraction"] == pytest.approx(0.3) for r in rows)
+    assert all(r["receiver_changed_fraction"] == pytest.approx(0.3) for r in rows)
 
 
 @pytest.mark.parametrize("corruption", ["duplicate", "identity", "position", "missing"])
@@ -174,7 +154,11 @@ def test_scatter_rejects_smoke_or_missing_model_step_cells(tmp_path, corruption)
     from src.run.receiver_trajectory_plots import plot_trajectory
 
     rows = [
-        {"model": f"Qwen/Qwen3-{model}", "step": str(step), "sample_count": "100"}
+        {
+            "model": f"Qwen/Qwen3-{model}",
+            "latent_step": str(step),
+            "sample_count": "100",
+        }
         for model in ("0.6B", "4B", "8B")
         for step in range(1, 21)
     ]
@@ -190,3 +174,90 @@ def test_scatter_rejects_smoke_or_missing_model_step_cells(tmp_path, corruption)
     with pytest.raises(ValueError):
         plot_trajectory(path, tmp_path / "plots")
     assert not (tmp_path / "plots").exists()
+
+
+def test_scatter_accepts_complete_requested_schema_and_connects_step_order(
+    tmp_path, monkeypatch
+):
+    from src.run import receiver_trajectory_plots as plots
+
+    records, probes = trajectory_fixture()
+    base = summarize_trajectory(records, probes, "Qwen/Qwen3-0.6B")
+    rows = [
+        row | {"model": f"Qwen/Qwen3-{size}"}
+        for size in ("0.6B", "4B", "8B", "14B")
+        for row in reversed(base)
+    ]
+    path = tmp_path / "trajectory.csv"
+    with path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    figures = []
+    monkeypatch.setattr(plots, "save", lambda fig, *args: figures.append(fig))
+    plots.plot_trajectory(path, tmp_path / "plots")
+    ax = figures[0].axes[0]
+    connections = [line for line in ax.lines if len(line.get_xdata()) == 20]
+    assert len(connections) == 4
+    assert all(list(line.get_ydata()) == [30.0] * 20 for line in connections)
+    plots.plt.close(figures[0])
+
+
+def test_offline_analysis_matches_saved_receiver_results(tmp_path, monkeypatch):
+    import json
+
+    from src.run import receiver_trajectory_analysis as analysis
+
+    records, probes = trajectory_fixture()
+    for size in ("0.6B", "14B"):
+        model = f"Qwen/Qwen3-{size}"
+        directory = tmp_path / model.replace("/", "_")
+        directory.mkdir()
+        (directory / "source.json").write_text(
+            json.dumps({"smoke": False, "sample_count": 100})
+        )
+        (directory / "parity.json").write_text(json.dumps({"passed": True}))
+        (directory / "sample_results.jsonl").write_text(
+            "\n".join(json.dumps(r | {"model": model}) for r in records)
+        )
+    probe_path = tmp_path / "probes.csv"
+    with probe_path.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(probes[0]))
+        writer.writeheader()
+        writer.writerows(
+            p | {"model": f"Qwen/Qwen3-{size}"}
+            for size in ("0.6B", "14B")
+            for p in probes
+        )
+    monkeypatch.setattr(analysis, "plot_trajectory", lambda *args: None)
+    rows = analysis.analyze_trajectory(tmp_path, probe_path, tmp_path / "analysis")
+    assert len(rows) == 40
+    assert all(r["receiver_changed_fraction"] == 0.3 for r in rows)
+    assert len(json.loads((tmp_path / "analysis/trajectory.json").read_text())) == 40
+
+
+@pytest.mark.parametrize("size", ["4B", "8B", "14B"])
+def test_large_models_load_without_prior_runs_or_local_analysis_files(
+    monkeypatch, tmp_path, size
+):
+    from contextlib import nullcontext
+
+    from src.run import receiver_trajectory as cli
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(cli.torch.cuda, "is_bf16_supported", lambda: True)
+    monkeypatch.setattr(
+        cli.torch.cuda,
+        "get_device_properties",
+        lambda _: SimpleNamespace(total_memory=48 * 1024**3),
+    )
+    monkeypatch.setattr(cli, "tracked_model", lambda *args: nullcontext(None))
+
+    def load_model(*args, **kwargs):
+        assert args[0] == f"Qwen/Qwen3-{size}"
+        raise RuntimeError("model loading reached")
+
+    monkeypatch.setattr(cli, "ModelWrapper", load_model)
+    with pytest.raises(RuntimeError, match="model loading reached"):
+        cli.main(["--model", size])

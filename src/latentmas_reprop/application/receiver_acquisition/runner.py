@@ -9,8 +9,9 @@ from tqdm import tqdm
 from ...domain.models import ReceiverAcquisitionRecord
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.models.model_wrapper import ModelWrapper
-from .forward import build_sender_cache, forward_receiver_observation
+from .forward import forward_receiver_observation
 from .sampling import SecretDigitSample, SenderCacheBundle
+from .sender import build_sender_cache
 
 
 def _resolve_condition_cache(
@@ -86,6 +87,7 @@ def run_acquisition_loop(
                         "sample_id": target.sample_id,
                         "digit": target.digit,
                         "latent_steps": args.latent_steps,
+                        **target_bundle.prompt_input,
                     },
                 ) as span:
                     if span is not None:
