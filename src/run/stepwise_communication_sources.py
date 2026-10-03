@@ -214,7 +214,13 @@ class SavedRunReader:
 
 def load_inputs(client, probe_ids, sweep_ids, independent_ids):
     """Download each selected artifact afresh into temporary storage, with no fallback."""
-    for ids, count in ((probe_ids, 3), (sweep_ids, 3), (independent_ids, 9)):
+    if len(sweep_ids) not in (3, 4):
+        raise ValueError("Expected three or four receiver sweeps")
+    for ids, count in (
+        (probe_ids, len(sweep_ids)),
+        (sweep_ids, len(sweep_ids)),
+        (independent_ids, 12 if len(independent_ids) == 12 else 9),
+    ):
         if len(ids) != count or len(set(ids)) != count:
             raise ValueError(f"Expected {count} unique explicit MLflow run IDs")
     with tempfile.TemporaryDirectory(prefix="communication-inputs-") as temporary:

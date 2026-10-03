@@ -22,7 +22,7 @@ class SavedClient:
             "independent": "latentmas_receiver_acquisition",
         }
         self.probe_ids, self.sweep_ids, self.independent_ids = [], [], []
-        for index, model in enumerate(analysis.MODELS):
+        for index, model in enumerate(analysis.MODELS[:3]):
             probe_id, sweep_id = f"probe-{index}", f"sweep-{index}"
             self.probe_ids.append(probe_id)
             self.sweep_ids.append(sweep_id)

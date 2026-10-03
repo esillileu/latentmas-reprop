@@ -153,10 +153,10 @@ Actual prompt text and full receiver logits are also recorded explicitly.
 Existing completed runs lack any data they did not originally capture; missing
 full logits or real trace contents cannot be invented retrospectively.
 
-## Strict three-model communication analysis
+## Communication analysis across models
 
 `just analyze-stepwise-communication` reads only MLflow run artifacts for
-Qwen3-0.6B, 4B and 8B, with steps 1..20. MLflow is the sole source of truth;
+Qwen3-0.6B, 4B, 8B and optionally 14B, with steps 1..20. MLflow is the sole source of truth;
 there are no local CSV input options, persistent input cache, or local fallback.
 `MLFLOW_TRACKING_URI` (loaded from `.env`) or `--tracking-uri` is required.
 Downloads are temporary and removed after the saved results have been read.
@@ -191,16 +191,18 @@ Inputs must be FINISHED runs in their respective MLflow experiments:
 
 Missing/duplicate model-step cells, incomplete samples, invalid identities or
 handoff positions, missing metrics and nonfinite values raise errors. No cells
-are silently dropped or pooled. Exactly 60 final metric rows and nine parity
-rows are required. Parity compares the changed fraction used in the scatter;
+are silently dropped or pooled. Three models require 60 metric rows; adding 14B requires 80.
+Parity has three rows per model at 1/4/20. With no 14B independent runs,
+its three parity rows explicitly report `not_available` with empty comparison
+values; the other nine comparisons remain mandatory. Parity compares the changed fraction used in the scatter;
 it does not claim full-logit equality against the historical independent runs.
 A mismatch saves the comparison tables to a FAILED analysis run before raising
-an error; plots are generated only when all nine metrics match exactly.
+an error; plots are generated only when all available comparisons match exactly.
 
 Derived artifacts are uploaded under `communication/` in a new
 `latentmas_receiver_trajectory` run tagged `phase=analysis`:
 
-- `stepwise_communication_metrics.csv`: the exact 60 rows used by every plot,
+- `stepwise_communication_metrics.csv`: the exact 60 or 80 rows used by every plot,
   including effect in percentage points, receiver changed percentage and
   significance derived directly from FWER p < 0.05.
 - `stepwise_receiver_parity.csv`: independent/sweep changed fractions,
@@ -211,12 +213,12 @@ Derived artifacts are uploaded under `communication/` in a new
 - `stepwise_communication_diagnostics.png` / `.pdf`: per-model unsmoothed
   step curves for probe effect and receiver changed percentage. All model panels
   share step limits/ticks; probe effect and receiver change use the same
-  measurement limits/ticks as the scatter. Probe limits span all 60 effects
+  measurement limits/ticks as the scatter. Probe limits span all plotted effects
   with 2 pp ticks; receiver ticks are 0..100% in 20% increments.
 - `source_runs.json`: all input run IDs and artifact paths for reproducibility.
 
 `--output-dir` optionally exports copies of these derived artifacts locally;
-those files are never analysis inputs. The 60 points are not treated as iid
+those files are never analysis inputs. The plotted points are not treated as iid
 observations. The figure shows whether the two trajectories separate under
 different conditions, without a test claiming absence of correlation.
 
@@ -225,3 +227,5 @@ receiver observations. Their receiver parity checks do not validate sender
 provenance, and those figures are not a same-sweep analysis. The current
 communication command rejects those inputs; regenerate each sender probe from
 its selected sweep before producing the communication figures.
+
+Latest same-sweep 80-row analysis: [MLflow run](https://esillileu-server.tail4941d3.ts.net/mlflow-cua/#/experiments/13/runs/f32d645e87274edfbfd594f8cb4316e5).

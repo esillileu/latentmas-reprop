@@ -9,7 +9,7 @@ from src.run import stepwise_communication_analysis as analysis
 
 def inputs():
     probes, sweep, independent = [], [], []
-    for model in analysis.MODELS:
+    for model in analysis.MODELS[:3]:
         for step in range(1, 21):
             probes.append(
                 {
@@ -131,3 +131,19 @@ def test_artifacts_use_exact_final_rows_and_plot_has_no_default_annotations(
     )
     for fig in figures:
         analysis.plt.close(fig)
+
+
+def test_four_models_include_explicit_unavailable_14b_parity():
+    probes, sweep, independent = inputs()
+    model = analysis.MODELS[-1]
+    probes.extend(row | {"model": model} for row in list(probes[:20]))
+    sweep.extend(row | {"model": model} for row in list(sweep[:20]))
+    metrics = analysis.communication_metrics(probes, sweep)
+    parity = analysis.receiver_parity(metrics, independent)
+    assert len(metrics) == 80 and len(parity) == 12
+    assert sum(row["matches"] is True for row in parity) == 9
+    missing = [row for row in parity if row["model"] == model]
+    assert len(missing) == 3
+    assert all(
+        row["status"] == "not_available" and row["matches"] is None for row in missing
+    )

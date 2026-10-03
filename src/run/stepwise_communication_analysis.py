@@ -11,8 +11,8 @@ from pathlib import Path
 
 from .presentation_plots import STYLE, plt, save
 
-MODELS = ("Qwen/Qwen3-0.6B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B")
-COLORS = ("#7B3294", "#0072B2", "#D55E00")
+MODELS = ("Qwen/Qwen3-0.6B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B", "Qwen/Qwen3-14B")
+COLORS = ("#7B3294", "#0072B2", "#D55E00", "#009E73")
 COLUMNS = (
     "model",
     "latent_step",
@@ -43,9 +43,13 @@ def number(row, field):
     return value
 
 
+def models_in(rows):
+    return MODELS if any(row["model"] == MODELS[-1] for row in rows) else MODELS[:3]
+
+
 def grid(rows, step_field, steps, source):
     cells = {}
-    expected = {(model, step) for model in MODELS for step in steps}
+    expected = {(model, step) for model in models_in(rows) for step in steps}
     for row in rows:
         try:
             key = (row["model"], int(row[step_field]))
@@ -64,7 +68,6 @@ def grid(rows, step_field, steps, source):
 
 
 def communication_metrics(probes, sweep):
-    """Join full20 post-realignment probes to the complete three-model sweep."""
     selected = [
         row
         for row in probes
@@ -80,23 +83,17 @@ def communication_metrics(probes, sweep):
         p_value = number(probe, "fwer_p_value")
         changed = number(sweep_grid[key], "receiver_changed_fraction")
         rows.append(
-            dict(
-                zip(
-                    COLUMNS,
-                    (
-                        key[0],
-                        key[1],
-                        accuracy,
-                        null,
-                        100 * (accuracy - null),
-                        p_value,
-                        p_value < 0.05,
-                        changed,
-                        100 * changed,
-                    ),
-                    strict=True,
-                )
-            )
+            {
+                "model": key[0],
+                "latent_step": key[1],
+                "probe_accuracy": accuracy,
+                "probe_null_mean": null,
+                "probe_effect_pp": 100 * (accuracy - null),
+                "probe_fwer_p": p_value,
+                "probe_significant": p_value < 0.05,
+                "receiver_changed_fraction": changed,
+                "receiver_changed_pct": 100 * changed,
+            }
         )
     return sorted(
         rows, key=lambda row: (MODELS.index(row["model"]), row["latent_step"])
@@ -110,25 +107,32 @@ def receiver_parity(metrics, independent):
     result = []
     for row in metrics:
         key = (row["model"], row["latent_step"])
-        if key not in cells:
+        if key[1] not in (1, 4, 20):
             continue
-        original = number(cells[key], "argmax_changed_fraction")
+        original = (
+            number(cells[key], "argmax_changed_fraction") if key in cells else None
+        )
         sweep = row["receiver_changed_fraction"]
         result.append(
             {
                 "model": key[0],
                 "latent_step": key[1],
-                "independent_run_id": cells[key].get("run_id", ""),
+                "independent_run_id": cells[key].get("run_id", "")
+                if key in cells
+                else "",
                 "independent_receiver_changed_fraction": original,
                 "sweep_receiver_changed_fraction": sweep,
-                "difference": sweep - original,
-                "matches": sweep == original,
+                "difference": sweep - original if original is not None else None,
+                "matches": sweep == original if original is not None else None,
+                "status": "checked" if original is not None else "not_available",
             }
         )
     return result
 
 
 def plot_metrics(rows, output, annotate=False):
+    models = models_in(rows)
+    colors = COLORS[: len(models)]
     effects = [row["probe_effect_pp"] for row in rows]
     signal_start = 2 * math.floor(min(0, min(effects)) / 2)
     signal_end = 2 * math.ceil(max(0, max(effects)) / 2)
@@ -138,7 +142,7 @@ def plot_metrics(rows, output, annotate=False):
     receiver_ticks = range(0, 101, 20)
     with plt.rc_context(STYLE):
         fig, ax = plt.subplots(figsize=(12, 7), layout="constrained")
-        for model, color in zip(MODELS, COLORS, strict=True):
+        for model, color in zip(models, colors, strict=True):
             cells = [row for row in rows if row["model"] == model]
             xs = [row["probe_effect_pp"] for row in cells]
             ys = [row["receiver_changed_pct"] for row in cells]
@@ -178,13 +182,18 @@ def plot_metrics(rows, output, annotate=False):
         ax.xaxis.label.set_fontsize(18)
         ax.yaxis.label.set_fontsize(16)
         ax.grid(False)
-        ax.legend(frameon=False, ncol=3, fontsize=14)
+        ax.legend(frameon=False, ncol=len(models), fontsize=14)
         save(fig, output, "stepwise_communication_scatter")
     with plt.rc_context({"font.size": 10}):
         fig, axes = plt.subplots(
-            2, 3, figsize=(14, 7), layout="constrained", sharex=True, sharey="row"
+            2,
+            len(models),
+            figsize=(4.7 * len(models), 7),
+            layout="constrained",
+            sharex=True,
+            sharey="row",
         )
-        for column, (model, color) in enumerate(zip(MODELS, COLORS, strict=True)):
+        for column, (model, color) in enumerate(zip(models, colors, strict=True)):
             cells = [row for row in rows if row["model"] == model]
             for index, field in enumerate(("probe_effect_pp", "receiver_changed_pct")):
                 ax = axes[index, column]
@@ -214,7 +223,7 @@ def analyze(probes, sweep, independent, output, annotate=False):
     output.mkdir(parents=True, exist_ok=True)
     write_csv(output / "stepwise_communication_metrics.csv", rows, COLUMNS)
     write_csv(output / "stepwise_receiver_parity.csv", parity)
-    if not all(row["matches"] for row in parity):
+    if any(row["matches"] is False for row in parity):
         raise ValueError(
             f"Receiver metric parity failed; inspect {output / 'stepwise_receiver_parity.csv'}"
         )
@@ -260,19 +269,13 @@ def main(argv=None):
     run_id = run.info.run_id
     with tempfile.TemporaryDirectory(prefix="communication-output-") as temporary:
         output = Path(temporary)
-        output.mkdir(parents=True, exist_ok=True)
-        (output / "source_runs.json").write_text(
-            json.dumps(
-                {
-                    "probe_run_ids": args.probe_run_ids,
-                    "sweep_run_ids": args.sweep_run_ids,
-                    "independent_run_ids": args.independent_run_ids,
-                    "inputs": provenance,
-                },
-                indent=2,
-            )
-            + "\n"
-        )
+        sources = {
+            "probe_run_ids": args.probe_run_ids,
+            "sweep_run_ids": args.sweep_run_ids,
+            "independent_run_ids": args.independent_run_ids,
+            "inputs": provenance,
+        }
+        (output / "source_runs.json").write_text(json.dumps(sources, indent=2) + "\n")
         status = "FAILED"
         try:
             analyze(probes, sweep, independent, output, args.annotate_steps)
