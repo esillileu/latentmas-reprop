@@ -1,8 +1,6 @@
 """Draw presentation figures from saved analysis and supplied data; no inference."""
 
 import argparse
-import csv
-import json
 from pathlib import Path
 
 import matplotlib
@@ -11,14 +9,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+from .receiver_budget_data import percent, read_csv, unique_grid
+from .receiver_budget_plots import plot_budget, read_budget_curves
 from .secret_digit_plots import create_digit_aspects_figure
 
-BUDGETS = (64, 128, 256, 512, 1024)
-CONDITIONS = (
-    ("matched", "Matched", "#0072B2", "o", "-"),
-    ("mismatched", "Mismatched", "#D55E00", "s", "--"),
-    ("no_handoff", "No Handoff", "#666666", "^", ":"),
-)
 STYLE = {
     "font.size": 20,
     "axes.titlesize": 26,
@@ -33,31 +27,6 @@ STYLE = {
     "savefig.dpi": 300,
     "pdf.fonttype": 42,
 }
-
-
-def read_csv(path: Path) -> list[dict[str, str]]:
-    with path.open(newline="", encoding="utf-8") as stream:
-        return list(csv.DictReader(stream))
-
-
-def unique_grid(rows, key, expected, source):
-    """Refuse missing/duplicate cells instead of pooling distinct runs."""
-    cells = {}
-    for row in rows:
-        cell = key(row)
-        if cell in cells:
-            raise ValueError(f"Duplicate cell {cell!r} in {source}")
-        cells[cell] = row
-    if set(cells) != set(expected):
-        raise ValueError(f"Expected cells {expected!r} in {source}; got {list(cells)}")
-    return cells
-
-
-def percent(row, field):
-    value = float(row[field])
-    if not 0 <= value <= 1:
-        raise ValueError(f"Invalid {field}: {row[field]!r}")
-    return 100 * value
 
 
 def digit_rows(path):
@@ -85,25 +54,7 @@ def prepare_inputs(acquisition, compute):
         receiver_conditions,
         receiver_path,
     )
-    curves = {}
-    for model in ("4B", "14B"):
-        path = compute / f"Qwen_Qwen3-{model}" / "budget_curves.csv"
-        source = json.loads(path.with_name("source.json").read_text())
-        if source["model"] != f"Qwen/Qwen3-{model}":
-            raise ValueError(f"Unexpected model provenance in {path.parent}")
-        curves[model] = unique_grid(
-            [
-                r
-                for r in read_csv(path)
-                if r["upstream_steps"] == "20"
-                and r["receiver_budget"] in {str(b) for b in BUDGETS}
-                and r["handoff_condition"] in {c[0] for c in CONDITIONS}
-            ],
-            lambda r: (r["handoff_condition"], int(r["receiver_budget"])),
-            [(c[0], b) for c in CONDITIONS for b in BUDGETS],
-            path,
-        )
-    return probe, receiver, curves
+    return probe, receiver, read_budget_curves(compute)
 
 
 def save(fig, output, name):
@@ -176,46 +127,6 @@ def plot_receiver(receiver, output):
     save(fig, output, "secret_digit_receiver")
 
 
-def plot_budget(curves, output):
-    fig, axes = plt.subplots(1, 2, figsize=(16, 8), sharey=True)
-    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.16, top=0.80, wspace=0.16)
-    for ax, model in zip(axes, ("4B", "14B"), strict=True):
-        for condition, label, color, marker, linestyle in CONDITIONS:
-            rows = [curves[model][condition, budget] for budget in BUDGETS]
-            values = [percent(r, "accuracy") for r in rows]
-            ax.plot(
-                BUDGETS,
-                values,
-                color=color,
-                marker=marker,
-                markersize=11,
-                linewidth=4,
-                linestyle=linestyle,
-                label=label,
-            )
-        ax.axhline(50, color="#999999", linestyle="--", linewidth=1.8)
-        ax.set_xscale("log", base=2)
-        ax.set_xticks(BUDGETS, [str(b) for b in BUDGETS])
-        ax.set_yticks(range(0, 101, 20))
-        ax.set(title=model, xlabel="Receiver reasoning budget", ylim=(0, 100))
-        ax.tick_params(labelleft=True)
-        ax.grid(axis="y", alpha=0.18)
-    axes[0].set_ylabel("GSM8K accuracy (%)")
-    fig.suptitle("Receiver budget · 20 upstream steps", fontsize=28, y=0.98)
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 0.92),
-        ncol=3,
-        frameon=False,
-        prop={"size": 22, "weight": "bold"},
-        handlelength=3,
-    )
-    save(fig, output, "receiver_budget_4b_14b")
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -227,7 +138,15 @@ def main(argv=None):
     parser.add_argument(
         "--output-dir", type=Path, default=Path("artifacts/presentation")
     )
+    parser.add_argument("--budget-only", action="store_true")
+    parser.add_argument("--sample-count", type=int, default=None)
     args = parser.parse_args(argv)
+    if args.budget_only:
+        curves = read_budget_curves(args.compute_dir, args.sample_count)
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        with plt.rc_context(STYLE):
+            plot_budget(curves, args.output_dir)
+        return
     probe, receiver, curves = prepare_inputs(args.acquisition_dir, args.compute_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     with plt.rc_context(STYLE):
