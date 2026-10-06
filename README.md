@@ -65,7 +65,7 @@ just analyze-sender-probe \
   --source-config configs/lmas/secret_digit/preflight.yaml
 ```
 
-Generate presentation PNGs (300 dpi) and PDFs from existing analysis CSVs:
+Generate presentation figures from saved analysis (300-dpi PNG; budget figures also SVG, secret-digit figures also PDF):
 
 ```bash
 just plot-presentation
