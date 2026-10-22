@@ -111,19 +111,6 @@ class BenchmarkUseCase:
         for offset, res in enumerate(results):
             preds.append(res)
             problem_idx = batch_start + offset + 1
-            print(f"\n==================== Problem #{problem_idx} ====================")
-            print("Question:\n" + res.get("question", "").strip())
-            for a in res.get("agents", []):
-                name, role = a.get("name", "Agent"), a.get("role", "")
-                print(f"----- Agent: {name} ({role}) -----")
-                print("[To Tokenize]\n" + a.get("input", "").rstrip())
-                if a.get("latent_steps") is not None:
-                    print(f"[Latent Steps]\n{a['latent_steps']}")
-                print("[Output]\n" + a.get("output", "").rstrip())
-                print("----------------------------------------------")
-            print(
-                f"Result: Pred={res.get('prediction')} | Gold={res.get('gold')} | OK={res.get('correct')}"
-            )
             trace_benchmark_sample(self.tracker_port, args, problem_idx, res)
 
         processed += len(results)
