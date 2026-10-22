@@ -45,11 +45,15 @@ class BenchmarkRunStore:
             records.append(record)
         return records
 
-    def is_complete(self) -> bool:
+    def is_complete(self, target_samples: int | None = None) -> bool:
+        records = self.read_records()
+        if not records:
+            return False
+        if target_samples is not None:
+            return len(records) >= target_samples and target_samples > 0
         summary = self.read_summary()
         if not summary or summary.get("status") != "complete":
             return False
-        records = self.read_records()
         metrics = summary.get("metrics") or {}
         return (
             summary.get("sample_count") == len(records)
@@ -95,15 +99,40 @@ class BenchmarkRunStore:
         write_json(temporary, payload)
         temporary.replace(self.summary_path)
 
-    def load_finished(self) -> tuple[BenchmarkMetrics, list[dict[str, Any]]]:
+    def load_finished(
+        self, target_samples: int | None = None
+    ) -> tuple[BenchmarkMetrics, list[dict[str, Any]]]:
         summary = self.read_summary()
-        if summary is None:
-            raise FileNotFoundError(f"No summary for run {self.run_id}")
+        records = self.read_records()
+        if not records:
+            raise FileNotFoundError(f"No records found for run {self.run_id}")
+        if target_samples is not None and len(records) >= target_samples:
+            records = records[:target_samples]
         known = {field.name for field in fields(BenchmarkMetrics)}
-        metrics = BenchmarkMetrics(
-            **{key: value for key, value in summary["metrics"].items() if key in known}
-        )
-        predictions = [_without_sample_key(record) for record in self.read_records()]
+        if summary is not None:
+            metrics_dict = dict(summary.get("metrics") or {})
+            if target_samples is not None and len(records) != summary.get("sample_count"):
+                correct = sum(1 for r in records if r.get("correct", False))
+                metrics_dict["correct"] = correct
+                metrics_dict["total"] = len(records)
+                metrics_dict["max_samples"] = len(records)
+                metrics_dict["accuracy"] = correct / max(1, len(records))
+            metrics = BenchmarkMetrics(
+                **{key: value for key, value in metrics_dict.items() if key in known}
+            )
+        else:
+            correct = sum(1 for r in records if r.get("correct", False))
+            metrics = BenchmarkMetrics(
+                method="",
+                model="",
+                split="",
+                seed=0,
+                max_samples=len(records),
+                accuracy=correct / max(1, len(records)),
+                correct=correct,
+                total=len(records),
+            )
+        predictions = [_without_sample_key(record) for record in records]
         return metrics, predictions
 
 

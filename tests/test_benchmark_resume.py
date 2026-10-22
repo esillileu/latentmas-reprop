@@ -42,7 +42,9 @@ def test_run_id_separates_steps_seed_and_dtype():
     assert base != build_run_id(_args(latent_steps=40), "float16")
     assert base != build_run_id(_args(seed=0), "float16")
     assert base != build_run_id(_args(), "bfloat16")
-    assert base != build_run_id(_args(max_samples=5), "float16")
+    # max_samples and generate_bs should share the same run_id for seamless resumption
+    assert base == build_run_id(_args(max_samples=5), "float16")
+    assert base == build_run_id(_args(generate_bs=4), "float16")
 
 
 class _Dataset:

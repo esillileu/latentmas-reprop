@@ -60,9 +60,11 @@ def _reuse_completed_benchmark(
     selected = resolve_model_dtype(device)
     run_id = build_run_id(args, dtype_name(selected))
     store = BenchmarkRunStore(DEFAULT_CACHE_MANAGER, run_id)
-    if not store.is_complete():
+    requested_max_samples = int(getattr(args, "max_samples", -1))
+    target_samples = None if requested_max_samples == -1 else requested_max_samples
+    if not store.is_complete(target_samples):
         return None
-    metrics, preds = store.load_finished()
+    metrics, preds = store.load_finished(target_samples)
     print(f"Reusing completed run {run_id}")
     if getattr(args, "print_summary", False):
         print(json.dumps(metrics.to_dict(), ensure_ascii=False))

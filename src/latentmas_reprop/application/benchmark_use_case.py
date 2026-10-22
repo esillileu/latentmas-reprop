@@ -139,9 +139,15 @@ class BenchmarkUseCase:
         store = BenchmarkRunStore(self.cache_port, run_id)
         start_benchmark_tracker(self.tracker_port, args)
 
-        if store.is_complete():
+        dataset = list(self.dataset_port.load(task=args.task, split=args.split))
+        target = (
+            len(dataset) if requested_max_samples == -1 else requested_max_samples
+        )
+        target = min(target, len(dataset))
+
+        if store.is_complete(target):
             print(f"Reusing completed run {run_id}")
-            metrics, predictions = store.load_finished()
+            metrics, predictions = store.load_finished(target)
             save_benchmark_artifacts(
                 self.cache_port,
                 self.tracker_port,
@@ -154,11 +160,6 @@ class BenchmarkUseCase:
 
         try:
             method = self.create_method(model, args)
-            dataset = list(self.dataset_port.load(task=args.task, split=args.split))
-            target = (
-                len(dataset) if requested_max_samples == -1 else requested_max_samples
-            )
-            target = min(target, len(dataset))
             selected = dataset[:target]
             done = store.completed_keys()
             pending = [
