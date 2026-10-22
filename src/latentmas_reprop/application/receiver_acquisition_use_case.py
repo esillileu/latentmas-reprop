@@ -32,6 +32,7 @@ from .receiver_acquisition.sampling import (
     pair_different_digit_sources,
 )
 from .receiver_acquisition.scoring import (
+    prepare_receiver_scoring,
     score_digit_logits,
     validate_digit_candidates,
 )
@@ -102,19 +103,7 @@ class ReceiverAcquisitionUseCase:
                 },
             )
         try:
-            receiver_prompts, _, _, _ = model.prepare_chat_batch(
-                [build_receiver_messages()],
-                add_generation_prompt=True,
-                chat_template_kwargs={"enable_thinking": False},
-            )
-            mapping = validate_digit_candidates(model, receiver_prompts[0])
-            scoring_input = model.tokenizer(
-                receiver_prompts[0] + RECEIVER_ANSWER_PREFIX,
-                return_tensors="pt",
-                add_special_tokens=False,
-            )
-            receiver_ids = scoring_input["input_ids"].to(model.device)
-            receiver_mask = scoring_input["attention_mask"].to(model.device)
+            receiver_ids, receiver_mask, mapping = prepare_receiver_scoring(model)
             if self.tracker_port:
                 self.tracker_port.log_params(
                     {

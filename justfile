@@ -59,6 +59,18 @@ analyze-handoff *args:
 analyze-receiver *args:
     uv run python -m src.run.receiver_analysis {{args}}
 
+# Presentation PNG/PDF figures from existing analysis CSVs (no inference)
+plot-presentation *args:
+    uv run --frozen python -m src.run.presentation_plots {{args}}
+
+# BF16 latent-only KV trajectories; full execution requires a 32GB GPU
+run-receiver-trajectory *args:
+    uv run --frozen python -m src.run.receiver_trajectory {{args}}
+
+# Read-only 60-point scatter from completed receiver trajectories
+plot-receiver-trajectory *args:
+    uv run --frozen python -m src.run.receiver_trajectory_plots {{args}}
+
 # Run test suite
 test *args:
     uv run pytest {{args}}
@@ -85,3 +97,11 @@ run-receiver-compute-preflight *args:
 
 analyze-receiver-compute-preflight *args:
     uv run python -m src.run.compute_preflight_analysis {{args}}
+
+# Analyze saved secret-digit trajectories without inference
+analyze-receiver-trajectory *args:
+    uv run --frozen python -m src.run.receiver_trajectory_analysis {{args}}
+
+# Strict offline 60-cell communication metrics, parity table and plots
+analyze-stepwise-communication *args:
+    uv run --frozen python -m src.run.stepwise_communication_analysis {{args}}

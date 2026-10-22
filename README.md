@@ -65,6 +65,27 @@ just analyze-sender-probe \
   --source-config configs/lmas/secret_digit/preflight.yaml
 ```
 
+Generate presentation PNGs (300 dpi) and PDFs from existing analysis CSVs:
+
+```bash
+just plot-presentation
+```
+
+This reads local artifacts only and writes to `artifacts/presentation/`.
+See [presentation plots](docs/presentation_plots.md) for required inputs and sources.
+
+For parity-checked stepwise latent-only KV receiver evaluation and the stepwise
+scatter, see [receiver trajectory](docs/receiver_trajectory.md). Run 0.6B on the local 8GB GPU with `just run-receiver-trajectory --model 0.6B`.
+4B/8B/14B require a larger BF16 GPU (32GB minimum; 14B has little headroom there).
+All sweeps check exact KV/logit parity against freshly generated independent runs.
+Collection requires no local historical or analysis artifacts. Collection saves receiver records and
+raw sender states. Probe fitting and the communication scatter run later through
+`just analyze-sender-probe --source-run-id SWEEP_RUN_ID` and
+`just analyze-stepwise-communication`. Sweep-derived probes are logged in the
+same `latentmas_receiver_trajectory` experiment with `phase=sender_probe` and
+the exact source sweep ID. Communication analysis rejects probes from any other
+source; acquisition probes are never substituted.
+
 Replace a legacy MLflow acquisition run while preserving its acquisition metrics,
 artifacts, timestamps, and traces:
 

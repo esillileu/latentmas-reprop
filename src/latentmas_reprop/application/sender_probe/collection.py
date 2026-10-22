@@ -72,7 +72,7 @@ def collect_sender_states(
             inputs, desc="Collecting sender latent states", unit="state"
         ):
             messages = [[{"role": "user", "content": template.format(digit=digit)}]]
-            _, input_ids, attention_mask, _ = model.prepare_chat_batch(
+            prompts, input_ids, attention_mask, tokens = model.prepare_chat_batch(
                 messages, add_generation_prompt=True
             )
             rollout = model.generate_latent_batch_with_states(
@@ -88,6 +88,11 @@ def collect_sender_states(
                     "template_index": template_index,
                     "template": template,
                     "digit": digit,
+                    "messages": messages[0],
+                    "prompt": prompts[0],
+                    "input_ids": input_ids[0].cpu().tolist(),
+                    "attention_mask": attention_mask[0].cpu().tolist(),
+                    "tokens": tokens[0],
                 }
             )
     return SenderStates(
