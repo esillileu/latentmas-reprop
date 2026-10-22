@@ -41,15 +41,19 @@ class RealignmentManager:
         output_embeds: torch.nn.Module,
         device: torch.device,
     ) -> torch.Tensor:
-        input_weight = input_embeds.weight.detach().to(
-            device=device, dtype=torch.float32
-        )
-        output_weight = output_embeds.weight.detach().to(
-            device=device, dtype=torch.float32
-        )
-        gram = torch.matmul(output_weight.T, output_weight)
-        reg = 1e-5 * torch.eye(gram.shape[0], device=gram.device, dtype=gram.dtype)
-        rhs = torch.matmul(output_weight.T, input_weight)
+        in_w = input_embeds.weight.detach()
+        out_w = output_embeds.weight.detach()
+        dim = in_w.shape[1]
+        gram = torch.zeros((dim, dim), device=device, dtype=torch.float32)
+        rhs = torch.zeros((dim, dim), device=device, dtype=torch.float32)
+        chunk_size = 4096
+        for start in range(0, in_w.shape[0], chunk_size):
+            end = min(start + chunk_size, in_w.shape[0])
+            in_chunk = in_w[start:end].to(device=device, dtype=torch.float32)
+            out_chunk = out_w[start:end].to(device=device, dtype=torch.float32)
+            gram.addmm_(out_chunk.T, out_chunk)
+            rhs.addmm_(out_chunk.T, in_chunk)
+        reg = 1e-5 * torch.eye(dim, device=device, dtype=torch.float32)
         return torch.linalg.solve(gram + reg, rhs)
 
     def build_matrix(
