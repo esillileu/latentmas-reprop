@@ -30,6 +30,7 @@ class ModelWrapper(ModelPort):
         use_vllm: bool = False,
         args: Any = None,
         cache_manager: ExecutionCacheManager | None = None,
+        model_dtype: torch.dtype | None = None,
     ) -> None:
         self.model_name = model_name
         self.device = torch.device(device) if isinstance(device, str) else device
@@ -61,7 +62,7 @@ class ModelWrapper(ModelPort):
             return
 
         self.tokenizer, self.model, self.dtype = load_hf_causal_lm(
-            model_name, self.device
+            model_name, self.device, dtype=model_dtype
         )
         self.dtype_name = dtype_name(self.dtype)
         if self.latent_space_realign:

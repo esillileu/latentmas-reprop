@@ -61,11 +61,7 @@ def runtime_metadata(
     capability = None
     if torch.cuda.is_available():
         device = getattr(model, "device", torch.device("cuda"))
-        index = (
-            device.index
-            if isinstance(getattr(device, "index", None), int)
-            else 0
-        )
+        index = device.index if isinstance(getattr(device, "index", None), int) else 0
         gpu_name = torch.cuda.get_device_name(index)
         major, minor = torch.cuda.get_device_capability(index)
         capability = f"{major}.{minor}"

@@ -191,4 +191,3 @@ def test_generate_all_plots_exports_four_figures(tmp_path):
         "latency_accuracy_tradeoff.png",
         "tokens_cost_curve.png",
     }
-

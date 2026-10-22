@@ -2,12 +2,33 @@
 
 import sys
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 import torch
 
 from latentmas_reprop.infrastructure.models import loader
+
+
+@pytest.mark.parametrize(
+    "requested,expected", [(None, torch.float16), (torch.bfloat16, torch.bfloat16)]
+)
+def test_hf_explicit_bf16_preserves_fp16_default(monkeypatch, requested, expected):
+    tokenizer = MagicMock(pad_token_id=0)
+    tokenizer.__len__.return_value = 10
+    model = Mock()
+    model.get_input_embeddings.return_value.weight = torch.zeros(10, 2)
+    model.parameters.return_value = iter([torch.zeros(1, dtype=expected)])
+    factory = Mock(return_value=model)
+    monkeypatch.setattr(
+        loader.AutoTokenizer, "from_pretrained", Mock(return_value=tokenizer)
+    )
+    monkeypatch.setattr(loader.AutoModelForCausalLM, "from_pretrained", factory)
+    _, _, actual = loader.load_hf_causal_lm(
+        "model", torch.device("cpu"), dtype=requested
+    )
+    factory.assert_called_once_with("model", dtype=expected)
+    assert actual == expected
 
 
 @pytest.mark.parametrize("prefix_cache", [False, True])

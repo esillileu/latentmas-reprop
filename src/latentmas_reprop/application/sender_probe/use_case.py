@@ -1,8 +1,6 @@
 """Tracking boundary for derived sender-probe analyses."""
 
 import contextlib
-import json
-import tempfile
 import traceback
 from pathlib import Path
 from typing import Any
@@ -26,15 +24,33 @@ class SenderProbeAnalysisUseCase:
         source_run_id: str | None = None,
         source_artifact_path: str | None = None,
         source_config: dict[str, Any] | None = None,
+        experiment_name: str = "latentmas_sender_probe",
     ) -> dict[str, Any]:
         payload = torch.load(states_path, map_location="cpu", weights_only=False)
+        if experiment_name == "latentmas_receiver_trajectory":
+            if (
+                not source_run_id
+                or source_artifact_path != "sender_latent_states.pt"
+                or not source_config
+            ):
+                raise ValueError("Trajectory probes require an explicit sweep source")
+            if config.permutations < 1:
+                raise ValueError("Trajectory probes require null permutations")
+            for representation in ("hidden_pre_realign", "latent_post_realign"):
+                if payload[representation].ndim != 3 or payload[representation].shape[
+                    :2
+                ] != (200, 20):
+                    raise ValueError(
+                        "Trajectory sender states must contain 200 examples and 20 steps"
+                    )
         tracker = self.tracker_port
         if tracker:
             tracker.start_run(
-                experiment_name="latentmas_sender_probe",
+                experiment_name=experiment_name,
                 run_name="sender_probe_analysis",
                 tags={
                     "experiment_type": "sender_probe",
+                    "phase": "sender_probe",
                     "source_run_id": source_run_id or "local_file",
                     "git_commit": get_git_commit_hash(),
                 },
@@ -48,6 +64,11 @@ class SenderProbeAnalysisUseCase:
                     {
                         "source_run_id": source_run_id or "local_file",
                         "source_artifact": source,
+                        **(
+                            {"model": source_config["model"], "latent_steps": 20}
+                            if experiment_name == "latentmas_receiver_trajectory"
+                            else {}
+                        ),
                         "git_commit": get_git_commit_hash(),
                         "seed": config.seed,
                         "folds": config.folds,
@@ -73,11 +94,6 @@ class SenderProbeAnalysisUseCase:
                     }
                 )
                 tracker.end_run("FINISHED")
-            output_dir = Path(tempfile.gettempdir()) / "latentmas_sender_probe"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            (output_dir / "results.json").write_text(
-                json.dumps(results, indent=2), encoding="utf-8"
-            )
             return results
         except Exception:
             if tracker:
