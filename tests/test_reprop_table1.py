@@ -60,8 +60,19 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
         ("Qwen/Qwen3-8B", 20),
         ("Qwen/Qwen3-8B", 40),
         ("Qwen/Qwen3-14B", 10),
+        ("Qwen/Qwen3-14B", 10),
+        ("Qwen/Qwen3-14B", 20),
         ("Qwen/Qwen3-14B", 20),
         ("Qwen/Qwen3-14B", 40),
+        ("Qwen/Qwen3-14B", 40),
+    ]
+    assert [run.latent_space_realign for run in latent_14b] == [
+        False,
+        True,
+        False,
+        True,
+        False,
+        True,
     ]
     assert [(run.method, run.model_name) for run in baselines] == [
         ("baseline", "Qwen/Qwen3-4B"),
@@ -81,8 +92,11 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
         assert run.top_p == 0.95
         assert run.seed == 42
         assert run.use_vllm is False
-        assert run.latent_space_realign is False
-        assert run.think is False
+        if run.model_name == "Qwen/Qwen3-14B" and run.method == "latent_mas":
+            assert run.think is True
+        else:
+            assert run.latent_space_realign is False
+            assert run.think is False
         assert run.task == "gsm8k"
         assert run.split == "test"
         assert run.prompt == "sequential"

@@ -79,17 +79,22 @@ def trace_benchmark_sample(
     correct = bool(res.get("correct", False))
     vram_bytes = peak_allocated_bytes()
     vram_gb = round(vram_bytes / (1024**3), 3)
+    latency_sec = res.get("latency_sec")
+
+    tags = {
+        "problem_idx": str(problem_idx),
+        "model": str(args.model_name),
+        "method": str(args.method),
+        "correct": str(correct),
+        "peak_vram_gb": str(vram_gb),
+    }
+    if latency_sec is not None:
+        tags["latency_sec"] = str(latency_sec)
 
     with tracker_port.start_sample_trace(
         name=f"sample_{problem_idx}",
         inputs={"question": q, "problem_idx": problem_idx},
-        tags={
-            "problem_idx": str(problem_idx),
-            "model": str(args.model_name),
-            "method": str(args.method),
-            "correct": str(correct),
-            "peak_vram_gb": str(vram_gb),
-        },
+        tags=tags,
         request_preview=q[:100],
     ) as root_span:
         for a in res.get("agents", []):
@@ -108,15 +113,16 @@ def trace_benchmark_sample(
             ) as agent_span:
                 agent_span.set_outputs({"output": a.get("output", "")})
 
-        root_span.set_outputs(
-            {
-                "prediction": pred,
-                "raw_prediction": raw_pred,
-                "correct": correct,
-                "peak_vram_gb": vram_gb,
-                "peak_vram_bytes": vram_bytes,
-            }
-        )
+        outputs = {
+            "prediction": pred,
+            "raw_prediction": raw_pred,
+            "correct": correct,
+            "peak_vram_gb": vram_gb,
+            "peak_vram_bytes": vram_bytes,
+        }
+        if latency_sec is not None:
+            outputs["latency_sec"] = latency_sec
+        root_span.set_outputs(outputs)
 
         trace_id = getattr(root_span, "trace_id", None)
         if trace_id:
@@ -140,6 +146,14 @@ def trace_benchmark_sample(
                 source_id="profiler",
                 rationale=f"peak_vram={vram_gb} GB ({vram_bytes} bytes)",
             )
+            if latency_sec is not None:
+                tracker_port.log_feedback(
+                    trace_id=trace_id,
+                    name="latency_sec",
+                    value=float(latency_sec),
+                    source_id="profiler",
+                    rationale=f"latency={latency_sec}s",
+                )
 
 
 def save_benchmark_artifacts(

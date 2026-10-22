@@ -99,16 +99,21 @@ class BenchmarkUseCase:
             return processed, preds
 
         current_batch = batch[:remaining]
+        batch_start_time = time.perf_counter()
         if args.method == "latent_mas" and getattr(args, "use_vllm", False):
             results = method.run_batch_vllm(current_batch)
         else:
             results = method.run_batch(current_batch)
+        batch_elapsed = time.perf_counter() - batch_start_time
 
         if len(results) > remaining:
             results = results[:remaining]
 
+        per_sample_latency = batch_elapsed / max(1, len(results))
+
         batch_start = processed
         for offset, res in enumerate(results):
+            res["latency_sec"] = round(per_sample_latency, 4)
             preds.append(res)
             problem_idx = batch_start + offset + 1
             trace_benchmark_sample(self.tracker_port, args, problem_idx, res)
