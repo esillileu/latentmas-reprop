@@ -212,7 +212,7 @@ def test_corrupted_and_incomplete_samples_are_dropped_and_rewritten(tmp_path):
     cache = ExecutionCacheManager(PathResolver(tmp_path))
     store = BenchmarkRunStore(cache, "test_corrupted_run")
     store.root.mkdir(parents=True, exist_ok=True)
-    
+
     # Write valid record, corrupted JSON, and incomplete record (missing prediction)
     lines = [
         '{"sample_key": "k1", "prediction": "ans1", "correct": true}',
@@ -221,13 +221,13 @@ def test_corrupted_and_incomplete_samples_are_dropped_and_rewritten(tmp_path):
         '{"sample_key": "k4", "prediction": "ans4", "correct": true}',
     ]
     store.samples_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    
+
     # read_records should drop broken and incomplete records, and rewrite the file
     records = store.read_records()
     assert len(records) == 2
     assert [r["sample_key"] for r in records] == ["k1", "k4"]
     assert store.completed_keys() == {"k1", "k4"}
-    
+
     # Check that disk file was cleaned and re-written
     cleaned_lines = store.samples_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(cleaned_lines) == 2

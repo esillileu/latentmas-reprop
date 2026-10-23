@@ -122,7 +122,9 @@ class BenchmarkRunStore:
         known = {field.name for field in fields(BenchmarkMetrics)}
         if summary is not None:
             metrics_dict = dict(summary.get("metrics") or {})
-            if target_samples is not None and len(records) != summary.get("sample_count"):
+            if target_samples is not None and len(records) != summary.get(
+                "sample_count"
+            ):
                 correct = sum(1 for r in records if r.get("correct", False))
                 metrics_dict["correct"] = correct
                 metrics_dict["total"] = len(records)

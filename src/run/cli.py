@@ -141,7 +141,9 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
     )
     parser.add_argument("--seed", type=int, default=defaults.get("seed", 42))
     parser.add_argument(
-        "--print_summary", action="store_true", default=defaults.get("print_summary", False)
+        "--print_summary",
+        action="store_true",
+        default=defaults.get("print_summary", False),
     )
     parser.add_argument(
         "--no_progress", action="store_true", default=defaults.get("no_progress", False)

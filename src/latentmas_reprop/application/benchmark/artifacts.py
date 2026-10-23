@@ -167,6 +167,7 @@ def save_benchmark_artifacts(
 ) -> None:
     """Save benchmark cache and upload artifacts to MLflow."""
     import logging
+
     logger = logging.getLogger(__name__)
 
     try:
@@ -179,7 +180,9 @@ def save_benchmark_artifacts(
             },
         )
     except Exception as exc:
-        logger.error("Failed to save benchmark run cache %s: %s", run_cache_filename, exc)
+        logger.error(
+            "Failed to save benchmark run cache %s: %s", run_cache_filename, exc
+        )
 
     if not tracker_port:
         return

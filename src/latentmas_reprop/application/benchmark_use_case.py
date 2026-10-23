@@ -141,9 +141,7 @@ class BenchmarkUseCase:
         start_benchmark_tracker(self.tracker_port, args)
 
         dataset = list(self.dataset_port.load(task=args.task, split=args.split))
-        target = (
-            len(dataset) if requested_max_samples == -1 else requested_max_samples
-        )
+        target = len(dataset) if requested_max_samples == -1 else requested_max_samples
         target = min(target, len(dataset))
 
         required_keys = [sample_key_for(args, item) for item in dataset[:target]]

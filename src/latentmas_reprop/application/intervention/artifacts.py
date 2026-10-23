@@ -10,13 +10,17 @@ from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ..common.reporter import clean_config_args, write_json, write_jsonl, write_yaml
 
 
-def build_intervention_config_id(args: Any, model_dtype: str = "unknown") -> tuple[str, str]:
+def build_intervention_config_id(
+    args: Any, model_dtype: str = "unknown"
+) -> tuple[str, str]:
     """Generate deterministic config_id and compact config_hash for intervention experiments.
 
     Captures model, revision, prompt, task, split, latent steps, seed, precision,
     and decoding hyperparameters to completely isolate KV caches across conditions.
     """
-    model = str(getattr(args, "model_name", "model")).replace("/", "_").replace("\\", "_")
+    model = (
+        str(getattr(args, "model_name", "model")).replace("/", "_").replace("\\", "_")
+    )
     task = str(getattr(args, "task", "task"))
     split = str(getattr(args, "split", "test"))
     prompt = str(getattr(args, "prompt", "sequential"))
@@ -174,6 +178,7 @@ def save_intervention_artifacts(
 ) -> None:
     """Save all evaluation artifacts to disk and log to MLflow tracker."""
     import logging
+
     logger = logging.getLogger(__name__)
 
     local_cache_file = f"{run_stem}.json"

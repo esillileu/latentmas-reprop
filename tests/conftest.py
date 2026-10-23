@@ -11,7 +11,6 @@ def isolate_test_environment(monkeypatch):
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
 
 
-
 @pytest.fixture
 def pilot():
     config = {

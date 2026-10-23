@@ -77,4 +77,3 @@ def test_receiver_dry_run_shows_conditions_within_one_run(monkeypatch, capsys):
     assert "upstream_steps=[0, 5, 10]" in output
     assert "max_samples=20" in output
     assert not executed
-

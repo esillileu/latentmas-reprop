@@ -33,7 +33,6 @@ def test_path_resolver_safe_cache_path(tmp_path):
     assert not resolver.is_safe_cache_path(resolver.root)
 
 
-
 def test_path_resolver_cache_layers():
     resolver = get_path_resolver()
     layer_path = resolver.get_cache_layer_dir("models/realign")

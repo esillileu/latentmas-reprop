@@ -68,9 +68,7 @@ def _reuse_completed_benchmark(
 
     dataset = list(DatasetRegistry().load(task=args.task, split=args.split))
     requested_max_samples = int(getattr(args, "max_samples", -1))
-    target = (
-        len(dataset) if requested_max_samples == -1 else requested_max_samples
-    )
+    target = len(dataset) if requested_max_samples == -1 else requested_max_samples
     target = min(target, len(dataset))
     required_keys = [sample_key_for(args, item) for item in dataset[:target]]
     if not store.has_keys(required_keys):
