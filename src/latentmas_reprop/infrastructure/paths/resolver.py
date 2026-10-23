@@ -81,6 +81,34 @@ class PathResolver:
         return path
 
     @property
+    def experiments_dir(self) -> Path:
+        """Root directory for persistent experiment runs."""
+        path = self.storage_dir / "experiments"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_experiment_dir(self, run_id: str) -> Path:
+        """Get or create directory for a specific experiment run."""
+        clean_run_id = str(run_id).replace("/", "_").replace("\\", "_")
+        path = self.experiments_dir / clean_run_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_sample_dir(self, run_id: str, sample_key: str) -> Path:
+        """Get or create directory for a specific sample within an experiment run."""
+        clean_sample_key = str(sample_key).replace("/", "_").replace("\\", "_")
+        path = self.get_experiment_dir(run_id) / "samples" / clean_sample_key
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_condition_dir(self, run_id: str, sample_key: str, condition: str) -> Path:
+        """Get or create directory for a specific condition within a sample."""
+        clean_condition = str(condition).replace("/", "_").replace("\\", "_")
+        path = self.get_sample_dir(run_id, sample_key) / clean_condition
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
     def tensors_dir(self) -> Path:
         """Root directory for persistent large tensor storage."""
         path = self.storage_dir / "tensors"
@@ -137,6 +165,7 @@ class PathResolver:
         protected = [
             self.root.resolve(),
             self.storage_dir.resolve(),
+            self.experiments_dir.resolve(),
             self.tensors_dir.resolve(),
             self.mlflow_dir.resolve(),
             self.data_dir.resolve(),

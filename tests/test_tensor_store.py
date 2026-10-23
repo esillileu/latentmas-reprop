@@ -1,251 +1,271 @@
-"""Tests for universal TensorStore, manifests, checksum validation, and ResearchDataReader."""
+"""Tests for simplified file-based execution storage and contracts."""
+
+import json
 
 import pytest
 import torch
 
 from latentmas_reprop.domain.models.tensor_artifact import (
-    ArtifactStatus,
-    ImmutableTensorOverwriteError,
-    ManifestCorruptedError,
-    RetentionClass,
-    TensorChecksumMismatchError,
-    TensorMissingError,
+    ConfigurationMismatchError,
 )
+from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage import (
+    FileStorage,
     ResearchDataReader,
-    TensorStore,
+    is_condition_complete,
+    save_condition_result,
+    save_tensor,
+    verify_run_config,
 )
+from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
 
-def test_tensor_store_save_and_load(tmp_path):
+def test_1_two_samples_same_condition_no_overwrite(tmp_path):
+    """1. 두 샘플의 동일 조건 결과가 서로 덮어쓰지 않는가?"""
     resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
+    storage = FileStorage(resolver)
 
-    tensor = torch.randn(2, 4, 16, dtype=torch.bfloat16)
-    entry = store.save_tensor(
-        run_id="run_123",
-        sample_key="sample_abc",
-        artifact_id="hidden_state_step_10",
-        tensor=tensor,
-        artifact_type="hidden_state",
-        branch_id="own",
-        segment_id="1",
-        retention_class=RetentionClass.PERSISTENT,
-        metadata={"step": 10},
-    )
-
-    assert entry.run_id == "run_123"
-    assert entry.artifact_id == "hidden_state_step_10"
-    assert entry.shape == [2, 4, 16]
-    assert entry.dtype == "torch.bfloat16"
-    assert len(entry.checksum) == 64
-    assert entry.status == ArtifactStatus.COMPLETE
-
-    # Verify manifest was persisted
-    manifest = store.get_manifest("run_123")
-    assert manifest is not None
-    assert entry.composite_key in manifest.entries
-
-    # Load and verify equality
-    loaded = store.load_tensor(entry)
-    assert torch.equal(loaded, tensor)
-
-    # Load by ID
-    loaded_by_id = store.load_tensor("hidden_state_step_10", run_id="run_123")
-    assert torch.equal(loaded_by_id, tensor)
-
-
-def test_tensor_store_composite_keys_no_collision(tmp_path):
-    resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
-
-    # Two distinct samples saving the same artifact_id
     t1 = torch.tensor([1.0, 2.0])
     t2 = torch.tensor([3.0, 4.0])
 
-    e1 = store.save_tensor(
-        "run_multi", "sample_1", "hidden_state", t1, "state", branch_id="own"
+    storage.save_condition(
+        run_id="run_test",
+        sample_key="sample_A",
+        condition="own",
+        result_data={"sample": "A", "val": 10},
+        tensors={"hidden": t1},
     )
-    e2 = store.save_tensor(
-        "run_multi", "sample_2", "hidden_state", t2, "state", branch_id="own"
+    storage.save_condition(
+        run_id="run_test",
+        sample_key="sample_B",
+        condition="own",
+        result_data={"sample": "B", "val": 20},
+        tensors={"hidden": t2},
     )
 
-    manifest = store.get_manifest("run_multi")
-    assert manifest is not None
-    assert len(manifest.entries) == 2
-    assert e1.composite_key != e2.composite_key
+    res_a = storage.load_condition_result("run_test", "sample_A", "own")
+    res_b = storage.load_condition_result("run_test", "sample_B", "own")
 
-    # Query with disambiguating sample_key
-    loaded_1 = store.load_tensor(
-        "hidden_state", run_id="run_multi", sample_key="sample_1"
-    )
-    loaded_2 = store.load_tensor(
-        "hidden_state", run_id="run_multi", sample_key="sample_2"
-    )
-    assert torch.equal(loaded_1, t1)
-    assert torch.equal(loaded_2, t2)
+    assert res_a["val"] == 10
+    assert res_b["val"] == 20
+
+    ten_a = storage.load_condition_tensor("run_test", "sample_A", "own", "hidden")
+    ten_b = storage.load_condition_tensor("run_test", "sample_B", "own", "hidden")
+
+    assert torch.equal(ten_a, t1)
+    assert torch.equal(ten_b, t2)
 
 
-def test_tensor_store_manifest_corruption_protection(tmp_path):
+def test_2_condition_a_completed_condition_b_interrupted_reuse_a_only(tmp_path):
+    """2. 조건 A가 완료되고 조건 B에서 중단되면 A만 재사용하는가?"""
     resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
+    storage = FileStorage(resolver)
 
-    # Write corrupt JSON into manifest file
-    run_dir = store._get_run_dir("run_corrupt_manifest")
-    manifest_path = run_dir / "tensor_manifest.json"
-    manifest_path.write_text("{ broken json content ...", encoding="utf-8")
-
-    with pytest.raises(ManifestCorruptedError, match="corrupted and cannot be parsed"):
-        store.get_manifest("run_corrupt_manifest")
-
-
-def test_tensor_store_immutable_overwrite_protection(tmp_path):
-    resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
-
-    t1 = torch.tensor([1.0, 2.0])
-    t2 = torch.tensor([9.0, 9.0])
-
-    store.save_tensor(
-        "run_imm",
-        "s1",
-        "const_tensor",
-        t1,
-        "const",
-        retention_class=RetentionClass.PERSISTENT,
+    # Complete condition A
+    storage.save_condition(
+        run_id="run_partial",
+        sample_key="s1",
+        condition="own",
+        result_data={"step": "A", "done": True},
+        tensors={"hidden": torch.tensor([1.0])},
     )
 
-    # Overwrite attempt with different tensor raises ImmutableTensorOverwriteError
-    with pytest.raises(
-        ImmutableTensorOverwriteError, match="Cannot overwrite immutable tensor"
-    ):
-        store.save_tensor(
-            "run_imm",
-            "s1",
-            "const_tensor",
-            t2,
-            "const",
-            retention_class=RetentionClass.PERSISTENT,
+    # Incomplete condition B (no result.json)
+    dir_b = storage.get_condition_dir("run_partial", "s1", "cross")
+    dir_b.mkdir(parents=True, exist_ok=True)
+    (dir_b / "hidden.pt.tmp").write_text("partial")
+
+    assert storage.is_condition_complete("run_partial", "s1", "own") is True
+    assert storage.is_condition_complete("run_partial", "s1", "cross") is False
+
+    # Mock rerun logic: check complete condition is reused without recomputing
+    recomputed = []
+    for cond in ["own", "cross"]:
+        if storage.is_condition_complete("run_partial", "s1", cond):
+            rec = storage.load_condition_result("run_partial", "s1", cond)
+            assert rec["step"] == "A"
+        else:
+            recomputed.append(cond)
+            storage.save_condition(
+                "run_partial", "s1", cond, {"step": "B", "done": True}
+            )
+
+    assert recomputed == ["cross"]
+    assert storage.is_condition_complete("run_partial", "s1", "cross") is True
+
+
+def test_3_missing_result_json_not_complete(tmp_path):
+    """3. result.json이 없으면 완료 상태로 판단하지 않는가?"""
+    resolver = PathResolver(tmp_path)
+    cond_dir = resolver.get_condition_dir("run_x", "s1", "own")
+    cond_dir.mkdir(parents=True, exist_ok=True)
+    save_tensor(cond_dir / "hidden.pt", torch.tensor([1.0]))
+
+    assert is_condition_complete(cond_dir) is False
+
+
+def test_4_missing_hidden_file_reexecution(tmp_path):
+    """4. Hidden 파일이 누락된 경우 해당 조건을 재실행하는가?"""
+    resolver = PathResolver(tmp_path)
+    cond_dir = resolver.get_condition_dir("run_x", "s1", "own")
+    cond_dir.mkdir(parents=True, exist_ok=True)
+
+    # result.json declares hidden.pt, but hidden.pt does not exist
+    result_path = cond_dir / "result.json"
+    result_path.write_text(
+        json.dumps({"files": ["hidden.pt"], "status": "ok"}), encoding="utf-8"
+    )
+
+    assert is_condition_complete(cond_dir) is False
+
+
+def test_5_different_config_resume_rejected(tmp_path):
+    """5. 다른 설정으로 기존 Run을 재개하려 하면 거부하는가?"""
+    resolver = PathResolver(tmp_path)
+    run_dir = resolver.get_experiment_dir("run_cfg_test")
+
+    initial_cfg = {
+        "model_name": "Qwen/Qwen3-4B",
+        "task": "gsm8k",
+        "method": "latent_mas",
+        "latent_steps": 20,
+        "seed": 42,
+    }
+    verify_run_config(run_dir, initial_cfg)
+
+    # Same config should pass cleanly
+    verify_run_config(run_dir, initial_cfg)
+
+    # Different config should be rejected
+    mismatched_cfg = dict(initial_cfg)
+    mismatched_cfg["latent_steps"] = 40
+
+    with pytest.raises(ConfigurationMismatchError, match="Configuration mismatch"):
+        verify_run_config(run_dir, mismatched_cfg)
+
+
+def test_6_atomic_save_failure_leaves_no_completion_file(tmp_path, monkeypatch):
+    """6. 원자적 저장 중 실패하면 완료 파일이 생성되지 않는가?"""
+    resolver = PathResolver(tmp_path)
+    cond_dir = resolver.get_condition_dir("run_err", "s1", "own")
+
+    def failing_save(*args, **kwargs):
+        raise OSError("Simulated disk write failure")
+
+    monkeypatch.setattr(torch, "save", failing_save)
+
+    with pytest.raises(OSError, match="Simulated disk write failure"):
+        save_condition_result(
+            cond_dir,
+            result_data={"valid": False},
+            tensors={"hidden": torch.tensor([1.0])},
         )
 
+    assert not (cond_dir / "result.json").exists()
+    assert is_condition_complete(cond_dir) is False
 
-def test_tensor_store_checksum_corruption_detection(tmp_path):
+
+def test_7_clean_cache_preserves_research_storage(tmp_path):
+    """7. clean-cache 이후에도 모든 연구 원본이 보존되는가?"""
     resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
+    storage = FileStorage(resolver)
+    manager = ExecutionCacheManager(resolver)
 
-    tensor = torch.zeros(4, 4, dtype=torch.float32)
-    entry = store.save_tensor(
-        run_id="run_corrupt",
-        sample_key="sample_0",
-        artifact_id="matrix",
-        tensor=tensor,
-        artifact_type="projection_matrix",
+    # Save research original in storage/experiments
+    res_path = storage.save_condition(
+        run_id="run_research",
+        sample_key="s1",
+        condition="own",
+        result_data={"score": 1.0},
+        tensors={"hidden": torch.tensor([42.0])},
+    )
+    assert res_path.is_file()
+
+    # Create volatile cache files in .cache/runtime
+    runtime_file = manager.get_layer_path("runtime") / "scratch.json"
+    runtime_file.write_text("scratch", encoding="utf-8")
+
+    manager.clean_volatile_cache()
+
+    assert not runtime_file.exists()
+    assert res_path.is_file()
+    assert is_condition_complete(res_path.parent) is True
+    assert torch.equal(
+        storage.load_condition_tensor("run_research", "s1", "own", "hidden"),
+        torch.tensor([42.0]),
     )
 
-    target_path = store._resolve_entry_path(entry)
-    assert target_path.is_file()
 
-    # Tamper with file
-    with open(target_path, "r+b") as f:
-        f.seek(10)
-        f.write(b"\xff\xff\xff\xff")
-
-    with pytest.raises(TensorChecksumMismatchError, match="checksum mismatch"):
-        store.load_tensor(entry, verify_checksum=True)
-
-    assert entry.status == ArtifactStatus.CORRUPTED
-
-
-def test_tensor_store_missing_file_detection(tmp_path):
+def test_8_mlflow_run_finds_local_data_dir(tmp_path):
+    """8. MLflow Run에서 해당 데이터 디렉터리를 찾아갈 수 있는가?"""
     resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
+    tracker = MLflowTracker(path_resolver=resolver)
 
-    tensor = torch.ones(2, 2)
-    entry = store.save_tensor(
-        run_id="run_miss",
-        sample_key="sample_1",
-        artifact_id="kv_snapshot",
-        tensor=tensor,
-        artifact_type="kv_snapshot",
+    run = tracker.start_run("test_exp", run_name="exp_1")
+    run_id = run.info.run_id
+
+    reader = ResearchDataReader(
+        mlflow_client=tracker.client, path_resolver=resolver
     )
+    found_dir = reader.get_run_data_dir(run_id)
 
-    target_path = store._resolve_entry_path(entry)
-    target_path.unlink()
-
-    with pytest.raises(TensorMissingError, match="missing on disk"):
-        store.load_tensor(entry)
-
-    assert entry.status == ArtifactStatus.MISSING
+    assert found_dir == resolver.get_experiment_dir(run_id)
+    assert found_dir.is_dir()
+    tracker.end_run()
 
 
-def test_tensor_store_register_reference_no_duplication(tmp_path):
+def test_9_resume_same_run_no_duplicate_results(tmp_path):
+    """9. 동일 Run을 재개해도 정상 결과가 중복 생성되지 않는가?"""
     resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
+    storage = FileStorage(resolver)
 
-    tensor = torch.randn(8, 8)
-    source_entry = store.save_tensor(
-        run_id="parent_run",
-        sample_key="sample_parent",
-        artifact_id="pre_branch_kv",
-        tensor=tensor,
-        artifact_type="kv_snapshot",
-        branch_id="common",
+    t = torch.tensor([5.0])
+    storage.save_condition(
+        run_id="run_idempotent",
+        sample_key="s1",
+        condition="own",
+        result_data={"count": 1},
+        tensors={"hidden": t},
     )
 
-    # Branch references common snapshot
-    branch_entry = store.register_reference(
-        source_entry=source_entry,
-        target_run_id="branch_run_1",
-        target_branch_id="branch_a",
-        target_artifact_id="input_kv_branch_a",
+    cond_dir = storage.get_condition_dir("run_idempotent", "s1", "own")
+    mtime_before = (cond_dir / "result.json").stat().st_mtime_ns
+
+    # Calling save_condition again without overwrite should skip re-writing
+    save_condition_result(
+        cond_dir,
+        result_data={"count": 2},
+        tensors={"hidden": t},
+        overwrite=False,
     )
+    mtime_after = (cond_dir / "result.json").stat().st_mtime_ns
 
-    assert branch_entry.run_id == "branch_run_1"
-    assert branch_entry.branch_id == "branch_a"
-    assert branch_entry.storage_uri == source_entry.storage_uri
-    assert branch_entry.checksum == source_entry.checksum
-    assert branch_entry.metadata.get("is_reference") is True
-
-    # Verify loading from branch run
-    loaded_branch = store.load_tensor("input_kv_branch_a", run_id="branch_run_1")
-    assert torch.equal(loaded_branch, tensor)
+    assert mtime_before == mtime_after
+    res = storage.load_condition_result("run_idempotent", "s1", "own")
+    assert res["count"] == 1
 
 
-def test_research_data_reader(tmp_path):
+def test_10_migrated_data_queried_by_new_reader(tmp_path):
+    """10. 마이그레이션 도구로 생성한 데이터가 새 Reader에서 조회되는가?"""
     resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
-    reader = ResearchDataReader(path_resolver=resolver, tensor_store=store)
+    reader = ResearchDataReader(path_resolver=resolver)
 
-    # 1. Save tensor and load via reader
-    tensor = torch.tensor([10.0, 20.0, 30.0])
-    store.save_tensor(
-        run_id="run_reader",
-        sample_key="k1",
-        artifact_id="test_tensor",
-        tensor=tensor,
-        artifact_type="test",
+    run_id = "migrated_run_10"
+    exp_dir = resolver.get_experiment_dir(run_id)
+
+    # Simulate migrated benchmark summary and tensor
+    summary_file = exp_dir / "summary.json"
+    summary_file.write_text(
+        json.dumps({"status": "complete", "accuracy": 0.95}), encoding="utf-8"
     )
 
-    loaded_tensor = reader.load_tensor("run_reader", "test_tensor")
-    assert torch.equal(loaded_tensor, tensor)
+    tensor_file = exp_dir / "sender_states.pt"
+    save_tensor(tensor_file, torch.tensor([10.0, 20.0]))
 
-    # 2. Local JSON artifact loading
-    sample_file = resolver.storage_dir / "run_reader" / "summary.json"
-    sample_file.parent.mkdir(parents=True, exist_ok=True)
-    sample_file.write_text('{"accuracy": 0.95}', encoding="utf-8")
+    loaded_summary = reader.load_artifact(run_id, "summary.json")
+    assert loaded_summary["status"] == "complete"
+    assert loaded_summary["accuracy"] == 0.95
 
-    data = reader.load_artifact("run_reader", "summary.json")
-    assert data == {"accuracy": 0.95}
-
-    # 3. Non-existent artifact raises FileNotFoundError
-    with pytest.raises(FileNotFoundError):
-        reader.load_artifact("run_reader", "non_existent.json")
-
-    # 4. Strict isolation: unscoped artifact from another run is blocked
-    unscoped_summary = resolver.artifacts_dir / "other_run_summary.json"
-    unscoped_summary.write_text(
-        '{"run_id": "different_run", "accuracy": 0.50}', encoding="utf-8"
-    )
-    with pytest.raises(FileNotFoundError):
-        reader.load_artifact("run_reader", "other_run_summary.json")
+    loaded_tensor = reader.load_tensor(run_id, "sender_states")
+    assert torch.equal(loaded_tensor, torch.tensor([10.0, 20.0]))

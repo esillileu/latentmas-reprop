@@ -14,6 +14,7 @@ def test_path_resolver_directories():
     assert resolver.cache_dir.name == ".cache"
     assert resolver.data_dir.name == "data"
     assert resolver.storage_dir.name == "storage"
+    assert resolver.experiments_dir.name == "experiments"
     assert resolver.tensors_dir.name == "tensors"
     assert resolver.mlflow_dir.name == "mlflow"
     assert resolver.artifacts_dir.name == "artifacts"
@@ -28,6 +29,7 @@ def test_path_resolver_safe_cache_path(tmp_path):
 
     # Protected paths must NOT be safe cache paths
     assert not resolver.is_safe_cache_path(resolver.storage_dir)
+    assert not resolver.is_safe_cache_path(resolver.experiments_dir)
     assert not resolver.is_safe_cache_path(resolver.mlflow_dir)
     assert not resolver.is_safe_cache_path(resolver.data_dir)
     assert not resolver.is_safe_cache_path(resolver.root)

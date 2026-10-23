@@ -29,19 +29,16 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
 
     # Configuration / YAML preset
     parser.add_argument(
-        "-c",
-        "--config",
-        "--template",
-        dest="config_path",
-        type=str,
-        default=None,
-        metavar="CONFIG",
+        "-c", "--config", "--template", dest="config_path", default=None, metavar="CONFIG",
         help="Path or name of a YAML config file in configs/",
     )
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
+        "--dry-run", action="store_true",
         help="Print the expanded run matrix without loading models or running experiments.",
+    )
+    parser.add_argument(
+        "--run_id", type=str, default=defaults.get("run_id"),
+        help="Explicit run ID to execute or resume from storage/experiments/<run_id>.",
     )
 
     # Core args for experiments

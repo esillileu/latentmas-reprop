@@ -21,7 +21,8 @@ from ..domain.services.prompts.acquisition import (
 )
 from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.models.model_wrapper import ModelWrapper
-from ..infrastructure.paths.resolver import get_git_commit_hash
+from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
+from ..infrastructure.storage import verify_run_config
 from .receiver_acquisition.aggregation import aggregate_receiver_records
 from .receiver_acquisition.artifacts import log_receiver_artifacts
 from .receiver_acquisition.runner import run_acquisition_loop
@@ -102,6 +103,29 @@ class ReceiverAcquisitionUseCase:
                     "latent_steps": str(args.latent_steps),
                 },
             )
+        safe_model = str(args.model_name).replace("/", "_").replace("\\", "_")
+        run_id = getattr(args, "run_id", None)
+        if (
+            not run_id
+            and self.tracker_port
+            and isinstance(self.tracker_port.active_run_id, str)
+        ):
+            run_id = self.tracker_port.active_run_id
+        if not run_id:
+            run_id = f"acq_{safe_model}_ls{args.latent_steps}_s{args.seed}"
+
+        exp_dir = get_path_resolver().get_experiment_dir(run_id)
+        verify_run_config(
+            exp_dir,
+            {
+                "model_name": args.model_name,
+                "task": args.task,
+                "method": args.method,
+                "latent_steps": getattr(args, "latent_steps", 0),
+                "seed": args.seed,
+            },
+        )
+
         try:
             receiver_ids, receiver_mask, mapping = prepare_receiver_scoring(model)
             if self.tracker_port:
@@ -141,7 +165,6 @@ class ReceiverAcquisitionUseCase:
                     mapping, "tokenizer/candidate_token_mapping.json"
                 )
             runtime_dir = self.cache_port.get_layer_path(CacheLayer.RUNTIME)
-            safe_model = str(args.model_name).replace("/", "_").replace("\\", "_")
             acq_stem = (
                 f"{safe_model}_ls{args.latent_steps}_s{args.seed}_n{len(samples)}"
             )
@@ -156,6 +179,7 @@ class ReceiverAcquisitionUseCase:
                 mapping,
                 self.tracker_port,
                 incremental_jsonl_path=incremental_path,
+                run_id=run_id,
             )
             sender_states = None
             if args.probe_sender_latents:

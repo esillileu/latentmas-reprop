@@ -1,4 +1,4 @@
-"""Unified ResearchDataReader for loading artifacts and tensors across MLflow and TensorStore."""
+"""Unified ResearchDataReader for loading experiment artifacts and tensors."""
 
 import contextlib
 import json
@@ -8,13 +8,17 @@ from typing import Any
 import torch
 import yaml
 
-from ...domain.models.tensor_artifact import TensorManifest
 from ..paths.resolver import PathResolver, get_path_resolver
-from .tensor_store import TensorStore, get_tensor_store
+from .tensor_store import (
+    FileStorage,
+    get_file_storage,
+    load_json,
+    load_tensor,
+)
 
 
 class ResearchDataReader:
-    """Unified reader interface for experiment artifacts, manifests, and heavy tensors.
+    """Unified reader interface for experiment artifacts and tensors.
 
     Abstracts away local filesystem layouts and MLflow artifact retrieval,
     allowing downstream analysis tools to query data by Run ID and Artifact ID
@@ -24,27 +28,49 @@ class ResearchDataReader:
     def __init__(
         self,
         mlflow_client: Any | None = None,
-        tensor_store: TensorStore | None = None,
+        tensor_store: FileStorage | None = None,
         path_resolver: PathResolver | None = None,
         cache_dir: Path | None = None,
     ) -> None:
         self.client = mlflow_client
         self.resolver = path_resolver or get_path_resolver()
-        self.tensor_store = tensor_store or get_tensor_store()
+        self.tensor_store = tensor_store or get_file_storage()
         self.cache_dir = cache_dir or (self.resolver.cache_dir / "reader_scratch")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.provenance: list[dict[str, Any]] = []
 
-    def load_artifact(
-        self,
-        run_id: str,
-        artifact_path: str,
-    ) -> Any:
-        """Download or read an artifact (JSON, JSONL, YAML) from MLflow or run-scoped local storage.
+    def get_run_data_dir(self, run_id: str) -> Path:
+        """Find the local storage directory associated with an experiment Run ID."""
+        if self.client:
+            with contextlib.suppress(Exception):
+                run = self.client.get_run(run_id)
+                tag_dir = run.data.tags.get("data_dir")
+                if tag_dir:
+                    p = Path(tag_dir)
+                    if p.is_dir():
+                        return p
+                alt_id = run.data.tags.get("storage_run_id") or run.data.tags.get(
+                    "resumed_from_run_id"
+                )
+                if alt_id:
+                    alt_dir = self.resolver.experiments_dir / alt_id
+                    if alt_dir.is_dir():
+                        return alt_dir
 
-        To guarantee strict run isolation, only artifacts tied to run_id (via MLflow
-        or run-scoped storage directories) are loaded.
-        """
+        candidates = [
+            self.resolver.experiments_dir / run_id,
+            self.resolver.storage_dir / "tensors" / run_id,
+            self.resolver.storage_dir / run_id,
+            self.resolver.storage_dir / "evaluation" / "runs" / run_id,
+            self.resolver.cache_dir / "evaluation" / "runs" / run_id,
+        ]
+        for c in candidates:
+            if c.is_dir():
+                return c
+        return self.resolver.experiments_dir / run_id
+
+    def load_artifact(self, run_id: str, artifact_path: str) -> Any:
+        """Load an artifact (JSON, JSONL, YAML) from MLflow or local run storage."""
         dest_dir = self.cache_dir / run_id
         dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -55,9 +81,10 @@ class ResearchDataReader:
                     self.client.download_artifacts(run_id, artifact_path, str(dest_dir))
                 )
 
-        # Check strictly run-scoped local storage paths
         if downloaded_path is None or not downloaded_path.is_file():
-            scoped_candidates = [
+            run_dir = self.get_run_data_dir(run_id)
+            candidates = [
+                run_dir / artifact_path,
                 self.resolver.storage_dir / run_id / artifact_path,
                 self.resolver.storage_dir
                 / "evaluation"
@@ -71,14 +98,14 @@ class ResearchDataReader:
                 / artifact_path,
                 self.resolver.artifacts_dir / run_id / artifact_path,
             ]
-            for candidate in scoped_candidates:
-                if candidate.is_file():
-                    downloaded_path = candidate
+            for c in candidates:
+                if c.is_file():
+                    downloaded_path = c
                     break
 
         if downloaded_path is None or not downloaded_path.is_file():
             raise FileNotFoundError(
-                f"Artifact '{artifact_path}' not found for run '{run_id}' in MLflow or run-scoped local storage."
+                f"Artifact '{artifact_path}' not found for run '{run_id}'."
             )
 
         self.provenance.append(
@@ -98,64 +125,48 @@ class ResearchDataReader:
         elif artifact_path.endswith((".yaml", ".yml")):
             return yaml.safe_load(downloaded_path.read_text(encoding="utf-8"))
         elif artifact_path.endswith(".json"):
-            return json.loads(downloaded_path.read_text(encoding="utf-8"))
+            return load_json(downloaded_path)
         return downloaded_path.read_text(encoding="utf-8")
 
     def load_tensor(
         self,
         run_id: str,
         artifact_id: str,
-        verify_checksum: bool = True,
+        verify_checksum: bool = False,
         map_location: Any = None,
         sample_key: str = "",
+        condition: str = "",
         branch_id: str = "",
         segment_id: str = "",
     ) -> torch.Tensor:
-        """Load a heavy tensor via TensorStore and manifest, checking existence and checksum."""
-        entry = self.tensor_store.get_entry(
-            run_id,
-            artifact_id,
-            sample_key=sample_key,
-            branch_id=branch_id,
-            segment_id=segment_id,
+        """Load a torch tensor for a given run and artifact identifier."""
+        run_dir = self.get_run_data_dir(run_id)
+        cond = condition or branch_id
+
+        # 1. Exact sample and condition lookup
+        if sample_key and cond:
+            fname = artifact_id if artifact_id.endswith(".pt") else f"{artifact_id}.pt"
+            candidate = run_dir / "samples" / sample_key / cond / fname
+            if candidate.is_file():
+                return load_tensor(candidate, map_location=map_location)
+
+        # 2. Direct path check in run_dir
+        fname = artifact_id if artifact_id.endswith(".pt") else f"{artifact_id}.pt"
+        if (run_dir / fname).is_file():
+            return load_tensor(run_dir / fname, map_location=map_location)
+
+        # 3. Search under run_dir
+        for p in run_dir.rglob("*.pt"):
+            if artifact_id in p.name:
+                return load_tensor(p, map_location=map_location)
+
+        # 4. Search under storage_dir/tensors/run_id
+        legacy_dir = self.resolver.storage_dir / "tensors" / run_id
+        if legacy_dir.is_dir():
+            for p in legacy_dir.rglob("*.pt"):
+                if artifact_id in p.name:
+                    return load_tensor(p, map_location=map_location)
+
+        raise FileNotFoundError(
+            f"Tensor artifact '{artifact_id}' not found for run '{run_id}'."
         )
-        if entry is None and self.client:
-            # Check if manifest can be downloaded from MLflow
-            try:
-                manifest_dict = self.load_artifact(
-                    run_id, "tensors/tensor_manifest.json"
-                )
-                manifest = TensorManifest.from_dict(manifest_dict)
-                entry = manifest.get_entry(
-                    artifact_id,
-                    sample_key=sample_key,
-                    branch_id=branch_id,
-                    segment_id=segment_id,
-                )
-            except Exception:
-                entry = None
-
-        if entry is None:
-            raise FileNotFoundError(
-                f"Tensor artifact '{artifact_id}' not found in manifest or local store for run '{run_id}'."
-            )
-
-        return self.tensor_store.load_tensor(
-            entry,
-            verify_checksum=verify_checksum,
-            map_location=map_location,
-        )
-
-    def load_manifest(self, run_id: str) -> TensorManifest | None:
-        manifest = self.tensor_store.get_manifest(run_id)
-        if manifest:
-            return manifest
-        if self.client:
-            try:
-                manifest_dict = self.load_artifact(
-                    run_id, "tensors/tensor_manifest.json"
-                )
-                return TensorManifest.from_dict(manifest_dict)
-            except Exception:
-                return None
-        return None

@@ -15,6 +15,12 @@ from ...domain.services.kv_cache import (
 )
 from ...domain.services.latent_mas import LatentMASMethod
 from ...infrastructure.models.model_wrapper import ModelWrapper
+from ...infrastructure.paths.resolver import get_path_resolver
+from ...infrastructure.storage import (
+    is_condition_complete,
+    load_json,
+    save_condition_result,
+)
 from .artifacts import log_sample_assessments
 from .decoder import (
     build_sample_root_context,
@@ -73,6 +79,7 @@ def run_intervention_decoding(
     tracker_port: ExperimentTrackerPort | None,
     git_hash: str,
     incremental_jsonl_path: Any = None,
+    run_id: str | None = None,
 ) -> tuple[
     list[SampleInterventionRecord], dict[str, list[float]], dict[str, list[int]]
 ]:
@@ -83,8 +90,9 @@ def run_intervention_decoding(
 
     num_layers = get_past_kv_num_layers(contexts[0]) if contexts else 0
     cache_dtype = get_past_kv_dtype(contexts[0]) if contexts else None
+    resolver = get_path_resolver()
 
-    # Load existing checkpoint to enable crash-safe resumption without duplicate evaluations
+    # Fallback to incremental jsonl if present
     completed_by_key: dict[str, list[SampleInterventionRecord]] = {}
     if incremental_jsonl_path:
         chk_path = Path(incremental_jsonl_path)
@@ -107,14 +115,32 @@ def run_intervention_decoding(
         sample_id = f"sample_{i}"
         s_key = sample_keys[i]
 
-        # Skip evaluation if all conditions were already completed in checkpoint
-        if s_key in completed_by_key and len(completed_by_key[s_key]) >= len(
-            conditions
-        ):
+        # Check condition-level completion from storage/experiments/<run_id>/samples/<s_key>/<cond>
+        completed_conditions: dict[str, SampleInterventionRecord] = {}
+        if run_id:
+            for cond in conditions:
+                cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
+                if is_condition_complete(cond_dir):
+                    try:
+                        d = load_json(cond_dir / "result.json")
+                        fields = SampleInterventionRecord.__dataclass_fields__.keys()
+                        rec = SampleInterventionRecord(
+                            **{f: d[f] for f in fields if f in d}
+                        )
+                        completed_conditions[cond] = rec
+                    except Exception:
+                        pass
+        elif s_key in completed_by_key:
             for rec in completed_by_key[s_key]:
+                completed_conditions[rec.condition] = rec
+
+        # If all conditions were already completed, skip sample evaluation entirely
+        if all(cond in completed_conditions for cond in conditions):
+            for cond in conditions:
+                rec = completed_conditions[cond]
                 sample_records.append(rec)
-                condition_latencies[rec.condition].append(rec.latency or 0.0)
-                condition_tokens[rec.condition].append(rec.generated_tokens or 0)
+                condition_latencies[cond].append(rec.latency or 0.0)
+                condition_tokens[cond].append(rec.generated_tokens or 0)
             continue
 
         gold = str(item.get("gold", ""))
@@ -147,6 +173,20 @@ def run_intervention_decoding(
             for cond in conditions:
                 if cond not in VALID_CONDITIONS:
                     continue
+
+                if cond in completed_conditions:
+                    rec = completed_conditions[cond]
+                    sample_records.append(rec)
+                    sample_results[cond] = rec
+                    condition_latencies[cond].append(rec.latency or 0.0)
+                    condition_tokens[cond].append(rec.generated_tokens or 0)
+                    cond_preds[cond] = (
+                        rec.prediction,
+                        bool(rec.correct),
+                        rec.raw_prediction,
+                    )
+                    continue
+
                 sample_seed = args.seed + i
                 random.seed(sample_seed)
                 torch.manual_seed(sample_seed)
@@ -198,6 +238,10 @@ def run_intervention_decoding(
                 condition_latencies[cond].append(latency)
                 condition_tokens[cond].append(gen_tok)
                 cond_preds[cond] = c_pred
+
+                if run_id:
+                    cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
+                    save_condition_result(cond_dir, rec.to_dict())
 
             del own_context_gpu
             if torch.cuda.is_available():

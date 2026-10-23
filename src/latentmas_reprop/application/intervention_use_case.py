@@ -27,7 +27,8 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
-from ..infrastructure.tracking.mlflow_tracker import get_git_commit_hash
+from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
+from ..infrastructure.storage import verify_run_config
 from .common.reporter import build_run_stem
 from .intervention.algo import generate_cross_indices
 from .intervention.artifacts import (
@@ -113,6 +114,31 @@ class InterventionUseCase:
             self.tracker_port, args, model, n_samples, conditions, git_hash
         )
 
+        run_id = getattr(args, "run_id", None)
+        if (
+            not run_id
+            and self.tracker_port
+            and isinstance(self.tracker_port.active_run_id, str)
+        ):
+            run_id = self.tracker_port.active_run_id
+        if not run_id:
+            run_id = config_hash or f"intervention_{int(time.time())}"
+
+        exp_dir = get_path_resolver().get_experiment_dir(run_id)
+        verify_run_config(
+            exp_dir,
+            {
+                "model_name": args.model_name,
+                "task": args.task,
+                "method": args.method,
+                "latent_steps": getattr(args, "latent_steps", 0),
+                "seed": args.seed,
+                "split": getattr(args, "split", "test"),
+                "prompt": getattr(args, "prompt", "sequential"),
+                "config_id": config_id,
+            },
+        )
+
         try:
             return self._run_experiment(
                 model=model,
@@ -128,6 +154,7 @@ class InterventionUseCase:
                 git_hash=git_hash,
                 config_id=config_id,
                 config_hash=config_hash,
+                run_id=run_id,
             )
         except Exception:
             exc_text = traceback.format_exc()
@@ -155,6 +182,7 @@ class InterventionUseCase:
         git_hash: str,
         config_id: str | None = None,
         config_hash: str | None = None,
+        run_id: str | None = None,
     ) -> tuple[InterventionMetrics, list[SampleInterventionRecord]]:
         contexts, traces, latencies, seq_lens, cache_bytes = (
             build_intervention_contexts(
@@ -168,6 +196,7 @@ class InterventionUseCase:
                 config_hash=config_hash,
                 sample_keys=sample_keys,
                 split=getattr(args, "split", "test"),
+                run_id=run_id,
             )
         )
         cross_indices = (
@@ -200,6 +229,7 @@ class InterventionUseCase:
             tracker_port=self.tracker_port,
             git_hash=git_hash,
             incremental_jsonl_path=incremental_path,
+            run_id=run_id,
         )
         total_time = time.time() - start_total_time
         ram_stats, cache_stats = compute_cache_and_ram_stats(

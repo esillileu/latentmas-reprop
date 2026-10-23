@@ -39,14 +39,13 @@ This repository is structured around **Hexagonal Architecture (Ports & Adapters)
 
 ### 1.1 Domain Layer (`src/latentmas_reprop/domain/`)
 The core domain is free of external framework dependencies (such as CLI parsers, torch disk I/O, or remote servers):
-- **Models (`domain/models/`)**: Data contracts including `Agent`, `ProblemSample`, `AgentTrace`, `EvaluationResult`, `BenchmarkMetrics`, `InterventionMetrics`, `TensorEntry`, and `TensorManifest`.
+- **Models (`domain/models/`)**: Data contracts including `Agent`, `ProblemSample`, `AgentTrace`, `EvaluationResult`, `BenchmarkMetrics`, `InterventionMetrics`, and storage exceptions.
 - **Ports (`domain/ports/`)**:
   - `ModelPort`: Interface for model tokenization, text generation, and latent state retrieval.
   - `DatasetPort`: Interface for loading standardized problem samples.
   - `EvaluatorPort`: Interface for answer extraction and ground-truth verification.
   - `CachePort`: Interface for execution cache management and safe cleanup.
   - `ExperimentTrackerPort`: Interface for metrics, parameters, and GenAI tracing spans.
-  - `TensorStorePort`: Interface for external heavy tensor persistence, checksum validation, and manifest registration.
 - **Services (`domain/services/`)**:
   - `LatentMASMethod`: Multi-agent communication via latent KV-cache representations.
   - `TextMASMethod`: Multi-agent collaboration via sequential/hierarchical text reasoning traces.
@@ -56,16 +55,16 @@ The core domain is free of external framework dependencies (such as CLI parsers,
 ### 1.2 Application Layer (`src/latentmas_reprop/application/`)
 Orchestrates domain services and ports to fulfill use-case workflows:
 - **`BenchmarkUseCase`**: Orchestrates loading problem batches, invoking multi-agent reasoning, evaluating answers, recording agent traces, and persisting execution run caches.
-- **`ReceiverAcquisitionUseCase`**: Evaluates carrier digit recovery across latent, prompt, and no-cache contexts.
-- **`InterventionUseCase`**: Manages paired condition interventions (`own`, `cross`, `drop`, `zero`).
+- **`ReceiverAcquisitionUseCase`**: Evaluates carrier digit recovery across latent, prompt, and no-cache contexts with per-condition file storage.
+- **`InterventionUseCase`**: Manages paired condition interventions (`own`, `cross`, `drop`, `zero`) with per-condition file storage and crash-safe resumption.
 - **`ReceiverReasoningUseCase` & `ReceiverComputePreflightUseCase`**: Trajectory analysis and compute budgeting.
 
 ### 1.3 Infrastructure Layer (`src/latentmas_reprop/infrastructure/`)
 Contains technology-specific adapters and system integration:
-- **`paths/resolver.py`**: `PathResolver` manages all physical filesystem locations (`root`, `storage`, `tensors`, `mlflow`, `artifacts`, `cache`, `data`, `configs`).
-- **`storage/tensor_store.py`**: `TensorStore` implements `TensorStorePort`, managing large tensor binaries (`storage/tensors/`) with atomic writes, SHA-256 checksums, and JSON manifests.
-- **`storage/reader.py`**: `ResearchDataReader` provides a unified read interface for downstream analysis scripts across MLflow and TensorStore.
-- **`tracking/mlflow_tracker.py`**: `MLflowTracker` implements `ExperimentTrackerPort`, directing persistent tracking to `storage/mlflow/mlflow.db` and `storage/mlflow/mlflow_artifacts/`.
+- **`paths/resolver.py`**: `PathResolver` manages all physical filesystem locations (`root`, `storage`, `experiments`, `mlflow`, `artifacts`, `cache`, `data`, `configs`).
+- **`storage/tensor_store.py`**: `FileStorage` provides condition-based directory management, atomic file saving, and condition completion verification.
+- **`storage/reader.py`**: `ResearchDataReader` provides a unified read interface for downstream analysis scripts across MLflow and file-based experiment directories.
+- **`tracking/mlflow_tracker.py`**: `MLflowTracker` implements `ExperimentTrackerPort`, directing persistent tracking to `storage/mlflow/mlflow.db` and linking runs to local experiment data directories.
 - **`cache/manager.py`**: `ExecutionCacheManager` implements `CachePort`, writing volatile caches under `.cache/` and supporting `clean_volatile_cache()`.
 - **`models/model_wrapper.py`**: `ModelWrapper` implements `ModelPort`, handling HuggingFace transformers (`AutoModelForCausalLM`) and vLLM backends.
 - **`datasets/`**: Loaders for GSM8K, AIME, ARC, MedQA, MBPP+, HumanEval+, etc.

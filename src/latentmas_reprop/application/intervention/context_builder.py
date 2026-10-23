@@ -1,5 +1,6 @@
 """Latent context builder for intervention experiments."""
 
+import contextlib
 import time
 from typing import Any
 
@@ -14,6 +15,13 @@ from ...domain.services.kv_cache import (
     move_past_kv,
 )
 from ...domain.services.latent_mas import LatentMASMethod
+from ...infrastructure.paths.resolver import get_path_resolver
+from ...infrastructure.storage import (
+    is_condition_complete,
+    load_json,
+    load_tensor,
+    save_condition_result,
+)
 
 
 def build_intervention_contexts(
@@ -27,6 +35,7 @@ def build_intervention_contexts(
     config_hash: str | None = None,
     sample_keys: list[str] | None = None,
     split: str = "test",
+    run_id: str | None = None,
 ) -> tuple[list[Any], list[list[dict]], list[float], list[int], list[int]]:
     """Phase 1: Build latent contexts on CPU for each sample in the dataset."""
     contexts: list[Any] = []
@@ -35,24 +44,60 @@ def build_intervention_contexts(
     context_seq_lens: list[int] = []
     cache_bytes_list: list[int] = []
 
+    resolver = get_path_resolver()
+
     for idx, item in enumerate(tqdm(dataset_iter, desc="Building latent contexts")):
-        t_start = time.time()
-        past_kv, agent_traces = method.build_latent_contexts([item])
-        t_build = time.time() - t_start
-
-        past_kv_cpu = move_past_kv(past_kv, "cpu")
-        contexts.append(past_kv_cpu)
-        traces_list.append(agent_traces[0] if agent_traces else [])
-        context_build_latencies.append(t_build)
-        context_seq_lens.append(get_past_kv_sequence_length(past_kv_cpu))
-        cache_bytes_list.append(estimate_past_kv_bytes(past_kv_cpu))
-
-        # Content-based stable sample identity
         if sample_keys and idx < len(sample_keys):
             s_key = sample_keys[idx]
         else:
             s_key = compute_sample_key(task, split, item.get("question", ""))
         key_prefix = s_key[:16]
+
+        shared_dir = (
+            resolver.get_condition_dir(run_id, s_key, "shared") if run_id else None
+        )
+        if shared_dir and is_condition_complete(shared_dir):
+            with contextlib.suppress(Exception):
+                past_kv_cpu = load_tensor(shared_dir / "kv.pt", map_location="cpu")
+                meta = load_json(shared_dir / "result.json")
+                contexts.append(past_kv_cpu)
+                traces_list.append(meta.get("traces", []))
+                context_build_latencies.append(meta.get("build_latency_sec", 0.0))
+                context_seq_lens.append(
+                    meta.get("seq_len", get_past_kv_sequence_length(past_kv_cpu))
+                )
+                cache_bytes_list.append(
+                    meta.get("cache_bytes", estimate_past_kv_bytes(past_kv_cpu))
+                )
+                continue
+
+        t_start = time.time()
+        past_kv, agent_traces = method.build_latent_contexts([item])
+        t_build = time.time() - t_start
+
+        past_kv_cpu = move_past_kv(past_kv, "cpu")
+        seq_len = get_past_kv_sequence_length(past_kv_cpu)
+        c_bytes = estimate_past_kv_bytes(past_kv_cpu)
+        traces = agent_traces[0] if agent_traces else []
+
+        contexts.append(past_kv_cpu)
+        traces_list.append(traces)
+        context_build_latencies.append(t_build)
+        context_seq_lens.append(seq_len)
+        cache_bytes_list.append(c_bytes)
+
+        if shared_dir:
+            with contextlib.suppress(Exception):
+                save_condition_result(
+                    shared_dir,
+                    {
+                        "seq_len": seq_len,
+                        "cache_bytes": c_bytes,
+                        "build_latency_sec": t_build,
+                        "traces": traces,
+                    },
+                    tensors={"kv": past_kv_cpu},
+                )
 
         if save_raw_cache:
             import logging
@@ -63,8 +108,6 @@ def build_intervention_contexts(
             model_slug = str(model_slug).replace("/", "_").replace("\\", "_")
             latent_steps = getattr(method, "latent_steps", 0)
 
-            # Isolated run cache name using config_hash AND content-based sample_key
-            # to guarantee reproducibility regardless of dataset traversal order or subset slicing
             cfg_part = f"_cfg{config_hash}" if config_hash else f"_ls{latent_steps}"
             isolated_name = (
                 f"latent_{task}_{model_slug}{cfg_part}_key_{key_prefix}_s{seed}.pt"

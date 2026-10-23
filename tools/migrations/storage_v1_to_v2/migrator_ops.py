@@ -1,13 +1,9 @@
 """File, database, and tensor operations for storage v1 to v2 migration."""
 
-import contextlib
 import hashlib
-import json
 import shutil
 import sqlite3
 from pathlib import Path
-
-import torch
 
 from .schemas import (
     InventoryItem,
@@ -168,61 +164,20 @@ def copy_file(
 def migrate_tensor(
     src: Path, item: InventoryItem, dest_root: Path, dry_run: bool
 ) -> MigrationRecord:
-    run_id = item.run_id or "orphans"
-    artifact_id = src.stem
-
-    dest_dir = dest_root / "tensors" / run_id / "run" / "main"
-    dest = dest_dir / f"0_{src.name}"
+    if item.run_id:
+        dest = dest_root / "experiments" / item.run_id / src.name
+    else:
+        dest = dest_root / "unassigned" / "tensors" / src.name
 
     if dry_run:
         return MigrationRecord(
             source_path=str(src),
             destination_path=str(dest),
             item_type=item.item_type,
-            run_id=run_id,
+            run_id=item.run_id,
             checksum_source=item.checksum or "",
             checksum_dest=None,
             status=MigrationStatus.PENDING,
         )
 
-    rec = copy_file(src, dest, item, dry_run=False)
-    if rec.status == MigrationStatus.FAILED:
-        return rec
-
-    try:
-        tensor = torch.load(dest, map_location="cpu", weights_only=False)
-        shape = list(tensor.shape) if hasattr(tensor, "shape") else []
-        dtype = str(getattr(tensor, "dtype", "unknown"))
-    except Exception:
-        shape = []
-        dtype = "unknown"
-
-    manifest_path = dest_root / "tensors" / run_id / "tensor_manifest.json"
-    manifest_data = {"run_id": run_id, "schema_version": "1.0.0", "entries": {}}
-    if manifest_path.is_file():
-        with contextlib.suppress(Exception):
-            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
-
-    entry_data = {
-        "run_id": run_id,
-        "sample_key": "run",
-        "branch_id": "main",
-        "segment_id": "0",
-        "artifact_id": artifact_id,
-        "artifact_type": "migrated_tensor",
-        "storage_uri": f"file://{dest.resolve().as_posix()}",
-        "shape": shape,
-        "dtype": dtype,
-        "checksum": item.checksum or compute_sha256(dest),
-        "schema_version": "1.0.0",
-        "retention_class": "persistent",
-        "status": "complete",
-        "metadata": {"migrated_from": str(src)},
-    }
-    comp_key = f"run:main:0:{artifact_id}"
-    manifest_data["entries"][comp_key] = entry_data
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
-        json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    return rec
+    return copy_file(src, dest, item, dry_run=False)

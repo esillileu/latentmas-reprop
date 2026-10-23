@@ -62,6 +62,10 @@ def test_clean_volatile_cache(tmp_path):
     tensor_file.parent.mkdir(parents=True, exist_ok=True)
     tensor_file.write_text("dummy tensor")
 
+    exp_file = resolver.experiments_dir / "test_run" / "config.json"
+    exp_file.parent.mkdir(parents=True, exist_ok=True)
+    exp_file.write_text('{"run_id": "test_run"}')
+
     # Volatile cache files must be cleaned, but active checkpoints must be preserved
     runtime_file = manager.get_layer_path(CacheLayer.RUNTIME) / "scratch.json"
     runtime_file.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +92,7 @@ def test_clean_volatile_cache(tmp_path):
     )
     assert persistent_db.is_file()
     assert tensor_file.is_file()
+    assert exp_file.is_file()
     assert resumption_file.is_file(), (
         "Incomplete benchmark resumption log must not be deleted by routine clean-cache"
     )

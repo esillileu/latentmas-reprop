@@ -102,7 +102,28 @@ class MLflowTracker(ExperimentTrackerPort):
             run_name=run_name,
             tags=run_tags,
         )
+        active_id = None
+        if self._active_run is not None:
+            active_info = getattr(self._active_run, "info", None)
+            active_id = (
+                getattr(active_info, "run_id", None)
+                if active_info is not None
+                else None
+            )
+        if active_id:
+            exp_dir = self.resolver.get_experiment_dir(active_id)
+            with suppress(Exception):
+                mlflow.set_tags(
+                    {
+                        "data_dir": str(exp_dir),
+                        "storage_run_id": active_id,
+                    }
+                )
         return self._active_run
+
+    @property
+    def client(self) -> Any:
+        return mlflow.tracking.MlflowClient()
 
     @property
     def active_run_id(self) -> str | None:

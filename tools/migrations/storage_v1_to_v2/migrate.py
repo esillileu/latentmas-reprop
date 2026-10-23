@@ -79,10 +79,10 @@ class StorageMigrator:
             parts = rel.parts
             if "runs" in parts:
                 idx = parts.index("runs")
-                sub = Path(*parts[idx:])
+                sub = Path(*parts[idx + 1 :])
             else:
                 sub = rel
-            dest = self.dest_root / "evaluation" / sub
+            dest = self.dest_root / "experiments" / sub
             rec = copy_file(src, dest, item, self.dry_run)
             self.records.append(rec)
         elif item.item_type == MigrationItemType.TENSOR_BINARY:

@@ -78,9 +78,6 @@ class MigrationVerifier:
             else:
                 self.report.success_count += 1
 
-        # 3. Verify Tensor Manifests
-        self._verify_tensor_manifests()
-
         return self.report
 
     def _verify_sqlite_db(self) -> None:
@@ -101,39 +98,6 @@ class MigrationVerifier:
         except Exception as exc:
             self.report.errors.append(f"SQLite DB check failed: {exc}")
             self.report.db_valid = False
-
-    def _verify_tensor_manifests(self) -> None:
-        tensors_root = self.dest_root / "tensors"
-        if not tensors_root.is_dir():
-            return
-
-        for manifest_path in tensors_root.rglob("tensor_manifest.json"):
-            try:
-                manifest_dict = json.loads(manifest_path.read_text(encoding="utf-8"))
-                entries = manifest_dict.get("entries", {})
-                for key, entry in entries.items():
-                    uri = entry.get("storage_uri", "")
-                    if uri.startswith("file://"):
-                        tensor_file = Path(uri[7:])
-                    else:
-                        tensor_file = Path(uri)
-                    if not tensor_file.is_file():
-                        self.report.missing_count += 1
-                        self.report.errors.append(
-                            f"Tensor file missing: {tensor_file} for {key}"
-                        )
-                    else:
-                        actual_checksum = compute_sha256(tensor_file)
-                        expected_checksum = entry.get("checksum")
-                        if actual_checksum != expected_checksum:
-                            self.report.mismatch_count += 1
-                            self.report.errors.append(
-                                f"Tensor checksum mismatch for {tensor_file}: expected {expected_checksum}, found {actual_checksum}"
-                            )
-            except Exception as exc:
-                self.report.errors.append(
-                    f"Failed to verify tensor manifest at {manifest_path}: {exc}"
-                )
 
 
 def main() -> None:
