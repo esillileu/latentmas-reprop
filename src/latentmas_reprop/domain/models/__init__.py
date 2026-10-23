@@ -16,10 +16,17 @@ from .intervention import (
     InterventionMetrics,
     SampleInterventionRecord,
 )
+from .tensor_artifact import (
+    ArtifactStatus,
+    RetentionClass,
+    TensorEntry,
+    TensorManifest,
+)
 
 __all__ = [
     "Agent",
     "AgentTrace",
+    "ArtifactStatus",
     "BenchmarkMetrics",
     "EvaluationResult",
     "InterventionCondition",
@@ -27,7 +34,10 @@ __all__ = [
     "ProblemSample",
     "ReceiverAcquisitionMetrics",
     "ReceiverAcquisitionRecord",
+    "RetentionClass",
     "SampleInterventionRecord",
+    "TensorEntry",
+    "TensorManifest",
     "compute_sample_key",
     "default_agents",
 ]
