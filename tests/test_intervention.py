@@ -254,7 +254,7 @@ def test_intervention_context_builder_content_based_keys(tmp_path):
     saved_files = list(cache.get_layer_path(CacheLayer.LATENT_INTERVENTIONS).iterdir())
     filenames = [f.name for f in saved_files]
 
-    # Verify content-based filename is present
+    # Verify content-based filename is present and legacy alias is not written
     expected_filename = f"latent_gsm8k_test_model_cfgabc123_key_{expected_key}_s42.pt"
     assert expected_filename in filenames
-    assert "latent_gsm8k_0_s42.pt" in filenames  # legacy alias also preserved
+    assert "latent_gsm8k_0_s42.pt" not in filenames

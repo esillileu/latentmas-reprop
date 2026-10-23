@@ -141,7 +141,11 @@ class ReceiverAcquisitionUseCase:
                     mapping, "tokenizer/candidate_token_mapping.json"
                 )
             runtime_dir = self.cache_port.get_layer_path(CacheLayer.RUNTIME)
-            incremental_path = runtime_dir / f"acquisition_partial_{int(time.time())}.jsonl"
+            safe_model = str(args.model_name).replace("/", "_").replace("\\", "_")
+            acq_stem = (
+                f"{safe_model}_ls{args.latent_steps}_s{args.seed}_n{len(samples)}"
+            )
+            incremental_path = runtime_dir / f"acquisition_checkpoint_{acq_stem}.jsonl"
             records, hidden, context_runtime = run_acquisition_loop(
                 model,
                 args,

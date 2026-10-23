@@ -9,9 +9,13 @@ import torch
 
 from ...domain.models.tensor_artifact import (
     ArtifactStatus,
+    ImmutableTensorOverwriteError,
+    ManifestCorruptedError,
     RetentionClass,
+    TensorChecksumMismatchError,
     TensorEntry,
     TensorManifest,
+    TensorMissingError,
 )
 from ...domain.ports.tensor_store_port import TensorStorePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
@@ -51,6 +55,7 @@ class TensorStore(TensorStorePort):
         return self._get_run_dir(run_id) / "tensor_manifest.json"
 
     def get_manifest(self, run_id: str) -> TensorManifest | None:
+        """Load manifest from disk. Raises ManifestCorruptedError if file is invalid."""
         path = self._get_manifest_path(run_id)
         if not path.is_file():
             return None
@@ -58,8 +63,10 @@ class TensorStore(TensorStorePort):
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             return TensorManifest.from_dict(data)
-        except Exception:
-            return None
+        except Exception as exc:
+            raise ManifestCorruptedError(
+                f"Tensor manifest at '{path}' is corrupted and cannot be parsed: {exc}"
+            ) from exc
 
     def _save_manifest(self, manifest: TensorManifest) -> None:
         path = self._get_manifest_path(manifest.run_id)
@@ -83,9 +90,15 @@ class TensorStore(TensorStorePort):
     ) -> TensorEntry:
         """Atomically persist a tensor with checksum and register it into run manifest."""
         run_dir = self._get_run_dir(run_id)
-        safe_artifact_id = str(artifact_id).replace("/", "_").replace("\\", "_")
-        target_file = run_dir / f"{safe_artifact_id}.pt"
-        tmp_file = run_dir / f".{safe_artifact_id}.pt.tmp"
+        safe_sample = str(sample_key or "run").replace("/", "_").replace("\\", "_")
+        safe_branch = str(branch_id or "main").replace("/", "_").replace("\\", "_")
+        safe_segment = str(segment_id or "0").replace("/", "_").replace("\\", "_")
+        safe_artifact = str(artifact_id).replace("/", "_").replace("\\", "_")
+
+        target_dir = run_dir / safe_sample / safe_branch
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file = target_dir / f"{safe_segment}_{safe_artifact}.pt"
+        tmp_file = target_dir / f".{safe_segment}_{safe_artifact}.pt.tmp"
 
         # 1. Save tensor to temporary file
         torch.save(tensor, tmp_file)
@@ -95,10 +108,20 @@ class TensorStore(TensorStorePort):
         shape = list(tensor.shape) if hasattr(tensor, "shape") else []
         dtype = str(getattr(tensor, "dtype", "unknown"))
 
-        # 3. Atomically replace target file
+        # 3. Check immutability if file already exists
+        if target_file.is_file() and retention_class == RetentionClass.PERSISTENT:
+            existing_checksum = compute_file_sha256(target_file)
+            if existing_checksum != checksum:
+                tmp_file.unlink(missing_ok=True)
+                raise ImmutableTensorOverwriteError(
+                    f"Cannot overwrite immutable tensor at '{target_file}' with different content "
+                    f"(existing: {existing_checksum}, new: {checksum})."
+                )
+
+        # 4. Atomically replace target file
         tmp_file.replace(target_file)
 
-        # 4. Construct entry
+        # 5. Construct entry
         storage_uri = f"file://{target_file.resolve().as_posix()}"
         entry = TensorEntry(
             run_id=run_id,
@@ -116,7 +139,7 @@ class TensorStore(TensorStorePort):
             metadata=metadata or {},
         )
 
-        # 5. Atomically update manifest
+        # 6. Atomically update manifest
         manifest = self.get_manifest(run_id) or TensorManifest(run_id=run_id)
         manifest.add_entry(entry)
         self._save_manifest(manifest)
@@ -138,38 +161,66 @@ class TensorStore(TensorStorePort):
         run_id: str | None = None,
         verify_checksum: bool = True,
         map_location: Any = None,
+        sample_key: str = "",
+        branch_id: str = "",
+        segment_id: str = "",
     ) -> torch.Tensor:
         """Load a tensor artifact by entry or artifact_id, validating existence and checksum."""
         if isinstance(entry_or_id, TensorEntry):
             entry = entry_or_id
         else:
             if not run_id:
-                raise ValueError("run_id must be provided when loading tensor by artifact_id string")
-            entry = self.get_entry(run_id, entry_or_id)
+                raise ValueError(
+                    "run_id must be provided when loading tensor by artifact_id string"
+                )
+            entry = self.get_entry(
+                run_id,
+                entry_or_id,
+                sample_key=sample_key,
+                branch_id=branch_id,
+                segment_id=segment_id,
+            )
             if entry is None:
-                raise FileNotFoundError(f"Tensor artifact '{entry_or_id}' not found in manifest of run '{run_id}'")
+                raise TensorMissingError(
+                    f"Tensor artifact '{entry_or_id}' not found in manifest of run '{run_id}'."
+                )
 
         target_path = self._resolve_entry_path(entry)
         if not target_path.is_file():
             entry.status = ArtifactStatus.MISSING
-            raise FileNotFoundError(f"Tensor file missing on disk: {target_path} (artifact: {entry.artifact_id})")
+            raise TensorMissingError(
+                f"Tensor file missing on disk: {target_path} (artifact: {entry.artifact_id})"
+            )
 
         if verify_checksum:
             current_checksum = compute_file_sha256(target_path)
             if current_checksum != entry.checksum:
                 entry.status = ArtifactStatus.CORRUPTED
-                raise ValueError(
+                raise TensorChecksumMismatchError(
                     f"Tensor artifact corrupted (checksum mismatch): {target_path}. "
                     f"Expected {entry.checksum}, found {current_checksum}"
                 )
 
         return torch.load(target_path, map_location=map_location, weights_only=False)
 
-    def get_entry(self, run_id: str, artifact_id: str) -> TensorEntry | None:
+    def get_entry(
+        self,
+        run_id: str,
+        artifact_id: str,
+        sample_key: str = "",
+        branch_id: str = "",
+        segment_id: str = "",
+    ) -> TensorEntry | None:
+        """Retrieve entry from manifest by coordinates."""
         manifest = self.get_manifest(run_id)
         if manifest is None:
             return None
-        return manifest.get_entry(artifact_id)
+        return manifest.get_entry(
+            artifact_id,
+            sample_key=sample_key,
+            branch_id=branch_id,
+            segment_id=segment_id,
+        )
 
     def register_reference(
         self,
@@ -195,11 +246,15 @@ class TensorStore(TensorStorePort):
             status=source_entry.status,
             metadata={
                 **source_entry.metadata,
+                "is_reference": True,
                 "referenced_from_run_id": source_entry.run_id,
                 "referenced_from_artifact_id": source_entry.artifact_id,
+                "referenced_from_composite_key": source_entry.composite_key,
             },
         )
-        manifest = self.get_manifest(target_run_id) or TensorManifest(run_id=target_run_id)
+        manifest = self.get_manifest(target_run_id) or TensorManifest(
+            run_id=target_run_id
+        )
         manifest.add_entry(ref_entry)
         self._save_manifest(manifest)
         return ref_entry

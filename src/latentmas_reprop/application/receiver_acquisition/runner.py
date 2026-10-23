@@ -49,12 +49,46 @@ def run_acquisition_loop(
 ) -> tuple[list[ReceiverAcquisitionRecord], dict[str, Any], float]:
     """Execute sender caching and receiver evaluation loop across all samples and conditions."""
     import json
+
     records: list[ReceiverAcquisitionRecord] = []
     hidden: dict[str, torch.Tensor] = {}
+
+    expected_per_sample = len(args.context_modes) * sum(
+        c in {"own", "cross"} for c in args.acquisition_conditions
+    ) + sum(c in {"drop", "drop_position_matched"} for c in args.acquisition_conditions)
+
+    # Load existing checkpoint to enable crash-safe resumption
+    completed_by_index: dict[int, list[ReceiverAcquisitionRecord]] = {}
+    if incremental_jsonl_path:
+        from pathlib import Path
+
+        chk = Path(incremental_jsonl_path)
+        if chk.is_file():
+            for line in chk.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                d = json.loads(line)
+                idx = d.get("sample_index")
+                if idx is not None:
+                    fields = ReceiverAcquisitionRecord.__dataclass_fields__.keys()
+                    rec = ReceiverAcquisitionRecord(
+                        **{f: d[f] for f in fields if f in d}
+                    )
+                    completed_by_index.setdefault(idx, []).append(rec)
+
     bundles = [build_sender_cache(model, args, sample) for sample in samples]
     context_runtime = sum(bundle.build_latency_sec for bundle in bundles)
 
     for index, target in enumerate(tqdm(samples, desc="Receiver evaluation")):
+        # Skip sample evaluation if already completed in checkpoint
+        if (
+            index in completed_by_index
+            and len(completed_by_index[index]) >= expected_per_sample
+        ):
+            for rec in completed_by_index[index]:
+                records.append(rec)
+            continue
+
         cross = samples[cross_indices[index]] if cross_indices else None
         target_bundle = bundles[index]
         source_bundle = bundles[cross_indices[index]] if cross_indices else None
@@ -136,12 +170,10 @@ def run_acquisition_loop(
 
             sample_records = [r for r in records if r.sample_index == index]
             if incremental_jsonl_path is not None:
-                try:
-                    with open(incremental_jsonl_path, "a", encoding="utf-8") as f:
-                        for r in sample_records:
-                            f.write(json.dumps(r.to_dict(), ensure_ascii=False) + "\n")
-                except Exception:
-                    pass
+                with open(incremental_jsonl_path, "a", encoding="utf-8") as f:
+                    for r in sample_records:
+                        f.write(json.dumps(r.to_dict(), ensure_ascii=False) + "\n")
+                    f.flush()
             if root is not None:
                 root.set_outputs(
                     {

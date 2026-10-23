@@ -1,6 +1,7 @@
 """Execution runner for latent communication intervention experiments."""
 
 import random
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -83,9 +84,39 @@ def run_intervention_decoding(
     num_layers = get_past_kv_num_layers(contexts[0]) if contexts else 0
     cache_dtype = get_past_kv_dtype(contexts[0]) if contexts else None
 
+    # Load existing checkpoint to enable crash-safe resumption without duplicate evaluations
+    completed_by_key: dict[str, list[SampleInterventionRecord]] = {}
+    if incremental_jsonl_path:
+        chk_path = Path(incremental_jsonl_path)
+        if chk_path.is_file():
+            import json
+
+            for line in chk_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                d = json.loads(line)
+                k = d.get("sample_key")
+                if k:
+                    fields = SampleInterventionRecord.__dataclass_fields__.keys()
+                    rec = SampleInterventionRecord(
+                        **{f: d[f] for f in fields if f in d}
+                    )
+                    completed_by_key.setdefault(k, []).append(rec)
+
     for i, item in enumerate(tqdm(dataset_iter, desc="Intervention decoding")):
         sample_id = f"sample_{i}"
         s_key = sample_keys[i]
+
+        # Skip evaluation if all conditions were already completed in checkpoint
+        if s_key in completed_by_key and len(completed_by_key[s_key]) >= len(
+            conditions
+        ):
+            for rec in completed_by_key[s_key]:
+                sample_records.append(rec)
+                condition_latencies[rec.condition].append(rec.latency or 0.0)
+                condition_tokens[rec.condition].append(rec.generated_tokens or 0)
+            continue
+
         gold = str(item.get("gold", ""))
         question = item.get("question", "")
         cross_j = cross_indices[i] if "cross" in conditions else None
@@ -177,13 +208,12 @@ def run_intervention_decoding(
             )
 
         if incremental_jsonl_path is not None:
-            try:
-                import json
-                with open(incremental_jsonl_path, "a", encoding="utf-8") as f:
-                    for rec in sample_results.values():
-                        f.write(json.dumps(rec.to_dict(), ensure_ascii=False) + "\n")
-            except Exception:
-                pass
+            import json
+
+            with open(incremental_jsonl_path, "a", encoding="utf-8") as f:
+                for rec in sample_results.values():
+                    f.write(json.dumps(rec.to_dict(), ensure_ascii=False) + "\n")
+                f.flush()
 
         log_sample_assessments(
             tracker_port,

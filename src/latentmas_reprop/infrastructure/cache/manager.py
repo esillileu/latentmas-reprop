@@ -80,12 +80,12 @@ class ExecutionCacheManager(CachePort):
         purge_incomplete_runs=True is explicitly given.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         cleaned = []
         # Pure scratch layers that can be safely wiped at any time
         volatile_layers = [
-            CacheLayer.RUNTIME,
             CacheLayer.MODELS_REALIGN,
             CacheLayer.EVALUATION_INTERVENTIONS,
             CacheLayer.EVALUATION_RECEIVER_ACQUISITION,
@@ -96,6 +96,20 @@ class ExecutionCacheManager(CachePort):
             if layer_dir.exists() and self._resolver.is_safe_cache_path(layer_dir):
                 shutil.rmtree(layer_dir, ignore_errors=True)
                 cleaned.append(layer_dir)
+
+        # Handle runtime scratch with protection for active in-progress checkpoints
+        runtime_dir = self.get_layer_path(CacheLayer.RUNTIME)
+        if runtime_dir.exists() and self._resolver.is_safe_cache_path(runtime_dir):
+            for item in list(runtime_dir.iterdir()):
+                is_checkpoint = "checkpoint" in item.name and item.suffix == ".jsonl"
+                if is_checkpoint and not purge_incomplete_runs:
+                    logger.info("Preserving active runtime checkpoint: %s", item)
+                    continue
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+                else:
+                    item.unlink(missing_ok=True)
+                cleaned.append(item)
 
         # Handle evaluation runs with granular protection for incomplete checkpoints
         runs_dir = self.get_layer_path(CacheLayer.EVALUATION_RUNS)
@@ -111,11 +125,14 @@ class ExecutionCacheManager(CachePort):
                         continue
                     samples_file = run_path / "samples.jsonl"
                     summary_file = run_path / "summary.json"
-                    is_incomplete = samples_file.is_file() and not summary_file.is_file()
+                    is_incomplete = (
+                        samples_file.is_file() and not summary_file.is_file()
+                    )
 
                     if is_incomplete and not purge_incomplete_runs:
                         logger.warning(
-                            "Preserved incomplete evaluation run checkpoint: %s", run_path
+                            "Preserved incomplete evaluation run checkpoint: %s",
+                            run_path,
                         )
                         continue
 

@@ -38,12 +38,22 @@ class TensorStorePort(ABC):
         run_id: str | None = None,
         verify_checksum: bool = True,
         map_location: Any = None,
+        sample_key: str = "",
+        branch_id: str = "",
+        segment_id: str = "",
     ) -> torch.Tensor:
         """Load a tensor artifact by entry or artifact_id, validating existence and integrity."""
         raise NotImplementedError
 
     @abstractmethod
-    def get_entry(self, run_id: str, artifact_id: str) -> TensorEntry | None:
+    def get_entry(
+        self,
+        run_id: str,
+        artifact_id: str,
+        sample_key: str = "",
+        branch_id: str = "",
+        segment_id: str = "",
+    ) -> TensorEntry | None:
         """Retrieve the metadata entry for a tensor artifact from the run manifest."""
         raise NotImplementedError
 

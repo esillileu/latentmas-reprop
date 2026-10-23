@@ -181,7 +181,9 @@ class InterventionUseCase:
             else []
         )
         runtime_dir = self.cache_port.get_layer_path("runtime")
-        incremental_path = runtime_dir / f"intervention_partial_{int(time.time())}.jsonl"
+        incremental_path = (
+            runtime_dir / f"intervention_checkpoint_{config_hash or 'default'}.jsonl"
+        )
         records, cond_latencies, cond_tokens = run_intervention_decoding(
             model=model,
             method=method,
