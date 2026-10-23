@@ -13,7 +13,9 @@ Use the links below to navigate the project documentation:
 | [**Architecture & Design**](docs/architecture.md) | Hexagonal Architecture (Ports & Adapters), domain models, ports, and layer separation |
 | [**Usage & Execution**](docs/usage.md) | Running benchmarks with `just run`, CLI options, and recipe reference |
 | [**Configuration Guide**](docs/configuration.md) | YAML preset schemas (`configs/`), naming conventions (`{method}_{model}_{task}.yaml`), and customization |
-| [**Cache & Path Management**](docs/cache_and_paths.md) | Unified `.cache/` hierarchy and central `PathResolver` system |
+| [**Storage, Cache & Path Management**](docs/cache_and_paths.md) | Universal storage tiers, `PathResolver`, and safe cache cleaning |
+| [**Storage Policy & Manifest**](docs/storage_policy.md) | Tensor store specification, manifest JSON schema, and identifier contracts |
+| [**Data Migration Plan**](docs/migration_plan.md) | Phase 6 10-step cutover and data migration procedure (plan only) |
 | [**Development Guide**](docs/development.md) | Developer setup, tests (`just test`), linter (`just lint`), and extending adapters |
 
 ---
