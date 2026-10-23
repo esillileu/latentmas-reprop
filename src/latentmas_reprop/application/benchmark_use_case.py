@@ -99,31 +99,23 @@ class BenchmarkUseCase:
             return processed, preds
 
         current_batch = batch[:remaining]
+        batch_start_time = time.perf_counter()
         if args.method == "latent_mas" and getattr(args, "use_vllm", False):
             results = method.run_batch_vllm(current_batch)
         else:
             results = method.run_batch(current_batch)
+        batch_elapsed = time.perf_counter() - batch_start_time
 
         if len(results) > remaining:
             results = results[:remaining]
 
+        per_sample_latency = batch_elapsed / max(1, len(results))
+
         batch_start = processed
         for offset, res in enumerate(results):
+            res["latency_sec"] = round(per_sample_latency, 4)
             preds.append(res)
             problem_idx = batch_start + offset + 1
-            print(f"\n==================== Problem #{problem_idx} ====================")
-            print("Question:\n" + res.get("question", "").strip())
-            for a in res.get("agents", []):
-                name, role = a.get("name", "Agent"), a.get("role", "")
-                print(f"----- Agent: {name} ({role}) -----")
-                print("[To Tokenize]\n" + a.get("input", "").rstrip())
-                if a.get("latent_steps") is not None:
-                    print(f"[Latent Steps]\n{a['latent_steps']}")
-                print("[Output]\n" + a.get("output", "").rstrip())
-                print("----------------------------------------------")
-            print(
-                f"Result: Pred={res.get('prediction')} | Gold={res.get('gold')} | OK={res.get('correct')}"
-            )
             trace_benchmark_sample(self.tracker_port, args, problem_idx, res)
 
         processed += len(results)
@@ -147,9 +139,16 @@ class BenchmarkUseCase:
         store = BenchmarkRunStore(self.cache_port, run_id)
         start_benchmark_tracker(self.tracker_port, args)
 
-        if store.is_complete():
+        dataset = list(self.dataset_port.load(task=args.task, split=args.split))
+        target = (
+            len(dataset) if requested_max_samples == -1 else requested_max_samples
+        )
+        target = min(target, len(dataset))
+
+        required_keys = [sample_key_for(args, item) for item in dataset[:target]]
+        if store.has_keys(required_keys):
             print(f"Reusing completed run {run_id}")
-            metrics, predictions = store.load_finished()
+            metrics, predictions = store.load_finished(target)
             save_benchmark_artifacts(
                 self.cache_port,
                 self.tracker_port,
@@ -162,11 +161,6 @@ class BenchmarkUseCase:
 
         try:
             method = self.create_method(model, args)
-            dataset = list(self.dataset_port.load(task=args.task, split=args.split))
-            target = (
-                len(dataset) if requested_max_samples == -1 else requested_max_samples
-            )
-            target = min(target, len(dataset))
             selected = dataset[:target]
             done = store.completed_keys()
             pending = [

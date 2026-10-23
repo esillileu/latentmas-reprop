@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> None:
                 )
             print(f"[{index}/{len(runs)}] {details or 'single configuration'}")
         return
+
     for args in runs:
         run_benchmark(args)
 
