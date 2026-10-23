@@ -6,7 +6,7 @@ import traceback
 from typing import Any
 
 from ..domain.models import ReceiverAcquisitionMetrics, ReceiverAcquisitionRecord
-from ..domain.ports.cache_port import CachePort
+from ..domain.ports.cache_port import CacheLayer, CachePort
 from ..domain.ports.tracking_port import ExperimentTrackerPort
 from ..domain.services.prompts.acquisition import (
     CANDIDATE_DIGITS,
@@ -140,6 +140,8 @@ class ReceiverAcquisitionUseCase:
                 self.tracker_port.log_dict(
                     mapping, "tokenizer/candidate_token_mapping.json"
                 )
+            runtime_dir = self.cache_port.get_layer_path(CacheLayer.RUNTIME)
+            incremental_path = runtime_dir / f"acquisition_partial_{int(time.time())}.jsonl"
             records, hidden, context_runtime = run_acquisition_loop(
                 model,
                 args,
@@ -149,6 +151,7 @@ class ReceiverAcquisitionUseCase:
                 receiver_mask,
                 mapping,
                 self.tracker_port,
+                incremental_jsonl_path=incremental_path,
             )
             sender_states = None
             if args.probe_sender_latents:

@@ -1,12 +1,12 @@
 """Latent context builder for intervention experiments."""
 
-import contextlib
 import time
 from typing import Any
 
 import torch
 from tqdm import tqdm
 
+from ...domain.models import compute_sample_key
 from ...domain.ports.cache_port import CacheLayer, CachePort
 from ...domain.services.kv_cache import (
     estimate_past_kv_bytes,
@@ -23,6 +23,10 @@ def build_intervention_contexts(
     seed: int,
     save_raw_cache: bool,
     cache_port: CachePort,
+    config_id: str | None = None,
+    config_hash: str | None = None,
+    sample_keys: list[str] | None = None,
+    split: str = "test",
 ) -> tuple[list[Any], list[list[dict]], list[float], list[int], list[int]]:
     """Phase 1: Build latent contexts on CPU for each sample in the dataset."""
     contexts: list[Any] = []
@@ -43,12 +47,36 @@ def build_intervention_contexts(
         context_seq_lens.append(get_past_kv_sequence_length(past_kv_cpu))
         cache_bytes_list.append(estimate_past_kv_bytes(past_kv_cpu))
 
+        # Content-based stable sample identity
+        if sample_keys and idx < len(sample_keys):
+            s_key = sample_keys[idx]
+        else:
+            s_key = compute_sample_key(task, split, item.get("question", ""))
+        key_prefix = s_key[:16]
+
         if save_raw_cache:
-            cache_name = f"latent_{task}_{idx}_s{seed}.pt"
-            with contextlib.suppress(Exception):
+            import logging
+            logger = logging.getLogger(__name__)
+
+            model_slug = getattr(getattr(method, "model", None), "model_name", "model")
+            model_slug = str(model_slug).replace("/", "_").replace("\\", "_")
+            latent_steps = getattr(method, "latent_steps", 0)
+
+            # Isolated run cache name using config_hash AND content-based sample_key
+            # to guarantee reproducibility regardless of dataset traversal order or subset slicing
+            cfg_part = f"_cfg{config_hash}" if config_hash else f"_ls{latent_steps}"
+            isolated_name = f"latent_{task}_{model_slug}{cfg_part}_key_{key_prefix}_s{seed}.pt"
+            legacy_name = f"latent_{task}_{idx}_s{seed}.pt"
+            try:
                 cache_port.save_torch(
-                    CacheLayer.LATENT_INTERVENTIONS, cache_name, past_kv_cpu
+                    CacheLayer.LATENT_INTERVENTIONS, isolated_name, past_kv_cpu
                 )
+                # Keep legacy file for backward compatibility
+                cache_port.save_torch(
+                    CacheLayer.LATENT_INTERVENTIONS, legacy_name, past_kv_cpu
+                )
+            except Exception as exc:
+                logger.warning("Failed to save raw latent context %s: %s", isolated_name, exc)
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

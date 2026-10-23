@@ -1,6 +1,5 @@
 """Artifact persistence and MLflow tracking for benchmark experiments."""
 
-import contextlib
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +36,8 @@ def start_benchmark_tracker(
     }
     if hasattr(args, "latent_steps") and args.latent_steps:
         tags["latent_steps"] = str(args.latent_steps)
+    if hasattr(args, "config_id") and args.config_id:
+        tags["config_id"] = str(args.config_id)
 
     tracker_port.start_run(
         experiment_name=exp_name,
@@ -165,7 +166,10 @@ def save_benchmark_artifacts(
     preds: list[dict[str, Any]],
 ) -> None:
     """Save benchmark cache and upload artifacts to MLflow."""
-    with contextlib.suppress(Exception):
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
         cache_port.save_json(
             CacheLayer.EVALUATION_RUNS,
             run_cache_filename,
@@ -174,6 +178,8 @@ def save_benchmark_artifacts(
                 "predictions": preds,
             },
         )
+    except Exception as exc:
+        logger.error("Failed to save benchmark run cache %s: %s", run_cache_filename, exc)
 
     if not tracker_port:
         return

@@ -45,8 +45,10 @@ def run_acquisition_loop(
     receiver_mask: torch.Tensor,
     mapping: dict[str, Any],
     tracker_port: ExperimentTrackerPort | None,
+    incremental_jsonl_path: Any = None,
 ) -> tuple[list[ReceiverAcquisitionRecord], dict[str, Any], float]:
     """Execute sender caching and receiver evaluation loop across all samples and conditions."""
+    import json
     records: list[ReceiverAcquisitionRecord] = []
     hidden: dict[str, torch.Tensor] = {}
     bundles = [build_sender_cache(model, args, sample) for sample in samples]
@@ -133,6 +135,13 @@ def run_acquisition_loop(
                         )
 
             sample_records = [r for r in records if r.sample_index == index]
+            if incremental_jsonl_path is not None:
+                try:
+                    with open(incremental_jsonl_path, "a", encoding="utf-8") as f:
+                        for r in sample_records:
+                            f.write(json.dumps(r.to_dict(), ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
             if root is not None:
                 root.set_outputs(
                     {

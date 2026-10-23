@@ -212,3 +212,49 @@ def test_failed_experiment_calls_end_run_failed():
         uc.execute(model=model_mock, args=args)
 
     tracker.end_run.assert_called_once_with(status="FAILED")
+
+
+def test_intervention_context_builder_content_based_keys(tmp_path):
+    """Test that saved raw context KV files use content-based sample keys."""
+    from latentmas_reprop.application.intervention.context_builder import (
+        build_intervention_contexts,
+    )
+    from latentmas_reprop.domain.models import compute_sample_key
+    from latentmas_reprop.domain.ports.cache_port import CacheLayer
+    from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
+    from latentmas_reprop.infrastructure.paths.resolver import PathResolver
+
+    resolver = PathResolver(tmp_path)
+    cache = ExecutionCacheManager(resolver)
+
+    method_mock = MagicMock()
+    # Dummy past_kv (tuple of tensors)
+    method_mock.build_latent_contexts.return_value = (
+        ((torch.zeros((1, 2, 4, 8)), torch.zeros((1, 2, 4, 8))),),
+        [[{"trace": "dummy"}]],
+    )
+    method_mock.model = MagicMock()
+    method_mock.model.model_name = "test_model"
+    method_mock.latent_steps = 5
+
+    item = {"question": "What is 2 + 2?"}
+    expected_key = compute_sample_key("gsm8k", "test", item["question"])[:16]
+
+    build_intervention_contexts(
+        method=method_mock,
+        dataset_iter=[item],
+        task="gsm8k",
+        seed=42,
+        save_raw_cache=True,
+        cache_port=cache,
+        config_hash="abc123",
+        split="test",
+    )
+
+    saved_files = list(cache.get_layer_path(CacheLayer.LATENT_INTERVENTIONS).iterdir())
+    filenames = [f.name for f in saved_files]
+
+    # Verify content-based filename is present
+    expected_filename = f"latent_gsm8k_test_model_cfgabc123_key_{expected_key}_s42.pt"
+    assert expected_filename in filenames
+    assert "latent_gsm8k_0_s42.pt" in filenames  # legacy alias also preserved

@@ -1,6 +1,6 @@
 """Artifact persistence and MLflow artifact logging for intervention experiments."""
 
-import contextlib
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +10,33 @@ from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ..common.reporter import clean_config_args, write_json, write_jsonl, write_yaml
 
 
+def build_intervention_config_id(args: Any, model_dtype: str = "unknown") -> tuple[str, str]:
+    """Generate deterministic config_id and compact config_hash for intervention experiments.
+
+    Captures model, revision, prompt, task, split, latent steps, seed, precision,
+    and decoding hyperparameters to completely isolate KV caches across conditions.
+    """
+    model = str(getattr(args, "model_name", "model")).replace("/", "_").replace("\\", "_")
+    task = str(getattr(args, "task", "task"))
+    split = str(getattr(args, "split", "test"))
+    prompt = str(getattr(args, "prompt", "sequential"))
+    latent_steps = int(getattr(args, "latent_steps", 0))
+    seed = int(getattr(args, "seed", 42))
+    temp = str(getattr(args, "temperature", 0.0))
+    top_p = str(getattr(args, "top_p", 1.0))
+    max_tokens = int(getattr(args, "max_new_tokens", 512))
+    backend = "vllm" if getattr(args, "use_vllm", False) else "transformers"
+    revision = str(getattr(args, "model_revision", "main"))
+
+    config_str = (
+        f"intervention__{model}__rev_{revision}__{task}__{split}__{prompt}"
+        f"__ls{latent_steps}__s{seed}__{model_dtype}__{backend}__mt{max_tokens}"
+        f"__temp{temp}__topp{top_p}"
+    )
+    config_hash = hashlib.sha256(config_str.encode("utf-8")).hexdigest()[:12]
+    return config_str, config_hash
+
+
 def start_intervention_tracker(
     tracker_port: ExperimentTrackerPort | None,
     args: Any,
@@ -17,18 +44,22 @@ def start_intervention_tracker(
     n_samples: int,
     conditions: list[str],
     git_hash: str,
-) -> None:
+) -> tuple[str, str]:
     """Start tracking run and log run parameters if tracker_port is available."""
-    if not tracker_port:
-        return
-    exp_name = getattr(args, "tracking_experiment_name", "latentmas_intervention")
-    run_name = f"{args.model_name}_{args.task}_intervention"
     backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
     model_dtype = (
         str(getattr(model.model, "dtype", "unknown"))
         if hasattr(model, "model")
         else "unknown"
     )
+    config_id, config_hash = build_intervention_config_id(args, model_dtype)
+
+    if not tracker_port:
+        return config_id, config_hash
+
+    exp_name = getattr(args, "tracking_experiment_name", "latentmas_intervention")
+    run_name = f"{args.model_name}_{args.task}_intervention"
+
     tracker_port.start_run(
         experiment_name=exp_name,
         run_name=run_name,
@@ -38,6 +69,8 @@ def start_intervention_tracker(
             "method": args.method,
             "experiment_type": "intervention",
             "git_commit": git_hash,
+            "config_id": config_id,
+            "config_hash": config_hash,
         },
     )
     tracker_port.log_params(
@@ -57,10 +90,13 @@ def start_intervention_tracker(
             "dtype": model_dtype,
             "cross_pairing_policy": getattr(args, "cross_policy", "shift_1"),
             "git_commit": git_hash,
+            "config_id": config_id,
+            "config_hash": config_hash,
             "intervention_conditions": str(conditions),
             "device": str(model.device),
         }
     )
+    return config_id, config_hash
 
 
 def log_sample_assessments(
@@ -137,8 +173,11 @@ def save_intervention_artifacts(
     ram_stats: dict[str, Any],
 ) -> None:
     """Save all evaluation artifacts to disk and log to MLflow tracker."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     local_cache_file = f"{run_stem}.json"
-    with contextlib.suppress(Exception):
+    try:
         cache_port.save_json(
             CacheLayer.EVALUATION_INTERVENTIONS,
             local_cache_file,
@@ -147,6 +186,8 @@ def save_intervention_artifacts(
                 "records": [r.to_dict() for r in sample_records],
             },
         )
+    except Exception as exc:
+        logger.error("Failed to save intervention cache %s: %s", local_cache_file, exc)
 
     runtime_dir = Path(cache_port.get_layer_path(CacheLayer.RUNTIME))
     sample_results_path = runtime_dir / f"{run_stem}_sample_results.jsonl"

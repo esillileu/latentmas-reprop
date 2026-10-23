@@ -136,6 +136,7 @@ class BenchmarkUseCase:
         dtype_name = str(getattr(model, "dtype_name", ""))
         requested_max_samples = int(args.max_samples)
         run_id = build_run_id(args, dtype_name)
+        args.config_id = run_id
         store = BenchmarkRunStore(self.cache_port, run_id)
         start_benchmark_tracker(self.tracker_port, args)
 

@@ -71,6 +71,7 @@ def run_intervention_decoding(
     cache_bytes_list: list[int],
     tracker_port: ExperimentTrackerPort | None,
     git_hash: str,
+    incremental_jsonl_path: Any = None,
 ) -> tuple[
     list[SampleInterventionRecord], dict[str, list[float]], dict[str, list[int]]
 ]:
@@ -174,6 +175,15 @@ def run_intervention_decoding(
             trace_id = _finalize_root_span(
                 root_span, tracker_port, i, s_key, conditions, cond_preds
             )
+
+        if incremental_jsonl_path is not None:
+            try:
+                import json
+                with open(incremental_jsonl_path, "a", encoding="utf-8") as f:
+                    for rec in sample_results.values():
+                        f.write(json.dumps(rec.to_dict(), ensure_ascii=False) + "\n")
+            except Exception:
+                pass
 
         log_sample_assessments(
             tracker_port,
