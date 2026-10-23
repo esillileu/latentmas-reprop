@@ -54,6 +54,9 @@ class BenchmarkRunStore:
         summary = self.read_summary()
         if not summary or summary.get("status") != "complete":
             return False
+        config = summary.get("config") or {}
+        if config.get("requested_max_samples") != -1:
+            return False
         metrics = summary.get("metrics") or {}
         return (
             summary.get("sample_count") == len(records)
@@ -92,8 +95,6 @@ class BenchmarkRunStore:
 
     def write_complete(self, payload: dict[str, Any]) -> None:
         """Persist the finished summary without touching samples already stored."""
-        if self.is_complete():
-            return
         self.root.mkdir(parents=True, exist_ok=True)
         temporary = self.summary_path.with_suffix(".json.tmp")
         write_json(temporary, payload)
