@@ -56,6 +56,7 @@ def build_intervention_contexts(
 
         if save_raw_cache:
             import logging
+
             logger = logging.getLogger(__name__)
 
             model_slug = getattr(getattr(method, "model", None), "model_name", "model")
@@ -65,18 +66,17 @@ def build_intervention_contexts(
             # Isolated run cache name using config_hash AND content-based sample_key
             # to guarantee reproducibility regardless of dataset traversal order or subset slicing
             cfg_part = f"_cfg{config_hash}" if config_hash else f"_ls{latent_steps}"
-            isolated_name = f"latent_{task}_{model_slug}{cfg_part}_key_{key_prefix}_s{seed}.pt"
-            legacy_name = f"latent_{task}_{idx}_s{seed}.pt"
+            isolated_name = (
+                f"latent_{task}_{model_slug}{cfg_part}_key_{key_prefix}_s{seed}.pt"
+            )
             try:
                 cache_port.save_torch(
                     CacheLayer.LATENT_INTERVENTIONS, isolated_name, past_kv_cpu
                 )
-                # Keep legacy file for backward compatibility
-                cache_port.save_torch(
-                    CacheLayer.LATENT_INTERVENTIONS, legacy_name, past_kv_cpu
-                )
             except Exception as exc:
-                logger.warning("Failed to save raw latent context %s: %s", isolated_name, exc)
+                logger.warning(
+                    "Failed to save raw latent context %s: %s", isolated_name, exc
+                )
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

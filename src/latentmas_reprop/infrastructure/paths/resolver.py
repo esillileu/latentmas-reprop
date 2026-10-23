@@ -111,26 +111,6 @@ class PathResolver:
         return path
 
     @property
-    def legacy_mlflow_db_path(self) -> Path:
-        """Path to legacy SQLite MLflow database in volatile cache (if present)."""
-        candidate_subdir = self.cache_dir / "mlflow" / "mlflow.db"
-        if candidate_subdir.is_file():
-            return candidate_subdir
-        return self.cache_dir / "mlflow.db"
-
-    @property
-    def legacy_mlflow_artifacts_dir(self) -> Path:
-        """Path to legacy MLflow artifacts in volatile cache."""
-        for candidate in [
-            self.cache_dir / "mlflow_artifacts",
-            self.cache_dir / "mlflow" / "mlflow_artifacts",
-            self.cache_dir / "mlflow" / "artifacts",
-        ]:
-            if candidate.is_dir():
-                return candidate
-        return self.cache_dir / "mlflow_artifacts"
-
-    @property
     def artifacts_dir(self) -> Path:
         """Repository root artifacts directory for publication/presentation figures and reports.
 

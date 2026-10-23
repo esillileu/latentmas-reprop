@@ -103,15 +103,11 @@ Local MLflow tracking defaults to:
 - **Backend Store URI**: `sqlite:///<storage_dir>/mlflow/mlflow.db`
 - **Default Artifact Root**: `<storage_dir>/mlflow/mlflow_artifacts`
 
-### Legacy MLflow Compatibility:
-The legacy path layout used:
-- Database: `.cache/mlflow.db` (standalone file in `.cache/`)
-- Artifacts: `.cache/mlflow_artifacts/` (directory in `.cache/`)
-- Subdirectory support: `.cache/mlflow/mlflow.db` and `.cache/mlflow/mlflow_artifacts/`
-
-To operate against legacy paths without migration, set:
+### Migration from Legacy Layout:
+The legacy path layout used `.cache/mlflow.db` and `.cache/mlflow_artifacts/`.
+To migrate existing data to the persistent `storage/` directory, use the standalone migration tool:
 ```bash
-export LATENTMAS_USE_LEGACY_MLFLOW_CACHE=1
+python tools/migrations/storage_v1_to_v2/migrate.py --source .cache --destination storage --execute
 ```
 
 To launch the local MLflow UI:

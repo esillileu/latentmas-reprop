@@ -107,13 +107,11 @@ Heavy tensors (such as KV snapshots and hidden state trajectories) are persisted
 
 ---
 
-## 5. Strict Data Reader Isolation & Fallback Policy
+## 5. Strict Data Reader Isolation Policy
 
 To prevent false successes and cross-run data corruption during post-hoc analysis:
 1. **Run-Scoped Artifact Loading**: `ResearchDataReader.load_artifact(run_id, artifact_path)` strictly queries MLflow for `run_id`, or checks run-scoped directories (`storage/{run_id}/`, `.cache/evaluation/runs/{run_id}/`, `artifacts/{run_id}/`).
-2. **Unscoped Fallback Blocked by Default**: If an artifact or tensor file is found at a global/legacy path (e.g. `artifacts/summary.json` or `.cache/.../sender_latent_states.pt`), it is **strictly rejected** unless:
-   - For JSON files: the file content contains a verified matching `"run_id"` or `"mlflow_run_id"`. (`config_id` cannot be used to verify run-level provenance because multiple executions share identical configs).
-   - For other artifacts/tensors: the caller explicitly passes `allow_unscoped_fallback=True`.
+2. **Zero Unscoped Fallback**: Unscoped global paths are not supported in runtime. Data must be associated with a valid `run_id` or accessed via the standalone migration tool.
 3. **Provenance Auditing**: Every retrieved artifact records its source origin (`provenance`), ensuring traceability back to the concrete MLflow Run ID.
 
 ---
@@ -123,19 +121,14 @@ To prevent false successes and cross-run data corruption during post-hoc analysi
 To eliminate collisions when exploring different prompts, model revisions, sampling configurations, or sample subsets:
 1. **Deterministic Config Fingerprint**: `build_intervention_config_id(args, model_dtype)` computes a full `config_id` and a 12-char SHA-256 `config_hash` incorporating `model_name`, `revision`, `task`, `split`, `prompt`, `latent_steps`, `seed`, `temperature`, `top_p`, `backend`, and `dtype`.
 2. **Content-Based Sample Key**: Instead of relying on volatile loop indices (`idx`) which shift when dataset order or sample slices change, cache keys incorporate `sample_key = compute_sample_key(task, split, question)[:16]`.
-3. **Isolated Cache Keys**: Raw latent contexts are saved as `latent_{task}_{model_slug}_cfg{config_hash}_key_{sample_key[:16]}_s{seed}.pt`. Legacy aliases `latent_{task}_{idx}_s{seed}.pt` are maintained concurrently for backward compatibility.
+3. **Isolated Cache Keys**: Raw latent contexts are saved strictly as `latent_{task}_{model_slug}_cfg{config_hash}_key_{sample_key[:16]}_s{seed}.pt`. No index-based aliases or legacy overwrite files are written.
 4. **MLflow Tagging**: Both `config_id` and `config_hash` are logged as tags and parameters in MLflow.
 
 ---
 
-## 7. Legacy MLflow Path Compatibility Specification
+## 7. Migration Separation Policy
 
-The legacy repository structure stored MLflow as:
-- **Legacy SQLite DB**: `<root>/.cache/mlflow.db` (standalone file in `.cache/`)
-- **Legacy Artifacts**: `<root>/.cache/mlflow_artifacts/` (directory in `.cache/`)
-
-To guarantee zero regression for legacy workflows:
-1. `LATENTMAS_USE_LEGACY_MLFLOW_CACHE=1` enables legacy fallback.
-2. `PathResolver.legacy_mlflow_db_path` searches both `<root>/.cache/mlflow.db` and any subdirectory variation `<root>/.cache/mlflow/mlflow.db`.
-3. `PathResolver.legacy_mlflow_artifacts_dir` searches `<root>/.cache/mlflow_artifacts/` as well as `<root>/.cache/mlflow/mlflow_artifacts/`.
-4. When a legacy DB exists but the environment flag is unset, the system logs an informative notice directing the researcher to `docs/migration_plan.md` without silent overwrite.
+Runtime code does not maintain backward-compatibility fallbacks for legacy files or old directory layouts:
+1. Operational code targets exclusively the v2 storage hierarchy (`storage/mlflow/`, `storage/tensors/`, etc.).
+2. Legacy v1 datasets and experiments are transformed using the standalone migration utility in `tools/migrations/storage_v1_to_v2/`.
+3. The migration tool is decoupled from runtime execution paths and executed only on-demand with explicit flags.
