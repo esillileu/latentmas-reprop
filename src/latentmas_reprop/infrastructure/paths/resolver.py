@@ -60,10 +60,110 @@ class PathResolver:
 
     @property
     def cache_dir(self) -> Path:
-        """Repository root .cache directory."""
-        path = self._root / ".cache"
+        """Repository root .cache directory for volatile/reconstructable data.
+
+        Defaults to <root>/.cache, overridable by LATENTMAS_CACHE_DIR.
+        """
+        env_dir = os.environ.get("LATENTMAS_CACHE_DIR")
+        path = Path(env_dir).resolve() if env_dir else self._root / ".cache"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def storage_dir(self) -> Path:
+        """Root persistent research storage directory (independent of volatile cache).
+
+        Defaults to <root>/storage, overridable by LATENTMAS_STORAGE_DIR.
+        """
+        env_dir = os.environ.get("LATENTMAS_STORAGE_DIR")
+        path = Path(env_dir).resolve() if env_dir else self._root / "storage"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def tensors_dir(self) -> Path:
+        """Root directory for persistent large tensor storage."""
+        path = self.storage_dir / "tensors"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def mlflow_dir(self) -> Path:
+        """Root directory for persistent MLflow backend database and artifacts.
+
+        Defaults to <storage_dir>/mlflow, overridable by LATENTMAS_MLFLOW_DIR.
+        """
+        env_dir = os.environ.get("LATENTMAS_MLFLOW_DIR")
+        path = Path(env_dir).resolve() if env_dir else self.storage_dir / "mlflow"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def mlflow_db_path(self) -> Path:
+        """Path to persistent SQLite MLflow database."""
+        return self.mlflow_dir / "mlflow.db"
+
+    @property
+    def mlflow_artifacts_dir(self) -> Path:
+        """Path to persistent MLflow artifacts storage."""
+        path = self.mlflow_dir / "mlflow_artifacts"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def legacy_mlflow_db_path(self) -> Path:
+        """Path to legacy SQLite MLflow database in volatile cache (if present)."""
+        candidate_subdir = self.cache_dir / "mlflow" / "mlflow.db"
+        if candidate_subdir.is_file():
+            return candidate_subdir
+        return self.cache_dir / "mlflow.db"
+
+    @property
+    def legacy_mlflow_artifacts_dir(self) -> Path:
+        """Path to legacy MLflow artifacts in volatile cache."""
+        for candidate in [
+            self.cache_dir / "mlflow_artifacts",
+            self.cache_dir / "mlflow" / "mlflow_artifacts",
+            self.cache_dir / "mlflow" / "artifacts",
+        ]:
+            if candidate.is_dir():
+                return candidate
+        return self.cache_dir / "mlflow_artifacts"
+
+    @property
+    def artifacts_dir(self) -> Path:
+        """Repository root artifacts directory for publication/presentation figures and reports.
+
+        Defaults to <root>/artifacts, overridable by LATENTMAS_ARTIFACTS_DIR.
+        """
+        env_dir = os.environ.get("LATENTMAS_ARTIFACTS_DIR")
+        path = Path(env_dir).resolve() if env_dir else self._root / "artifacts"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def is_safe_cache_path(self, target_path: Path | str) -> bool:
+        """Verify that a path is strictly inside cache_dir and does not touch protected storage."""
+        target = Path(target_path).resolve()
+        cache = self.cache_dir.resolve()
+
+        try:
+            target.relative_to(cache)
+        except ValueError:
+            return False
+
+        if target == cache:
+            return True
+
+        protected = [
+            self.root.resolve(),
+            self.storage_dir.resolve(),
+            self.tensors_dir.resolve(),
+            self.mlflow_dir.resolve(),
+            self.data_dir.resolve(),
+            self.configs_dir.resolve(),
+            self.artifacts_dir.resolve(),
+        ]
+        return all(not (target == p or target in p.parents) for p in protected)
 
     def get_cache_layer_dir(self, layer: str) -> Path:
         """Get or create a hierarchical cache subdirectory under .cache/."""

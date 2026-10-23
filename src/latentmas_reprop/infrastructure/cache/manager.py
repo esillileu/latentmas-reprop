@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,69 @@ class ExecutionCacheManager(CachePort):
     ) -> Any:
         path = self._get_file_path(layer, filename)
         return torch.load(path, map_location=map_location)
+
+    def clean_volatile_cache(
+        self,
+        include_resumable_runs: bool = False,
+        purge_incomplete_runs: bool = False,
+    ) -> list[Path]:
+        """Safely clean volatile execution caches without touching MLflow or storage.
+
+        To prevent data loss from un-uploaded or in-progress experiments,
+        evaluation runs (CacheLayer.EVALUATION_RUNS containing BenchmarkRunStore
+        checkpoints) are preserved by default. When include_resumable_runs=True,
+        only completed runs (with summary.json) are removed unless
+        purge_incomplete_runs=True is explicitly given.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        cleaned = []
+        # Pure scratch layers that can be safely wiped at any time
+        volatile_layers = [
+            CacheLayer.RUNTIME,
+            CacheLayer.MODELS_REALIGN,
+            CacheLayer.EVALUATION_INTERVENTIONS,
+            CacheLayer.EVALUATION_RECEIVER_ACQUISITION,
+            CacheLayer.LATENT_RECEIVER_ACQUISITION,
+        ]
+        for layer in volatile_layers:
+            layer_dir = self.get_layer_path(layer)
+            if layer_dir.exists() and self._resolver.is_safe_cache_path(layer_dir):
+                shutil.rmtree(layer_dir, ignore_errors=True)
+                cleaned.append(layer_dir)
+
+        # Handle evaluation runs with granular protection for incomplete checkpoints
+        runs_dir = self.get_layer_path(CacheLayer.EVALUATION_RUNS)
+        if runs_dir.exists() and self._resolver.is_safe_cache_path(runs_dir):
+            if not include_resumable_runs:
+                logger.info(
+                    "Preserving evaluation runs at %s (use include_resumable_runs=True to clean)",
+                    runs_dir,
+                )
+            else:
+                for run_path in list(runs_dir.iterdir()):
+                    if not run_path.is_dir():
+                        continue
+                    samples_file = run_path / "samples.jsonl"
+                    summary_file = run_path / "summary.json"
+                    is_incomplete = samples_file.is_file() and not summary_file.is_file()
+
+                    if is_incomplete and not purge_incomplete_runs:
+                        logger.warning(
+                            "Preserved incomplete evaluation run checkpoint: %s", run_path
+                        )
+                        continue
+
+                    shutil.rmtree(run_path, ignore_errors=True)
+                    cleaned.append(run_path)
+
+                # Remove empty runs_dir if empty
+                if not any(runs_dir.iterdir()):
+                    shutil.rmtree(runs_dir, ignore_errors=True)
+                    cleaned.append(runs_dir)
+
+        return cleaned
 
 
 DEFAULT_CACHE_MANAGER = ExecutionCacheManager()

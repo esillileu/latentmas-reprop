@@ -44,3 +44,43 @@ def test_cache_manager_torch_io():
 
     # Cleanup
     saved_path.unlink(missing_ok=True)
+
+
+def test_clean_volatile_cache(tmp_path):
+    from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
+    from latentmas_reprop.infrastructure.paths.resolver import PathResolver
+
+    resolver = PathResolver(tmp_path)
+    manager = ExecutionCacheManager(resolver)
+
+    # Persistent files must be preserved
+    persistent_db = resolver.mlflow_db_path
+    persistent_db.parent.mkdir(parents=True, exist_ok=True)
+    persistent_db.write_text("dummy db")
+
+    tensor_file = resolver.tensors_dir / "test_tensor.pt"
+    tensor_file.parent.mkdir(parents=True, exist_ok=True)
+    tensor_file.write_text("dummy tensor")
+
+    # Volatile cache files must be cleaned
+    runtime_file = manager.get_layer_path(CacheLayer.RUNTIME) / "scratch.json"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("scratch")
+
+    # Incomplete benchmark run (resumption jsonl) must be preserved by default
+    incomplete_run_dir = manager.get_layer_path(CacheLayer.EVALUATION_RUNS) / "incomplete_run_1"
+    incomplete_run_dir.mkdir(parents=True, exist_ok=True)
+    resumption_file = incomplete_run_dir / "samples.jsonl"
+    resumption_file.write_text('{"sample_key": "k1", "answer": 42}\n')
+
+    cleaned = manager.clean_volatile_cache()
+    assert not runtime_file.exists()
+    assert persistent_db.is_file()
+    assert tensor_file.is_file()
+    assert resumption_file.is_file(), "Incomplete benchmark resumption log must not be deleted by routine clean-cache"
+    assert isinstance(cleaned, list)
+
+    # Purging explicitly allows removing incomplete runs
+    manager.clean_volatile_cache(include_resumable_runs=True, purge_incomplete_runs=True)
+    assert not resumption_file.exists()
+

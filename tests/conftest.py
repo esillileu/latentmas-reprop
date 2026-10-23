@@ -1,6 +1,15 @@
 import copy
+import os
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolate_test_environment(monkeypatch):
+    """Ensure tests run strictly isolated from ambient MLflow servers and production runs."""
+    if "MLFLOW_TRACKING_URI" in os.environ:
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
 
 
 @pytest.fixture

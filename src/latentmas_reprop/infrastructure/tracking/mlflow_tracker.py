@@ -45,17 +45,32 @@ class MLflowTracker(ExperimentTrackerPort):
         elif env_uri is not None and env_uri.strip():
             self.tracking_uri = env_uri.strip()
         else:
-            # Default to local SQLite
-            db_path = self.resolver.cache_dir / "mlflow.db"
+            # Default to persistent storage MLflow (separated from volatile .cache/)
+            legacy_flag = os.environ.get("LATENTMAS_USE_LEGACY_MLFLOW_CACHE", "").lower() in ("1", "true")
+            legacy_db = self.resolver.legacy_mlflow_db_path
+            if legacy_flag and legacy_db.is_file():
+                db_path = legacy_db
+            else:
+                db_path = self.resolver.mlflow_db_path
+                if legacy_db.is_file() and not db_path.is_file():
+                    import logging
+                    logging.getLogger(__name__).info(
+                        "Found legacy MLflow DB at %s. To use legacy runs, set "
+                        "LATENTMAS_USE_LEGACY_MLFLOW_CACHE=1 or consult docs/migration_plan.md.",
+                        legacy_db,
+                    )
             self.tracking_uri = f"sqlite:///{db_path.resolve()}"
         self.is_remote = not self.tracking_uri.startswith(("sqlite", "file"))
 
         mlflow.set_tracking_uri(self.tracking_uri)
 
         if not self.is_remote:
-            self.artifact_location = artifact_location or str(
-                (self.resolver.cache_dir / "mlflow_artifacts").resolve()
-            )
+            if artifact_location:
+                self.artifact_location = artifact_location
+            elif os.environ.get("LATENTMAS_USE_LEGACY_MLFLOW_CACHE", "").lower() in ("1", "true"):
+                self.artifact_location = str(self.resolver.legacy_mlflow_artifacts_dir.resolve())
+            else:
+                self.artifact_location = str(self.resolver.mlflow_artifacts_dir.resolve())
             Path(self.artifact_location).mkdir(parents=True, exist_ok=True)
         else:
             # When remote, follow remote server-side artifact configuration without forcing local path
