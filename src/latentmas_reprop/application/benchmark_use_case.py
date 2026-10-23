@@ -145,7 +145,8 @@ class BenchmarkUseCase:
         )
         target = min(target, len(dataset))
 
-        if store.is_complete(target):
+        required_keys = [sample_key_for(args, item) for item in dataset[:target]]
+        if store.has_keys(required_keys):
             print(f"Reusing completed run {run_id}")
             metrics, predictions = store.load_finished(target)
             save_benchmark_artifacts(

@@ -27,23 +27,33 @@ class BenchmarkRunStore:
         return json.loads(self.summary_path.read_text(encoding="utf-8"))
 
     def read_records(self) -> list[dict[str, Any]]:
-        """Load completed samples, dropping a truncated final line after a crash."""
+        """Load completed samples, dropping any corrupted or incomplete lines."""
         if not self.samples_path.is_file():
             return []
         lines = self.samples_path.read_text(encoding="utf-8").splitlines()
         records: list[dict[str, Any]] = []
-        for index, line in enumerate(lines):
+        dirty = False
+        for line in lines:
             if not line.strip():
                 continue
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
-                if index == len(lines) - 1:
-                    write_jsonl(self.samples_path, records)
-                    break
-                raise
+                dirty = True
+                continue
+            if not _is_valid_record(record):
+                dirty = True
+                continue
             records.append(record)
+        if dirty:
+            write_jsonl(self.samples_path, records)
         return records
+
+    def has_keys(self, required_keys: set[str] | list[str]) -> bool:
+        """Check if all required sample keys exist in valid completed records."""
+        if not required_keys:
+            return True
+        return set(required_keys).issubset(self.completed_keys())
 
     def is_complete(self, target_samples: int | None = None) -> bool:
         records = self.read_records()
@@ -154,3 +164,13 @@ def predictions_in_dataset_order(
             raise RuntimeError(f"Missing stored sample for {key}")
         predictions.append(_without_sample_key(record))
     return predictions
+
+
+def _is_valid_record(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if not record.get("sample_key"):
+        return False
+    if record.get("prediction") is None:
+        return False
+    return "correct" in record
