@@ -85,6 +85,12 @@ class StorageMigrator:
             dest = self.dest_root / "experiments" / sub
             rec = copy_file(src, dest, item, self.dry_run)
             self.records.append(rec)
+            if (
+                not self.dry_run
+                and rec.status in {MigrationStatus.COPIED, MigrationStatus.SKIPPED}
+                and src.name == "samples.jsonl"
+            ):
+                self._migrate_benchmark_samples(dest)
         elif item.item_type == MigrationItemType.TENSOR_BINARY:
             rec = migrate_tensor(src, item, self.dest_root, self.dry_run)
             self.records.append(rec)
@@ -92,6 +98,26 @@ class StorageMigrator:
             dest = self.dest_root / "artifacts" / item.rel_path
             rec = copy_file(src, dest, item, self.dry_run)
             self.records.append(rec)
+
+    def _migrate_benchmark_samples(self, dest: Path) -> None:
+        try:
+            with open(dest, encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    skey = row.get("sample_key")
+                    if skey:
+                        sample_dir = dest.parent / "samples" / skey / "benchmark"
+                        sample_dir.mkdir(parents=True, exist_ok=True)
+                        res_file = sample_dir / "result.json"
+                        if not res_file.exists():
+                            tmp_file = res_file.with_suffix(".tmp")
+                            with open(tmp_file, "w", encoding="utf-8") as out_f:
+                                json.dump(row, out_f, indent=2)
+                            tmp_file.replace(res_file)
+        except Exception:
+            pass
 
     def _save_migration_manifest(self) -> None:
         manifest_file = self.dest_root / "migration_manifest.json"

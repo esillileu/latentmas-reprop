@@ -1,5 +1,6 @@
 """File, database, and tensor operations for storage v1 to v2 migration."""
 
+import contextlib
 import hashlib
 import shutil
 import sqlite3
@@ -65,6 +66,22 @@ def copy_sqlite_db(
         dest_conn = sqlite3.connect(str(tmp_dest))
         cur = dest_conn.cursor()
         new_artifact_root = (dest_root / "mlflow" / "mlflow_artifacts").as_uri()
+
+        with contextlib.suppress(Exception):
+            cur.execute("SELECT experiment_id, artifact_location FROM experiments")
+            for exp_id, old_loc in cur.fetchall():
+                if old_loc and ("mlflow_artifacts" in old_loc or ".cache" in old_loc):
+                    parts = old_loc.split("mlflow_artifacts/")
+                    updated_loc = (
+                        f"{new_artifact_root}/{parts[1]}"
+                        if len(parts) > 1
+                        else new_artifact_root
+                    )
+                    cur.execute(
+                        "UPDATE experiments SET artifact_location = ? WHERE experiment_id = ?",
+                        (updated_loc, exp_id),
+                    )
+
         cur.execute("SELECT run_uuid, artifact_uri FROM runs")
         rows = cur.fetchall()
         for r_id, old_uri in rows:
@@ -121,15 +138,26 @@ def copy_file(
 
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    if dest.is_file() and compute_sha256(dest) == item.checksum:
+    if dest.is_file():
+        if compute_sha256(dest) == item.checksum:
+            return MigrationRecord(
+                source_path=str(src),
+                destination_path=str(dest),
+                item_type=item.item_type,
+                run_id=item.run_id,
+                checksum_source=item.checksum or "",
+                checksum_dest=item.checksum,
+                status=MigrationStatus.SKIPPED,
+            )
         return MigrationRecord(
             source_path=str(src),
             destination_path=str(dest),
             item_type=item.item_type,
             run_id=item.run_id,
             checksum_source=item.checksum or "",
-            checksum_dest=item.checksum,
-            status=MigrationStatus.SKIPPED,
+            checksum_dest=compute_sha256(dest),
+            status=MigrationStatus.FAILED,
+            error=f"Destination file already exists with different checksum: {dest}",
         )
 
     tmp_dest = dest.with_suffix(f"{dest.suffix}.tmp")

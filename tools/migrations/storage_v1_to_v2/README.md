@@ -30,9 +30,8 @@ Legacy v1 (.cache)                       Unified v2 (storage)
 ──────────────────                       ────────────────────
 .cache/mlflow.db                   ──▶   storage/mlflow/mlflow.db
 .cache/mlflow_artifacts/           ──▶   storage/mlflow/mlflow_artifacts/
-.cache/evaluation/runs/<run_id>/   ──▶   storage/evaluation/runs/<run_id>/
-.cache/evaluation/.../*.pt         ──▶   storage/tensors/<run_id>/<sample>/<branch>/<seg>_<artifact>.pt
-                                         (indexed via tensor_manifest.json with SHA-256)
+.cache/evaluation/runs/<run_id>/   ──▶   storage/experiments/<run_id>/
+.cache/evaluation/.../*.pt         ──▶   storage/experiments/<run_id>/...
 ```
 
 ---
