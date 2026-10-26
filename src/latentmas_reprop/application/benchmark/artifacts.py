@@ -1,10 +1,9 @@
 """Artifact persistence and MLflow tracking for benchmark experiments."""
 
-from pathlib import Path
 from typing import Any
 
 from ...domain.models import BenchmarkMetrics
-from ...domain.ports.cache_port import CacheLayer, CachePort
+from ...domain.ports.cache_port import CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.models.dtype import peak_allocated_bytes
 from ...infrastructure.paths.naming import build_experiment_relpath
@@ -27,7 +26,10 @@ def start_benchmark_tracker(
         )
 
     backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
-    run_name = build_experiment_relpath(args, backend=backend_name)
+    dtype_name = getattr(args, "model_dtype", "") or getattr(args, "dtype", "")
+    run_name = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+        args, dtype_name=dtype_name, backend=backend_name
+    )
     exp_dir = get_path_resolver().get_experiment_dir(run_name)
     tags = {
         "model": args.model_name,
@@ -168,24 +170,16 @@ def save_benchmark_artifacts(
     metrics: BenchmarkMetrics,
     preds: list[dict[str, Any]],
 ) -> None:
-    """Save benchmark cache and upload artifacts to MLflow."""
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    try:
-        cache_port.save_json(
-            CacheLayer.EVALUATION_RUNS,
-            run_cache_filename,
-            {
-                "metrics": metrics.to_dict(),
-                "predictions": preds,
-            },
-        )
-    except Exception as exc:
-        logger.error(
-            "Failed to save benchmark run cache %s: %s", run_cache_filename, exc
-        )
+    """Save benchmark outputs and upload artifacts to MLflow."""
+    backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
+    dtype_name = getattr(args, "model_dtype", "") or getattr(args, "dtype", "")
+    run_name = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+        args, dtype_name=dtype_name, backend=backend_name
+    )
+    exp_dir = get_path_resolver().get_experiment_dir(run_name)
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    samples_path = exp_dir / "samples.jsonl"
+    write_jsonl(samples_path, preds)
 
     if not tracker_port:
         return
@@ -200,12 +194,7 @@ def save_benchmark_artifacts(
         "results/summary.json",
     )
     tracker_port.log_dict(clean_args, "config/resolved_config.yaml")
-
-    runtime_dir = Path(cache_port.get_layer_path(CacheLayer.RUNTIME))
-    stem = run_cache_filename.removesuffix(".json")
-    sample_results_path = runtime_dir / f"{stem}_sample_results.jsonl"
-    write_jsonl(sample_results_path, preds)
-    tracker_port.log_artifact(sample_results_path, artifact_path="results")
+    tracker_port.log_artifact(samples_path, artifact_path="results")
 
     tracker_port.flush_traces()
     tracker_port.end_run(status="FINISHED")

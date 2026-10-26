@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--states", type=Path)
     source.add_argument("--source-run-id")
+    source.add_argument("--experiment-dir", "--input-dir", dest="experiment_dir")
     parser.add_argument(
         "--source-artifact-path",
         help="Defaults to the source experiment's saved states path",
@@ -96,7 +97,48 @@ def main(argv: list[str] | None = None) -> int:
     source_artifact = None
     experiment_name = "latentmas_sender_probe"
     with tempfile.TemporaryDirectory(prefix="latentmas-probe-") as temporary:
-        if args.source_run_id:
+        if args.experiment_dir:
+            from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
+
+            edir = get_path_resolver().get_experiment_dir(args.experiment_dir)
+            st_path = edir / "probe" / "sender_latent_states.pt"
+            if not st_path.is_file():
+                st_path = edir / "sender_latent_states.pt"
+            if st_path.is_file():
+                states_path = st_path
+            else:
+                client = mlflow.MlflowClient()
+                runs = client.search_runs(
+                    [],
+                    filter_string=f"tags.rel_dir = '{args.experiment_dir}'",
+                    max_results=1,
+                )
+                if not runs:
+                    runs = client.search_runs(
+                        [],
+                        filter_string=f"tags.data_dir = '{edir.resolve()}'",
+                        max_results=1,
+                    )
+                if runs:
+                    args.source_run_id = runs[0].info.run_id
+                    states_path = Path(
+                        mlflow.artifacts.download_artifacts(
+                            run_id=args.source_run_id,
+                            artifact_path="probe/sender_latent_states.pt",
+                            dst_path=temporary,
+                        )
+                    )
+                else:
+                    raise FileNotFoundError(
+                        f"sender states not found for experiment dir: {args.experiment_dir}"
+                    )
+            cfg_p = edir / "resolved_config.yaml"
+            if not cfg_p.is_file():
+                cfg_p = edir / "config.json"
+            if cfg_p.is_file():
+                source_config = _read_config(cfg_p)
+            source_artifact = "probe/sender_latent_states.pt"
+        elif args.source_run_id:
             client = mlflow.MlflowClient()
             source_run = client.get_run(args.source_run_id)
             source_experiment = client.get_experiment(

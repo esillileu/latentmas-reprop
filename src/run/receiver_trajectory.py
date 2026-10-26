@@ -37,14 +37,18 @@ from latentmas_reprop.infrastructure.paths.resolver import (
     get_git_commit_hash,
     get_path_resolver,
 )
+from latentmas_reprop.infrastructure.storage import (
+    is_condition_complete,
+    save_condition_result,
+)
 from latentmas_reprop.infrastructure.tracking import MLflowTracker
 
 
 @contextmanager
-def tracked_model(directory, name, smoke):
+def tracked_model(directory, name, smoke, exp_rel=None):
     """Keep parity evidence and trajectories in a separate MLflow experiment."""
+    rel_name = exp_rel or Path(directory).name
     tracker = MLflowTracker()
-    rel_name = f"{name.split('/')[-1]}-{'smoke' if smoke else 'steps-1-20'}"
     tracker.start_run(
         experiment_name="latentmas_receiver_trajectory",
         run_name=rel_name,
@@ -167,13 +171,22 @@ def main(argv=None):
         name = f"Qwen/Qwen3-{size}"
         exp_rel = f"secret_digit/{name.split('/')[-1]}/latent_mas/default/ls20_seed42_{'smoke' if args.smoke else 'steps1-20'}_bfloat16"
         directory = paths.get_experiment_dir(exp_rel)
-        if (
+        selected = representatives if args.smoke else samples
+        all_complete = (
             not getattr(args, "overwrite", False)
+            and (directory / "sample_results.json").is_file()
             and (directory / "parity.json").is_file()
-        ):
+            and all(
+                is_condition_complete(
+                    paths.get_condition_dir(directory, idx, "trajectory")
+                )
+                for idx in range(len(selected))
+            )
+        )
+        if all_complete:
             print(f"Reusing completed trajectory at {exp_rel}")
             continue
-        with tracked_model(directory, name, args.smoke) as tracker:
+        with tracked_model(directory, name, args.smoke, exp_rel) as tracker:
             model = ModelWrapper(name, device, model_dtype=torch.bfloat16)
             receiver = prepare_receiver_scoring(model)
             tracker.log_params(
@@ -188,45 +201,23 @@ def main(argv=None):
                 k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()
             }
             cfg.update(
-                model_name=name,
-                task="secret_digit",
-                method="latent_mas",
-                latent_steps=20,
-                seed=42,
-                max_samples=10 if args.smoke else 100,
-                backend="transformers",
-                dtype="bfloat16",
-                context_modes=["latent_only"],
-                carrier_modes=["latent_only"],
-                acquisition_conditions=["own", "drop"],
-                save_hidden_states=False,
-                save_raw_cache=False,
-                latent_space_realign=False,
-                save_receiver_logits=True,
-                probe_sender_latents=True,
-                probe_prompt_templates=20,
-                save_latent_states=True,
+                model_name=name, task="secret_digit", method="latent_mas", latent_steps=20,
+                seed=42, max_samples=10 if args.smoke else 100, backend="transformers",
+                dtype="bfloat16", context_modes=["latent_only"], carrier_modes=["latent_only"],
+                acquisition_conditions=["own", "drop"], save_hidden_states=False,
+                save_raw_cache=False, latent_space_realign=False, save_receiver_logits=True,
+                probe_sender_latents=True, probe_prompt_templates=20, save_latent_states=True,
             )
-            (directory / "resolved_config.json").write_text(
-                json.dumps(cfg, indent=2) + "\n"
-            )
+            (directory / "resolved_config.json").write_text(json.dumps(cfg, indent=2) + "\n")
             rec_input = {
-                "prompt": receiver[2]["prompt"],
-                "messages": receiver[2]["messages"],
-                "input_ids": receiver[0].cpu().tolist(),
-                "attention_mask": receiver[1].cpu().tolist(),
+                "prompt": receiver[2]["prompt"], "messages": receiver[2]["messages"],
+                "input_ids": receiver[0].cpu().tolist(), "attention_mask": receiver[1].cpu().tolist(),
             }
-            (directory / "receiver_input.json").write_text(
-                json.dumps(rec_input, indent=2) + "\n"
-            )
+            (directory / "receiver_input.json").write_text(json.dumps(rec_input, indent=2) + "\n")
             parity = verify_prefix_parity(model, representatives, receiver)
             parity.update(
-                model=name,
-                dtype="bfloat16",
-                gpu=torch.cuda.get_device_name(device),
-                git_commit=git_commit,
-                torch_version=torch.__version__,
-                transformers_version=transformers.__version__,
+                model=name, dtype="bfloat16", gpu=torch.cuda.get_device_name(device),
+                git_commit=git_commit, torch_version=torch.__version__, transformers_version=transformers.__version__,
             )
             (directory / "parity.json").write_text(json.dumps(parity, indent=2) + "\n")
             if not parity["passed"]:
@@ -234,15 +225,16 @@ def main(argv=None):
                     f"Exact parity failed; no trajectory was run. See {directory / 'parity.json'}"
                 )
             tracker.log_metrics({"parity_passed": 1})
-            selected = representatives if args.smoke else samples
             records = collect_trajectory(
-                model,
-                selected,
-                receiver,
-                directory / "sample_results.jsonl",
-                tracker,
+                model, selected, receiver, directory / "sample_results.jsonl", tracker
             )
             (directory / "sample_results.json").write_text(json.dumps(records) + "\n")
+            for idx, r in enumerate(records):
+                save_condition_result(
+                    paths.get_condition_dir(directory, idx, "trajectory"),
+                    r if isinstance(r, dict) else {"record": r},
+                    overwrite=getattr(args, "overwrite", False),
+                )
             states = collect_sender_states(model, latent_steps=20, template_count=20)
             torch.save(states.payload(), directory / "sender_latent_states.pt")
             (directory / "sender_probe_inputs.jsonl").write_text(
@@ -252,30 +244,19 @@ def main(argv=None):
                 json.dumps(receiver[2], indent=2) + "\n"
             )
             source_info = {
-                "model": name,
-                "sample_count": len(selected),
-                "seed": 42,
-                "dtype": "bfloat16",
+                "model": name, "sample_count": len(selected), "seed": 42, "dtype": "bfloat16",
                 "handoff": "full20[:prompt_len+k] then last k positions",
                 "receiver_position_start": "prompt_len+k",
                 "sender_prompt_template": SENDER_PROMPT_TEMPLATE,
                 "sender_prompt_template_version": SENDER_PROMPT_TEMPLATE_VERSION,
                 "receiver_prompt_template": RECEIVER_PROMPT,
                 "receiver_prompt_template_version": RECEIVER_PROMPT_TEMPLATE_VERSION,
-                "receiver_answer_prefix": RECEIVER_ANSWER_PREFIX,
-                "backend": "transformers",
-                "device": str(device),
-                "transformers_version": transformers.__version__,
-                "torch_version": torch.__version__,
-                "sender_state_templates": 20,
-                "sender_state_examples": 200,
-                "save_hidden_states": False,
-                "save_raw_cache": False,
-                "save_receiver_logits": True,
-                "latent_space_realign": False,
-                "smoke": args.smoke,
-                "gpu": torch.cuda.get_device_name(device),
-                "git_commit": git_commit,
+                "receiver_answer_prefix": RECEIVER_ANSWER_PREFIX, "backend": "transformers",
+                "device": str(device), "transformers_version": transformers.__version__,
+                "torch_version": torch.__version__, "sender_state_templates": 20,
+                "sender_state_examples": 200, "save_hidden_states": False, "save_raw_cache": False,
+                "save_receiver_logits": True, "latent_space_realign": False, "smoke": args.smoke,
+                "gpu": torch.cuda.get_device_name(device), "git_commit": git_commit,
             }
             (directory / "source.json").write_text(
                 json.dumps(source_info, indent=2) + "\n"

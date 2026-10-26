@@ -92,29 +92,38 @@ def is_experiment_complete(
     target_count: int = 0,
     conditions: list[str] | None = None,
 ) -> bool:
-    """Judge experiment completion: summary.json exists or all sample conditions complete."""
+    """Judge experiment completion: verifies that all required sample conditions are complete."""
     edir = Path(exp_dir)
-    summary_path = edir / "summary.json"
-    if summary_path.is_file():
+    conds = conditions or ["benchmark"]
+    resolver = get_path_resolver()
+
+    if target_count <= 0:
+        summary_path = edir / "summary.json"
+        if not summary_path.is_file():
+            summary_path = edir / "collection_summary.json"
+        if not summary_path.is_file():
+            return False
         try:
             sdata = load_json(summary_path)
-            if (
-                isinstance(sdata, dict)
-                and sdata.get("status", "complete") == "complete"
-            ):
-                sc = sdata.get("sample_count", 0)
-                if target_count <= 0 or sc >= target_count:
-                    return True
+            if not isinstance(sdata, dict):
+                return False
+            cfg = sdata.get("config", {})
+            if cfg.get("requested_max_samples") not in (-1, None, 0):
+                return False
+            target_count = int(sdata.get("sample_count", 0))
+            if target_count <= 0:
+                return False
         except Exception:
-            pass
+            return False
 
-    if target_count <= 0 or not conditions:
-        return False
-
-    resolver = get_path_resolver()
     for idx in range(target_count):
-        for cond in conditions:
-            if not is_condition_complete(resolver.get_condition_dir(edir, idx, cond)):
+        for cond in conds:
+            cdir = resolver.get_condition_dir(edir, idx, cond)
+            if not is_condition_complete(cdir):
+                if cond == "benchmark" and is_condition_complete(
+                    edir / "samples" / f"{idx:06d}"
+                ):
+                    continue
                 return False
     return True
 

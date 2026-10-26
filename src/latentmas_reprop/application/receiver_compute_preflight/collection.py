@@ -5,6 +5,8 @@ from transformers import set_seed
 
 from ...domain.services.kv_cache import move_past_kv
 from ...domain.services.latent_mas import LatentMASMethod
+from ...infrastructure.paths.resolver import get_path_resolver
+from ...infrastructure.storage import save_condition_result
 from ..common.reporter import write_jsonl
 from ..receiver_reasoning.inference import build_upstream
 from .inference import length_matched_donors
@@ -164,6 +166,10 @@ def collect_samples(
         top_p=1.0,
         generate_bs=1,
     )
+    resolver = get_path_resolver()
+    exp_dir = records_path.parent
+    overwrite = getattr(args, "overwrite", False)
+
     for index, item in enumerate(tqdm(items, desc="No handoff · U=0", unit="sample")):
         _, rows = collect_condition(
             method,
@@ -179,6 +185,8 @@ def collect_samples(
             runtime,
             manifest,
         )
+        cond_dir = resolver.get_condition_dir(exp_dir, index, "no_handoff")
+        save_condition_result(cond_dir, {"rows": rows}, overwrite=overwrite)
         for step in args.upstream_steps:
             records.extend(
                 row | {"upstream_steps": step, "baseline_reused": True} for row in rows
@@ -212,6 +220,8 @@ def collect_samples(
                 runtime,
                 manifest,
             )
+            cond_dir = resolver.get_condition_dir(exp_dir, index, f"u{step}_matched")
+            save_condition_result(cond_dir, {"rows": rows}, overwrite=overwrite)
             donors.append(donor)
             records.extend(rows)
             # U-independent baseline inference and evaluations keep their original trace.
@@ -248,5 +258,7 @@ def collect_samples(
                 donor=donors[sources[index]],
                 recipient_meta=donors[index][3],
             )
+            cond_dir = resolver.get_condition_dir(exp_dir, index, f"u{step}_mismatched")
+            save_condition_result(cond_dir, {"rows": rows}, overwrite=overwrite)
             records.extend(rows)
             write_jsonl(records_path, records)

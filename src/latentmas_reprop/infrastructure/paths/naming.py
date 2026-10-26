@@ -22,6 +22,16 @@ def format_setting(value: Any) -> str:
     return str(value)
 
 
+def resolve_experiment_dtype_name(args: Any) -> str:
+    """Resolve model precision string deterministically before model loading."""
+    if hasattr(args, "dtype") and getattr(args, "dtype", None):
+        return str(args.dtype).replace("torch.", "")
+    if hasattr(args, "model_dtype") and getattr(args, "model_dtype", None):
+        return str(args.model_dtype).replace("torch.", "")
+    # Default model precision across this framework is float16
+    return "float16"
+
+
 def build_params_stem(
     args: Any,
     dtype_name: str = "",
@@ -40,8 +50,9 @@ def build_params_stem(
     if split and split != "test":
         parts.append(f"split{split}")
 
-    if dtype_name:
-        clean_dtype = str(dtype_name).replace("torch.", "")
+    resolved_dtype = dtype_name or resolve_experiment_dtype_name(args)
+    if resolved_dtype:
+        clean_dtype = str(resolved_dtype).replace("torch.", "")
         parts.append(clean_dtype)
 
     clean_backend = backend or ("vllm" if getattr(args, "use_vllm", False) else "")
@@ -53,9 +64,38 @@ def build_params_stem(
     if getattr(args, "latent_space_realign", False):
         parts.append("realign")
 
-    cross_policy = getattr(args, "cross_policy", None)
-    if cross_policy and getattr(args, "intervention", False):
-        parts.append(f"cross_{cross_policy}")
+    # Differentiating experiment types and calculation options
+    if getattr(args, "intervention", False):
+        parts.append("intervention")
+        cross_policy = getattr(args, "cross_policy", None)
+        if cross_policy:
+            parts.append(f"cross_{cross_policy}")
+
+    if getattr(args, "acquisition", False):
+        parts.append("acquisition")
+        modes = getattr(args, "context_modes", None)
+        if modes:
+            modes_str = "-".join(sorted(str(m) for m in modes))
+            parts.append(f"modes_{modes_str}")
+        conds = getattr(args, "acquisition_conditions", None)
+        if conds:
+            conds_str = "-".join(sorted(str(c) for c in conds))
+            parts.append(f"cond_{conds_str}")
+
+    if getattr(args, "receiver_reasoning", False):
+        parts.append("reasoning")
+        hp = getattr(args, "handoff_positions", None)
+        if hp is not None:
+            parts.append(f"hp{hp}")
+        hm = getattr(args, "handoff_mode", None)
+        if hm:
+            parts.append(f"hm_{hm}")
+
+    if getattr(args, "receiver_compute_preflight", False):
+        parts.append("preflight")
+
+    if getattr(args, "receiver_trajectory", False):
+        parts.append("trajectory")
 
     if getattr(args, "smoke", False):
         parts.append("smoke")
@@ -84,7 +124,7 @@ def build_experiment_relpath(
     """Build canonical 5-level relative experiment path:
 
     <task>/<model>/<method>/<prompt>/<params>
-    e.g. gsm8k/Qwen3-0.6B/latent_mas/sequential/ls20_seed42_temp0.6_top0.95_mt2048
+    e.g. gsm8k/Qwen3-0.6B/latent_mas/sequential/ls20_seed42_temp0.6_top0.95_mt2048_float16
     """
     task = str(getattr(args, "task", "gsm8k")).strip()
     model = clean_model_name(getattr(args, "model_name", "model"))

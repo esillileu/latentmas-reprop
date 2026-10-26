@@ -14,9 +14,7 @@ from .span_adapter import MLflowSpanAdapter
 
 
 def _truncate_preview(text: str | None, max_length: int = 1000) -> str | None:
-    if text is None:
-        return None
-    if len(text) <= max_length:
+    if text is None or len(text) <= max_length:
         return text
     return text[: max_length - 3] + "..."
 
@@ -128,15 +126,29 @@ class MLflowTracker(ExperimentTrackerPort):
 
         if run_name and not data_dir_tag:
             p = str(self.resolver.get_experiment_dir(run_name).resolve())
-            tags = {"data_dir": p, "rel_dir": str(run_name), "storage_run_id": str(run_name)}
+            tags = {
+                "data_dir": p,
+                "rel_dir": str(run_name),
+                "storage_run_id": str(run_name),
+            }
             with suppress(Exception):
                 mlflow.set_tags(tags)
         return self._active_run
 
     def set_data_dir(self, rel_or_id: str, data_dir: Path | str | None = None) -> None:
         """Explicitly set or update the storage directory tags for the active run."""
-        p = str((Path(data_dir) if data_dir else self.resolver.get_experiment_dir(rel_or_id)).resolve())
-        tags = {"data_dir": p, "rel_dir": str(rel_or_id), "storage_run_id": str(rel_or_id)}
+        p = str(
+            (
+                Path(data_dir)
+                if data_dir
+                else self.resolver.get_experiment_dir(rel_or_id)
+            ).resolve()
+        )
+        tags = {
+            "data_dir": p,
+            "rel_dir": str(rel_or_id),
+            "storage_run_id": str(rel_or_id),
+        }
         with suppress(Exception):
             mlflow.set_tags(tags)
 
@@ -153,7 +165,13 @@ class MLflowTracker(ExperimentTrackerPort):
 
     def log_params(self, params: dict[str, Any]) -> None:
         safe = {
-            k: ("None" if v is None else str(v)[:500] if isinstance(v, (list, tuple, dict)) or len(str(v)) > 500 else v)
+            k: (
+                "None"
+                if v is None
+                else str(v)[:500]
+                if isinstance(v, (list, tuple, dict)) or len(str(v)) > 500
+                else v
+            )
             for k, v in params.items()
         }
         mlflow.log_params(safe)
@@ -227,26 +245,17 @@ class MLflowTracker(ExperimentTrackerPort):
         )
 
     def log_expectation(
-        self,
-        trace_id: str,
-        name: str,
-        value: Any,
-        source_id: str = "ground_truth",
+        self, trace_id: str, name: str, value: Any, source_id: str = "ground_truth"
     ) -> None:
         """Log expectation (ground truth) assessment on a trace."""
-        try:
+        with suppress(Exception):
             self._flush_before_assessment(trace_id)
             source = AssessmentSource(
                 source_type=AssessmentSourceType.CODE, source_id=source_id
             )
             mlflow.log_expectation(
-                trace_id=trace_id,
-                name=name,
-                value=value,
-                source=source,
+                trace_id=trace_id, name=name, value=value, source=source
             )
-        except Exception:
-            pass
 
     def log_feedback(
         self,
@@ -257,7 +266,7 @@ class MLflowTracker(ExperimentTrackerPort):
         rationale: str | None = None,
     ) -> None:
         """Log feedback assessment on a trace."""
-        try:
+        with suppress(Exception):
             self._flush_before_assessment(trace_id)
             source = AssessmentSource(
                 source_type=AssessmentSourceType.CODE, source_id=source_id
@@ -269,11 +278,8 @@ class MLflowTracker(ExperimentTrackerPort):
                 source=source,
                 rationale=rationale,
             )
-        except Exception:
-            pass
 
     def _flush_before_assessment(self, trace_id: str) -> None:
-        # A completed trace only needs exporting once before its assessments.
         if trace_id not in self._assessment_ready_traces:
             self.flush_traces()
             self._assessment_ready_traces.add(trace_id)
@@ -281,3 +287,9 @@ class MLflowTracker(ExperimentTrackerPort):
     def flush_traces(self) -> None:
         """Flush background async trace queue."""
         mlflow.flush_trace_async_logging()
+
+
+# Re-export analysis tracking helper
+from .analysis_tracking import log_analysis_results_to_mlflow  # noqa: E402
+
+__all__ = ["MLflowTracker", "log_analysis_results_to_mlflow"]

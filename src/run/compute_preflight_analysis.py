@@ -13,7 +13,10 @@ from latentmas_reprop.application.receiver_compute_preflight.analysis import exp
 from latentmas_reprop.application.receiver_compute_preflight.plots import (
     generate_all_plots,
 )
-from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
+from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
+    MLflowTracker,
+    log_analysis_results_to_mlflow,
+)
 
 
 def sanitize_model_name(name: str) -> str:
@@ -193,16 +196,26 @@ def analyze_run(
         file_path = output / name
         if file_path.exists():
             client.log_artifact(run_id, str(file_path), artifact_path="analysis")
+    log_analysis_results_to_mlflow(
+        MLflowTracker(),
+        f"receiver_compute_preflight/{model_dir}",
+        output,
+        params={"model_name": model_name, "source_run_id": run_id},
+    )
     print(f"Analysis ({model_name}): {output}")
     return output
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--experiment-dir", "--input-dir", dest="experiment_dir", type=Path)
+    parser.add_argument(
+        "--experiment-dir", "--input-dir", dest="experiment_dir", type=Path
+    )
     parser.add_argument("--run-id")
     parser.add_argument("--model", "--model-name", dest="model_name")
-    parser.add_argument("--experiment-name", default="latentmas_receiver_compute_preflight")
+    parser.add_argument(
+        "--experiment-name", default="latentmas_receiver_compute_preflight"
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--bootstrap-count", type=int, default=2000)
     parser.add_argument("--target-accuracies", default="0.5,0.7,0.9")

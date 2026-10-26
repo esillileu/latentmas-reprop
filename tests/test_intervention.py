@@ -214,13 +214,11 @@ def test_failed_experiment_calls_end_run_failed():
     tracker.end_run.assert_called_once_with(status="FAILED")
 
 
-def test_intervention_context_builder_content_based_keys(tmp_path):
-    """Test that saved raw context KV files use content-based sample keys."""
+def test_intervention_context_builder_saves_shared_kv(tmp_path):
+    """Test that build_intervention_contexts saves shared kv to experiment directory."""
     from latentmas_reprop.application.intervention.context_builder import (
         build_intervention_contexts,
     )
-    from latentmas_reprop.domain.models import compute_sample_key
-    from latentmas_reprop.domain.ports.cache_port import CacheLayer
     from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
     from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 
@@ -238,23 +236,19 @@ def test_intervention_context_builder_content_based_keys(tmp_path):
     method_mock.latent_steps = 5
 
     item = {"question": "What is 2 + 2?"}
-    expected_key = compute_sample_key("gsm8k", "test", item["question"])[:16]
+    run_id = "test_intervention_run"
 
     build_intervention_contexts(
         method=method_mock,
         dataset_iter=[item],
         task="gsm8k",
         seed=42,
-        save_raw_cache=True,
+        save_raw_cache=False,
         cache_port=cache,
-        config_hash="abc123",
         split="test",
+        run_id=run_id,
     )
 
-    saved_files = list(cache.get_layer_path(CacheLayer.LATENT_INTERVENTIONS).iterdir())
-    filenames = [f.name for f in saved_files]
-
-    # Verify content-based filename is present and legacy alias is not written
-    expected_filename = f"latent_gsm8k_test_model_cfgabc123_key_{expected_key}_s42.pt"
-    assert expected_filename in filenames
-    assert "latent_gsm8k_0_s42.pt" not in filenames
+    shared_dir = resolver.get_condition_dir(run_id, 0, "shared")
+    assert (shared_dir / "kv.pt").is_file()
+    assert (shared_dir / "result.json").is_file()

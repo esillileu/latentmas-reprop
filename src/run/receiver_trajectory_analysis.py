@@ -8,6 +8,10 @@ from pathlib import Path
 from latentmas_reprop.application.receiver_acquisition.trajectory_analysis import (
     summarize_trajectory,
 )
+from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
+    MLflowTracker,
+    log_analysis_results_to_mlflow,
+)
 
 from .presentation_plots import STYLE, plt
 from .receiver_trajectory_plots import plot_trajectory
@@ -64,6 +68,9 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     analyze_trajectory(args.input_dir, args.probe_cells, args.output_dir)
+    log_analysis_results_to_mlflow(
+        MLflowTracker(), "receiver_trajectory", args.output_dir
+    )
 
 
 if __name__ == "__main__":

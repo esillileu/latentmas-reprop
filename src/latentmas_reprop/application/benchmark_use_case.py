@@ -4,7 +4,7 @@ from typing import Any
 import torch
 from tqdm import tqdm
 
-from ..domain.models import BenchmarkMetrics, compute_sample_key
+from ..domain.models import BenchmarkMetrics
 from ..domain.ports.cache_port import CachePort
 from ..domain.ports.dataset_port import DatasetPort
 from ..domain.ports.evaluator_port import EvaluatorPort
@@ -20,6 +20,7 @@ from ..infrastructure.models.model_wrapper import ModelWrapper
 from ..infrastructure.paths import (
     build_experiment_relpath,
     get_path_resolver,
+    resolve_experiment_dtype_name,
 )
 from ..infrastructure.storage import is_condition_complete, verify_run_config
 from .benchmark import (
@@ -28,7 +29,6 @@ from .benchmark import (
     config_snapshot,
     predictions_in_dataset_order,
     runtime_metadata,
-    sample_key_for,
     save_benchmark_artifacts,
     start_benchmark_tracker,
     trace_benchmark_sample,
@@ -137,7 +137,9 @@ class BenchmarkUseCase:
                 "MLflow tracking experiment name must be specified (--tracking_experiment_name or via config) before running benchmark."
             )
 
-        dtype_name = str(getattr(model, "dtype_name", ""))
+        dtype_name = str(
+            getattr(model, "dtype_name", "")
+        ) or resolve_experiment_dtype_name(args)
         backend = "vllm" if getattr(args, "use_vllm", False) else "transformers"
         requested_max_samples = int(args.max_samples)
         exp_relpath = build_experiment_relpath(
@@ -176,7 +178,6 @@ class BenchmarkUseCase:
 
         overwrite = bool(getattr(args, "overwrite", False))
         if not overwrite:
-            done_keys = store.completed_keys()
             pending = [
                 item
                 for item in selected
@@ -185,12 +186,6 @@ class BenchmarkUseCase:
                         exp_dir, item["sample_index"], "benchmark"
                     )
                 )
-                and f"{item['sample_index']:06d}" not in done_keys
-                and sample_key_for(args, item) not in done_keys
-                and compute_sample_key(
-                    args.task, getattr(args, "split", "test"), item.get("question", "")
-                )
-                not in done_keys
             ]
         else:
             pending = list(selected)
@@ -211,14 +206,6 @@ class BenchmarkUseCase:
         try:
             method = self.create_method(model, args)
             session_start = time.perf_counter()
-            booked = 0.0
-
-            def commit_eval_time() -> float:
-                nonlocal booked
-                elapsed = time.perf_counter() - session_start
-                total = store.add_eval_time(elapsed - booked)
-                booked = elapsed
-                return total
 
             progress = tqdm(total=target, initial=target - len(pending))
             processed = target - len(pending)
@@ -242,15 +229,12 @@ class BenchmarkUseCase:
                         stored["sample_index"] = sample_idx
                         stored["sample_key"] = f"{sample_idx:06d}"
                         store.append(stored, overwrite=overwrite)
-                    commit_eval_time()
                     batch = []
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
             progress.close()
-            if not pending:
-                commit_eval_time()
 
-            eval_seconds = float(store.read_progress().get("eval_time_sec", 0.0))
+            eval_seconds = time.perf_counter() - session_start
             predictions = predictions_in_dataset_order(store, args, selected)
             saved_config = config_snapshot(args)
             saved_config["requested_max_samples"] = requested_max_samples

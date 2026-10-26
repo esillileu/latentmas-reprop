@@ -7,6 +7,12 @@ from transformers import set_seed
 from ...domain.models import compute_sample_key
 from ...domain.ports.tracking_port import DummySpan
 from ...domain.services.latent_mas import LatentMASMethod
+from ...infrastructure.paths.resolver import get_path_resolver
+from ...infrastructure.storage import (
+    is_condition_complete,
+    load_json,
+    save_condition_result,
+)
 from ..common.reporter import write_jsonl
 from .diagnostics import execution_counts, inference_costs
 from .inference import build_upstream, decode_receiver
@@ -76,7 +82,21 @@ def collect_sample(
                         runtime,
                     )
                     length = measurements["handoff_positions"]
+                    exp_dir = records_path.parent
+                    resolver = get_path_resolver()
+                    overwrite = getattr(args, "overwrite", False)
+
                     for mode in ("answer_only", "free"):
+                        cond_name = f"u{step}_{mode}"
+                        cond_dir = resolver.get_condition_dir(exp_dir, index, cond_name)
+                        if not overwrite and is_condition_complete(cond_dir):
+                            try:
+                                stored_rec = load_json(cond_dir / "result.json")
+                                records.append(stored_rec)
+                                continue
+                            except Exception:
+                                pass
+
                         set_seed(args.seed)
                         limit = (
                             args.answer_only_max_new_tokens
@@ -101,32 +121,32 @@ def collect_sample(
                             tracker_port,
                             runtime,
                         )
-                        records.append(
-                            {
-                                "sample_id": sample_id,
-                                "sample_index": index,
-                                "question": item["question"],
-                                "gold": item.get("gold", ""),
-                                "upstream_latent_steps": step,
-                                "receiver_mode": mode,
-                                "handoff_condition": "latent" if step else "no_handoff",
-                                **measurements,
-                                **diagnostics,
-                                "trace_id": root.trace_id,
-                                "reference_solution": item.get("solution"),
-                                "receiver_max_new_tokens": limit,
-                                "context_id": f"{sample_id}:{step}",
-                                "upstream_context_sequence_length": length,
-                                "prediction": result["prediction"],
-                                "raw_receiver_output": result["raw_prediction"],
-                                "correct": result["correct"],
-                                "error_msg": result.get("error_msg"),
-                                "model": args.model_name,
-                                "seed": args.seed,
-                                "config": config,
-                                "agents": result["agents"],
-                            }
-                        )
+                        rec = {
+                            "sample_id": sample_id,
+                            "sample_index": index,
+                            "question": item["question"],
+                            "gold": item.get("gold", ""),
+                            "upstream_latent_steps": step,
+                            "receiver_mode": mode,
+                            "handoff_condition": "latent" if step else "no_handoff",
+                            **measurements,
+                            **diagnostics,
+                            "trace_id": root.trace_id,
+                            "reference_solution": item.get("solution"),
+                            "receiver_max_new_tokens": limit,
+                            "context_id": f"{sample_id}:{step}",
+                            "upstream_context_sequence_length": length,
+                            "prediction": result["prediction"],
+                            "raw_receiver_output": result["raw_prediction"],
+                            "correct": result["correct"],
+                            "error_msg": result.get("error_msg"),
+                            "model": args.model_name,
+                            "seed": args.seed,
+                            "config": config,
+                            "agents": result["agents"],
+                        }
+                        records.append(rec)
+                        save_condition_result(cond_dir, rec, overwrite=overwrite)
                         write_jsonl(records_path, records)
                     del context
         finally:

@@ -11,6 +11,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
+    MLflowTracker,
+    log_analysis_results_to_mlflow,
+)
+
 from .secret_digit_plots import create_digit_aspects_figure
 
 BUDGETS = (64, 128, 256, 512, 1024)
@@ -235,6 +240,7 @@ def main(argv=None):
         plot_receiver(receiver, args.output_dir)
         plot_budget(curves, args.output_dir)
         save(create_digit_aspects_figure(), args.output_dir, "secret_digit_aspects")
+    log_analysis_results_to_mlflow(MLflowTracker(), "presentation", args.output_dir)
 
 
 if __name__ == "__main__":

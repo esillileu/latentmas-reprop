@@ -8,6 +8,7 @@ from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.paths.naming import build_experiment_relpath
 from ..infrastructure.paths.resolver import get_path_resolver
+from ..infrastructure.storage import is_condition_complete
 from ..infrastructure.tracking.mlflow_tracker import get_git_commit_hash
 from .common.reporter import clean_config_args, write_json, write_jsonl, write_yaml
 from .receiver_compute_preflight.collection import collect_samples
@@ -61,7 +62,30 @@ class ReceiverComputePreflightUseCase:
         config_file = directory / "resolved_config.yaml"
         write_yaml(config_file, config)
 
-        if not getattr(args, "overwrite", False) and summary_file.is_file():
+        resolver = get_path_resolver()
+        steps = args.upstream_steps
+        required_conditions = (
+            ["no_handoff"]
+            + [f"u{s}_matched" for s in steps]
+            + [f"u{s}_mismatched" for s in steps]
+        )
+        all_complete = (
+            not getattr(args, "overwrite", False)
+            and summary_file.is_file()
+            and len(items) > 0
+        )
+        if all_complete:
+            for idx in range(len(items)):
+                for cond in required_conditions:
+                    if not is_condition_complete(
+                        resolver.get_condition_dir(directory, idx, cond)
+                    ):
+                        all_complete = False
+                        break
+                if not all_complete:
+                    break
+
+        if all_complete:
             import json
 
             try:
@@ -145,13 +169,15 @@ class ReceiverComputePreflightUseCase:
                 write_json(directory / "trace_manifest.json", manifest)
                 write_jsonl(directory / "sample_results.jsonl", records)
                 for path in directory.iterdir():
-                    tracker.log_artifact(path, artifact_path="results")
+                    if path.is_file():
+                        tracker.log_artifact(path, artifact_path="results")
                 tracker.flush_traces()
                 tracker.end_run(status="FAILED")
                 raise
             write_json(directory / "trace_manifest.json", manifest)
             for path in directory.iterdir():
-                tracker.log_artifact(path, artifact_path="results")
+                if path.is_file():
+                    tracker.log_artifact(path, artifact_path="results")
             tracker.flush_traces()
             tracker.end_run(status="FINISHED")
         return summary, records

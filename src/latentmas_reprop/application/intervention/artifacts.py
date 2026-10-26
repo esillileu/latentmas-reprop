@@ -1,10 +1,9 @@
 """Artifact persistence and MLflow artifact logging for intervention experiments."""
 
-from pathlib import Path
 from typing import Any
 
 from ...domain.models import InterventionMetrics, SampleInterventionRecord
-from ...domain.ports.cache_port import CacheLayer, CachePort
+from ...domain.ports.cache_port import CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.paths.naming import build_experiment_relpath
 from ...infrastructure.paths.resolver import get_path_resolver
@@ -16,7 +15,9 @@ def build_intervention_config_id(
 ) -> tuple[str, str]:
     """Return canonical relative experiment path."""
     backend = "vllm" if getattr(args, "use_vllm", False) else "transformers"
-    rel_path = build_experiment_relpath(args, dtype_name=model_dtype, backend=backend)
+    rel_path = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+        args, dtype_name=model_dtype, backend=backend
+    )
     return rel_path, ""
 
 
@@ -35,13 +36,14 @@ def start_intervention_tracker(
         if hasattr(model, "model")
         else "unknown"
     )
-    config_id, config_hash = build_intervention_config_id(args, model_dtype)
+    run_name = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+        args, dtype_name=model_dtype, backend=backend_name
+    )
 
     if not tracker_port:
-        return config_id, config_hash
+        return run_name, ""
 
     exp_name = getattr(args, "tracking_experiment_name", "latentmas_intervention")
-    run_name = config_id
     exp_dir = get_path_resolver().get_experiment_dir(run_name)
 
     tracker_port.start_run(
@@ -74,13 +76,11 @@ def start_intervention_tracker(
             "dtype": model_dtype,
             "cross_pairing_policy": getattr(args, "cross_policy", "shift_1"),
             "git_commit": git_hash,
-            "config_id": config_id,
-            "config_hash": config_hash,
             "intervention_conditions": str(conditions),
             "device": str(model.device),
         }
     )
-    return config_id, config_hash
+    return run_name, ""
 
 
 def log_sample_assessments(
@@ -156,29 +156,19 @@ def save_intervention_artifacts(
     cache_seq_stats: dict[str, Any],
     ram_stats: dict[str, Any],
 ) -> None:
-    """Save all evaluation artifacts to disk and log to MLflow tracker."""
-    import logging
+    """Save all evaluation artifacts directly in the experiment directory and log to MLflow tracker."""
+    backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
+    model_dtype = getattr(args, "model_dtype", "") or getattr(args, "dtype", "")
+    run_name = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+        args, dtype_name=model_dtype, backend=backend_name
+    )
+    exp_dir = get_path_resolver().get_experiment_dir(run_name)
+    exp_dir.mkdir(parents=True, exist_ok=True)
 
-    logger = logging.getLogger(__name__)
-
-    local_cache_file = f"{run_stem}.json"
-    try:
-        cache_port.save_json(
-            CacheLayer.EVALUATION_INTERVENTIONS,
-            local_cache_file,
-            {
-                "metrics": metrics.to_dict(),
-                "records": [r.to_dict() for r in sample_records],
-            },
-        )
-    except Exception as exc:
-        logger.error("Failed to save intervention cache %s: %s", local_cache_file, exc)
-
-    runtime_dir = Path(cache_port.get_layer_path(CacheLayer.RUNTIME))
-    sample_results_path = runtime_dir / f"{run_stem}_sample_results.jsonl"
-    summary_path = runtime_dir / f"{run_stem}_summary.json"
-    resolved_config_path = runtime_dir / f"{run_stem}_resolved_config.yaml"
-    patterns_path = runtime_dir / f"{run_stem}_correctness_patterns.json"
+    sample_results_path = exp_dir / "samples.jsonl"
+    summary_path = exp_dir / "summary.json"
+    resolved_config_path = exp_dir / "resolved_config.yaml"
+    patterns_path = exp_dir / "correctness_patterns.json"
 
     write_jsonl(sample_results_path, [r.to_dict() for r in sample_records])
 

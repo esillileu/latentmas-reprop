@@ -110,7 +110,7 @@ class InterventionUseCase:
             evaluator=self.evaluator_port,
         )
         git_hash = get_git_commit_hash()
-        config_id, config_hash = start_intervention_tracker(
+        start_intervention_tracker(
             self.tracker_port, args, model, n_samples, conditions, git_hash
         )
 
@@ -146,8 +146,6 @@ class InterventionUseCase:
                 method=method,
                 start_total_time=start_total_time,
                 git_hash=git_hash,
-                config_id=config_id,
-                config_hash=config_hash,
                 run_id=exp_relpath,
             )
         except Exception:
@@ -174,9 +172,8 @@ class InterventionUseCase:
         method: LatentMASMethod,
         start_total_time: float,
         git_hash: str,
-        config_id: str | None = None,
-        config_hash: str | None = None,
         run_id: str | None = None,
+        **kwargs: Any,
     ) -> tuple[InterventionMetrics, list[SampleInterventionRecord]]:
         contexts, traces, latencies, seq_lens, cache_bytes = (
             build_intervention_contexts(
@@ -186,8 +183,6 @@ class InterventionUseCase:
                 seed=args.seed,
                 save_raw_cache=save_raw_cache,
                 cache_port=self.cache_port,
-                config_id=config_id,
-                config_hash=config_hash,
                 sample_keys=sample_keys,
                 split=getattr(args, "split", "test"),
                 run_id=run_id,

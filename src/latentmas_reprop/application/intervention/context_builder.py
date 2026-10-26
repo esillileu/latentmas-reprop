@@ -7,8 +7,7 @@ from typing import Any
 import torch
 from tqdm import tqdm
 
-from ...domain.models import compute_sample_key
-from ...domain.ports.cache_port import CacheLayer, CachePort
+from ...domain.ports.cache_port import CachePort
 from ...domain.services.kv_cache import (
     estimate_past_kv_bytes,
     get_past_kv_sequence_length,
@@ -29,13 +28,12 @@ def build_intervention_contexts(
     dataset_iter: list[dict],
     task: str,
     seed: int,
-    save_raw_cache: bool,
-    cache_port: CachePort,
-    config_id: str | None = None,
-    config_hash: str | None = None,
+    save_raw_cache: bool = False,
+    cache_port: CachePort | None = None,
     sample_keys: list[str] | None = None,
     split: str = "test",
     run_id: str | None = None,
+    **kwargs: Any,
 ) -> tuple[list[Any], list[list[dict]], list[float], list[int], list[int]]:
     """Phase 1: Build latent contexts on CPU for each sample in the dataset."""
     contexts: list[Any] = []
@@ -91,29 +89,6 @@ def build_intervention_contexts(
                         "traces": traces,
                     },
                     tensors={"kv": past_kv_cpu},
-                )
-
-        if save_raw_cache:
-            import logging
-
-            logger = logging.getLogger(__name__)
-
-            model_slug = getattr(getattr(method, "model", None), "model_name", "model")
-            model_slug = str(model_slug).replace("/", "_").replace("\\", "_")
-            latent_steps = getattr(method, "latent_steps", 0)
-
-            cfg_part = f"_cfg{config_hash}" if config_hash else f"_ls{latent_steps}"
-            s_key = compute_sample_key(task, split, item.get("question", ""))
-            isolated_name = (
-                f"latent_{task}_{model_slug}{cfg_part}_key_{s_key[:16]}_s{seed}.pt"
-            )
-            try:
-                cache_port.save_torch(
-                    CacheLayer.LATENT_INTERVENTIONS, isolated_name, past_kv_cpu
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to save raw latent context %s: %s", isolated_name, exc
                 )
 
         if torch.cuda.is_available():

@@ -1,107 +1,138 @@
-# Storage Policy — File-Based Execution Model
+# Storage Policy — Deterministic File-Based Execution Model
 
-- **Target Architecture**: File-Based Condition Execution & Resumption Model
-- **Version**: 2.0.0
+- **Architecture**: Deterministic Human-Readable Experiment Directories & File-Based Condition Execution
+- **Version**: 2.1.0
 - **Status**: Implemented (`ref/storage-policy`)
 
 ---
 
-## 1. Storage Tiers & Directory Structure
+## 1. Core Principles
 
-All experiment outputs and assets adhere to a clear, minimal storage layout without external state databases or continuous manifest synchronization:
+1. **The directory path itself is the sole external identifier of an experiment.**
+2. Identical calculation configurations always map to the exact same directory.
+3. Different calculation configurations map to different directories.
+4. Completed calculations are never re-executed.
+5. Re-executing an interrupted command resumes only uncompleted calculations.
+6. MLflow tracks experiments but does **not** decide whether a calculation is complete.
+7. Downstream analyzers query experiment data via MLflow / linked local storage.
+8. Analysis results and reports are preserved both locally in `artifacts/` and in MLflow under `latentmas-analysis`.
+
+### Prohibited Patterns
+- No UUID-based execution identification.
+- No separate identifier management systems (Config ID, storage Run ID, Sample Key).
+- No configuration hashes in directory names.
+- No external manifest or database for run status.
+- No checkpoint JSONL as a completion indicator.
+- No local storage vs. MLflow status synchronization managers or adapters.
+
+---
+
+## 2. Storage Tiers & Directory Layout
+
+The workspace root adheres to a clean, minimal layout:
 
 ```text
-storage/
-├── mlflow/
-│   ├── mlflow.db
-│   └── mlflow_artifacts/
-│
-└── experiments/
-    └── <run_id>/
-        ├── config.json
-        │
-        └── samples/
-            ├── <sample_key_A>/
-            │   ├── shared/
-            │   │   ├── hidden.pt
-            │   │   ├── kv.pt
-            │   │   └── result.json
-            │   │
-            │   ├── ple/
-            │   │   ├── hidden.pt
-            │   │   └── result.json
-            │   │
-            │   ├── plce/
-            │   │   ├── hidden.pt
-            │   │   └── result.json
-            │   │
-            │   └── plpe/
-            │       ├── hidden.pt
-            │       └── result.json
-            │
-            └── <sample_key_B>/
-                └── ...
+latentmas-reprop/
+├── configs/
+│   └── <preset YAML configurations>
+├── data/
+│   └── <input benchmark datasets>
+├── storage/
+│   ├── experiments/
+│   │   └── <task>/<model>/<method>/<prompt>/<params>/
+│   │       ├── config.json
+│   │       ├── summary.json
+│   │       ├── samples.jsonl (generated for export/MLflow)
+│   │       └── samples/
+│   │           ├── 000000/
+│   │           │   ├── shared/
+│   │           │   │   ├── kv.pt
+│   │           │   │   └── result.json
+│   │           │   └── <condition>/
+│   │           │       └── result.json
+│   │           └── 000001/
+│   │               └── ...
+│   └── mlflow/
+│       ├── mlflow.db
+│       └── mlflow_artifacts/
+├── artifacts/
+│   └── <human-readable analysis path>/
+│       ├── summary.md
+│       └── <plots and CSV tables>
+└── .cache/
+    └── <reconstructable volatile caches, cleanable via just clean-cache>
 ```
 
 ### Storage Directory Roles:
-1. **`storage/mlflow/`**: Persistent SQLite tracking database (`mlflow.db`) and lightweight tracked artifacts (`mlflow_artifacts/`).
-2. **`storage/experiments/`**: Source of truth for all experiment outputs, sample results, and heavy tensors organized by `run_id`.
-3. **`.cache/`**: Volatile, reconstructable cache (e.g., projection weights, tokenizers). Cleanable at any time via `just clean-cache` without affecting research data.
-4. **`artifacts/`**: Publication and presentation figures and reports.
+1. **`configs/`**: User-defined YAML preset configurations and CLI overrides.
+2. **`data/`**: Reference datasets (GSM8K, MedQA, etc.).
+3. **`storage/experiments/`**: Authoritative source of truth for all computation outputs, sample-level records, and large tensors.
+4. **`storage/mlflow/`**: Persistent SQLite tracking database (`mlflow.db`) and lightweight tracked artifacts (`mlflow_artifacts/`).
+5. **`artifacts/`**: Final analysis reports, figures, and publication tables.
+6. **`.cache/`**: Volatile, cleanable cache (e.g. projection weights, tokenizers). Cleaned safely at any time via `just clean-cache` without affecting research data.
 
 ---
 
-## 2. Identifier Policy
+## 3. Path Construction Contract
 
-- **`run_id`**: Directory identifier for a concrete execution run. Distinct executions use different `run_id` values.
-- **`sample_key`**: Content-based identifier for a problem or prompt across dataset splits.
-- **`condition`**: Experimental condition or branch name (e.g., `shared`, `own`, `cross`, `drop`, `zero`, `ple`, `plce`, `plpe`).
+Experiment paths are canonical 5-level relative paths constructed before model loading:
 
-### Resumption Policy:
-- Resuming requires explicitly specifying the existing `run_id` (via CLI `--run_id <id>` or explicit parameter). A new run is never silently treated as an automatic resume of a prior run.
-- When resuming, `config.json` in `<experiments_dir>/<run_id>/` is verified against the requested configuration. If critical settings differ (e.g. `model_name`, `task`, `method`, `latent_steps`, `seed`), execution is rejected with `ConfigurationMismatchError`.
-- MLflow's Run ID serves as the directory ID; when resuming an existing run under a new MLflow tracking run, the previous `run_id` is linked as a tag on the Run.
+$$\text{path} = \langle\text{task}\rangle / \langle\text{clean\_model\_name}\rangle / \langle\text{method}\rangle / \langle\text{prompt}\rangle / \langle\text{params\_stem}\rangle$$
 
----
+Examples:
+- **Benchmark**: `gsm8k/Qwen3-8B/latent_mas/sequential/ls20_seed42_temp0.6_top0.95_mt2048_float16`
+- **Intervention**: `gsm8k/Qwen3-8B/latent_mas/sequential/ls20_seed42_temp0.6_top0.95_mt2048_float16_intervention_cross_shift_1`
+- **Acquisition**: `secret_digit/Qwen3-0.6B/latent_mas/default/ls4_seed42_temp0.6_top0.95_mt2048_float16_acquisition_modes_full-latent_only-prompt_only_cond_drop-own-cross`
 
-## 3. Completion & Atomicity Contracts
-
-### 3.1 Completion Decision
-Each condition directory's `result.json` acts as the authoritative completion indicator:
-
-| State | Action |
-| :--- | :--- |
-| `result.json` missing | Execute that condition |
-| `result.json` valid & all required files exist | Condition complete; skip execution and load result |
-| `result.json` corrupted or required files missing | Incomplete; re-execute that condition |
-| `.tmp` files only | Incomplete task; re-execute |
-
-> **Important**: The mere existence of an arbitrary file does not indicate completion. Completion is guaranteed only when `result.json` successfully parses as JSON and every file declared in its `"files"` list exists on disk.
-
-### 3.2 Save Sequence
-When condition execution finishes, files are committed in strict atomic order:
-1. Save hidden states and other required tensors to `.<filename>.tmp`, then atomically rename.
-2. Prepare result metadata (predictions, evaluation scores, latency, `"files": [...]`).
-3. Verify required files are successfully saved on disk.
-4. Write `result.json.tmp`.
-5. Atomically rename `result.json.tmp` to `result.json`.
-
-`result.json` is always written last. If any step fails or is interrupted, no completion file is created.
+### Path Rules:
+- The path is decided **before** model loading using execution arguments and explicit or resolved precision (`resolve_experiment_dtype_name`).
+- Runner, UseCase, Storage, MLflow, and Reader all reference the exact same relative directory path.
+- The path cannot change dynamically mid-execution.
 
 ---
 
-## 4. Execution Resumption Workflow
+## 4. Completion & Resumption Contracts
 
-At the start of execution:
-- Completed `shared/` contexts are reused across branches.
-- Completed conditions within a sample are reused.
-- Any incomplete or corrupted conditions are recomputed.
-- Interrupted runs resume simply by inspecting directory contents. No separate checkpoint JSONL, DB, or manifest synchronization is required.
+### 4.1 Condition-Level Completion Standard
+Each condition directory's `result.json` is the sole authoritative standard of computation completion:
+
+| File Status | Completion Decision | Action |
+| :--- | :--- | :--- |
+| `result.json` missing | Incomplete | Execute this condition |
+| `result.json` valid JSON, no error, all required files exist | Complete | Skip execution, reuse stored result |
+| `result.json` corrupted or error present | Incomplete | Recompute this condition |
+| `.tmp` files present | Incomplete task | Clean up and recompute |
+
+### 4.2 Experiment Completion Standard
+An experiment execution is complete if and only if **all required samples and conditions** have valid completion files on disk:
+- `summary.json`: Aggregated metrics and metadata.
+- `config.json`: Recorded execution configuration.
+- `samples.jsonl`: Generated from sample directories for export and MLflow.
+- The mere existence of `summary.json` or `parity.json` does **not** mark an experiment as complete if sample condition files are missing or incomplete.
+- Re-executing an experiment with a larger `max_samples` reuses completed samples (e.g. 0 to 9) and computes only newly requested samples (e.g. 10 to 49).
+- Supplying `--overwrite` forces re-computation of the requested range only.
 
 ---
 
 ## 5. MLflow Tracking Boundary
 
-MLflow is restricted purely to experiment tracking:
-- **Tracked in MLflow**: Configuration, git commit hash, metrics, GenAI traces, small result summaries, and data directory link (`data_dir` tag).
-- **Not Tracked in MLflow**: Full hidden state trajectories, large KV caches, per-file intermediate states, or manifest synchronizations.
+Each execution run in MLflow corresponds directly to one experiment directory path:
+- **MLflow Tags**:
+  - `data_dir`: Absolute path to `storage/experiments/<relpath>/`
+  - `rel_dir`: Canonical relative path `<task>/<model>/<method>/<prompt>/<params>`
+- **Run Idempotency**:
+  - If a directory is re-executed, the existing MLflow run matching `tags.data_dir` or `tags.rel_dir` is reused. No duplicate runs are created.
+- **Tracked in MLflow**: Configuration, git commit hash, summary metrics, GenAI traces, evaluation assessments, and lightweight result files.
+- **Retained on Disk**: Heavy tensors (KV caches, full hidden states) remain in `storage/experiments/`.
+
+---
+
+## 6. Analysis Integration Contract
+
+All analysis tools follow a unified workflow:
+1. **Input Selection**: Select input experiment directory path(s) (e.g. `--experiment-dir`).
+2. **Data Querying**: Query MLflow for matching experiment metadata and retrieve artifacts / tensors via `ResearchDataReader` without requiring MLflow Run IDs in the CLI.
+3. **Execution**: Compute analysis metrics and generate figures without model inference.
+4. **Persistence**:
+   - Write figures and tables to `artifacts/<analysis_path>/`.
+   - Record results and upload all outputs to the dedicated MLflow experiment `latentmas-analysis`.

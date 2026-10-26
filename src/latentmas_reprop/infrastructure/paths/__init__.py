@@ -3,6 +3,7 @@ from .naming import (
     build_params_stem,
     clean_model_name,
     format_setting,
+    resolve_experiment_dtype_name,
 )
 from .resolver import DEFAULT_PATH_RESOLVER, PathResolver, get_path_resolver
 
@@ -14,4 +15,5 @@ __all__ = [
     "clean_model_name",
     "format_setting",
     "get_path_resolver",
+    "resolve_experiment_dtype_name",
 ]

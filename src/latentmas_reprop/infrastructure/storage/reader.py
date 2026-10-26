@@ -18,7 +18,7 @@ from .tensor_store import (
 
 
 def _validate_safe_name(name_val: str, field_name: str) -> str:
-    """Disallow path traversal components and directory separators."""
+    """Disallow path traversal components and directory separators for leaf names."""
     if not name_val:
         return name_val
     if ".." in name_val or "/" in name_val or "\\" in name_val:
@@ -26,6 +26,18 @@ def _validate_safe_name(name_val: str, field_name: str) -> str:
             f"Path traversal or invalid path character in {field_name}: '{name_val}'"
         )
     return name_val
+
+
+def _validate_safe_path(path_val: str, field_name: str) -> str:
+    """Disallow path traversal components and absolute paths for hierarchical paths."""
+    if not path_val:
+        return path_val
+    p = Path(path_val)
+    if p.is_absolute() or ".." in p.parts:
+        raise ValueError(
+            f"Path traversal or absolute path disallowed in {field_name}: '{path_val}'"
+        )
+    return path_val
 
 
 def _validate_safe_relpath(path_val: str, field_name: str) -> Path:
@@ -60,46 +72,72 @@ class ResearchDataReader:
         self.provenance: list[dict[str, Any]] = []
 
     def get_run_data_dir(self, run_id: str) -> Path:
-        """Find the local storage directory associated with an experiment Run ID without mutating disk."""
-        _validate_safe_name(run_id, "run_id")
+        """Find the local storage directory associated with an experiment run or relative path without mutating disk."""
+        _validate_safe_path(run_id, "run_id")
+
+        # 1. Check MLflow run tags if client is available
         if self.client:
             with contextlib.suppress(Exception):
                 run = self.client.get_run(run_id)
                 tag_dir = run.data.tags.get("data_dir")
                 if tag_dir:
-                    p = Path(tag_dir)
-                    if p.is_dir():
-                        return p
-                alt_id = run.data.tags.get("storage_run_id") or run.data.tags.get(
-                    "resumed_from_run_id"
+                    return Path(tag_dir)
+                alt_id = (
+                    run.data.tags.get("rel_dir")
+                    or run.data.tags.get("storage_run_id")
+                    or run.data.tags.get("resumed_from_run_id")
                 )
                 if alt_id:
-                    _validate_safe_name(alt_id, "storage_run_id")
-                    alt_dir = self.resolver.get_experiment_dir(alt_id)
-                    if alt_dir.is_dir():
-                        return alt_dir
+                    _validate_safe_path(alt_id, "storage_run_id")
+                    return self.resolver.get_experiment_dir(alt_id)
 
-        return self.resolver.get_experiment_dir(run_id)
+            with contextlib.suppress(Exception):
+                for exp in self.client.search_experiments():
+                    runs = self.client.search_runs(
+                        [exp.experiment_id],
+                        filter_string=f"tags.rel_dir = '{run_id}'",
+                        max_results=1,
+                    )
+                    if runs:
+                        tag_dir = runs[0].data.tags.get("data_dir")
+                        if tag_dir:
+                            return Path(tag_dir)
+
+        clean_rel = str(run_id).strip("/\\")
+        return self.resolver.experiments_dir / clean_rel
 
     def load_artifact(self, run_id: str, artifact_path: str) -> Any:
         """Load an artifact (JSON, JSONL, YAML) from MLflow or local run storage."""
-        _validate_safe_name(run_id, "run_id")
+        _validate_safe_path(run_id, "run_id")
         rel_path = _validate_safe_relpath(artifact_path, "artifact_path")
         downloaded_path = None
 
-        if self.client:
-            dest_dir = self.cache_dir / run_id
+        run_dir = self.get_run_data_dir(run_id)
+        candidate = run_dir / rel_path
+        if candidate.is_file():
+            downloaded_path = candidate
+
+        if (downloaded_path is None or not downloaded_path.is_file()) and self.client:
+            actual_run_id = run_id
+            if "/" in run_id:
+                with contextlib.suppress(Exception):
+                    for exp in self.client.search_experiments():
+                        runs = self.client.search_runs(
+                            [exp.experiment_id],
+                            filter_string=f"tags.rel_dir = '{run_id}'",
+                            max_results=1,
+                        )
+                        if runs:
+                            actual_run_id = runs[0].info.run_id
+                            break
+            dest_dir = self.cache_dir / actual_run_id
             dest_dir.mkdir(parents=True, exist_ok=True)
             with contextlib.suppress(Exception):
                 downloaded_path = Path(
-                    self.client.download_artifacts(run_id, artifact_path, str(dest_dir))
+                    self.client.download_artifacts(
+                        actual_run_id, artifact_path, str(dest_dir)
+                    )
                 )
-
-        if downloaded_path is None or not downloaded_path.is_file():
-            run_dir = self.get_run_data_dir(run_id)
-            candidate = run_dir / rel_path
-            if candidate.is_file():
-                downloaded_path = candidate
 
         if downloaded_path is None or not downloaded_path.is_file():
             raise FileNotFoundError(
@@ -138,7 +176,7 @@ class ResearchDataReader:
         segment_id: str = "",
     ) -> torch.Tensor:
         """Load a torch tensor for a given run and artifact identifier."""
-        _validate_safe_name(run_id, "run_id")
+        _validate_safe_path(run_id, "run_id")
         run_dir = self.get_run_data_dir(run_id)
         cond = condition or branch_id
         fname = artifact_id if artifact_id.endswith(".pt") else f"{artifact_id}.pt"
