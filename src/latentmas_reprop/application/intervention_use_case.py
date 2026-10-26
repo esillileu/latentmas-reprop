@@ -122,7 +122,10 @@ class InterventionUseCase:
         ):
             run_id = self.tracker_port.active_run_id
         if not run_id:
-            run_id = config_hash or f"intervention_{int(time.time())}"
+            import uuid
+
+            run_id = uuid.uuid4().hex
+        args.run_id = run_id
 
         exp_dir = get_path_resolver().get_experiment_dir(run_id)
         verify_run_config(
@@ -135,9 +138,15 @@ class InterventionUseCase:
                 "seed": args.seed,
                 "split": getattr(args, "split", "test"),
                 "prompt": getattr(args, "prompt", "sequential"),
-                "config_id": config_id,
+                "max_new_tokens": getattr(args, "max_new_tokens", 2048),
+                "temperature": getattr(args, "temperature", 0.6),
+                "top_p": getattr(args, "top_p", 0.95),
+                "cross_policy": cross_policy,
+                "sample_keys": sample_keys,
             },
         )
+        if self.tracker_port:
+            self.tracker_port.set_data_dir(run_id, exp_dir)
 
         try:
             return self._run_experiment(
@@ -204,7 +213,6 @@ class InterventionUseCase:
                 n_samples,
                 policy=cross_policy,
                 seed=args.seed,
-                cache_seq_lens=seq_lens if cross_policy == "length_matched" else None,
             )
             if "cross" in conditions
             else []
