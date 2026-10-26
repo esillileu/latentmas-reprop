@@ -13,4 +13,4 @@ mlruns/
 runs/
 *.db
 artifacts/
-storage/
+/storage/
