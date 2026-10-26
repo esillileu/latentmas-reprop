@@ -53,21 +53,11 @@ class ResearchDataReader:
                     "resumed_from_run_id"
                 )
                 if alt_id:
-                    alt_dir = self.resolver.experiments_dir / alt_id
+                    alt_dir = self.resolver.get_experiment_dir(alt_id)
                     if alt_dir.is_dir():
                         return alt_dir
 
-        candidates = [
-            self.resolver.experiments_dir / run_id,
-            self.resolver.storage_dir / "tensors" / run_id,
-            self.resolver.storage_dir / run_id,
-            self.resolver.storage_dir / "evaluation" / "runs" / run_id,
-            self.resolver.cache_dir / "evaluation" / "runs" / run_id,
-        ]
-        for c in candidates:
-            if c.is_dir():
-                return c
-        return self.resolver.experiments_dir / run_id
+        return self.resolver.get_experiment_dir(run_id)
 
     def load_artifact(self, run_id: str, artifact_path: str) -> Any:
         """Load an artifact (JSON, JSONL, YAML) from MLflow or local run storage."""
@@ -83,25 +73,9 @@ class ResearchDataReader:
 
         if downloaded_path is None or not downloaded_path.is_file():
             run_dir = self.get_run_data_dir(run_id)
-            candidates = [
-                run_dir / artifact_path,
-                self.resolver.storage_dir / run_id / artifact_path,
-                self.resolver.storage_dir
-                / "evaluation"
-                / "runs"
-                / run_id
-                / artifact_path,
-                self.resolver.cache_dir
-                / "evaluation"
-                / "runs"
-                / run_id
-                / artifact_path,
-                self.resolver.artifacts_dir / run_id / artifact_path,
-            ]
-            for c in candidates:
-                if c.is_file():
-                    downloaded_path = c
-                    break
+            candidate = run_dir / artifact_path
+            if candidate.is_file():
+                downloaded_path = candidate
 
         if downloaded_path is None or not downloaded_path.is_file():
             raise FileNotFoundError(
@@ -142,30 +116,29 @@ class ResearchDataReader:
         """Load a torch tensor for a given run and artifact identifier."""
         run_dir = self.get_run_data_dir(run_id)
         cond = condition or branch_id
+        fname = artifact_id if artifact_id.endswith(".pt") else f"{artifact_id}.pt"
 
         # 1. Exact sample and condition lookup
         if sample_key and cond:
-            fname = artifact_id if artifact_id.endswith(".pt") else f"{artifact_id}.pt"
             candidate = run_dir / "samples" / sample_key / cond / fname
             if candidate.is_file():
                 return load_tensor(candidate, map_location=map_location)
 
-        # 2. Direct path check in run_dir
-        fname = artifact_id if artifact_id.endswith(".pt") else f"{artifact_id}.pt"
-        if (run_dir / fname).is_file():
-            return load_tensor(run_dir / fname, map_location=map_location)
+        # 2. Shared context lookup for sample
+        if sample_key:
+            candidate = run_dir / "samples" / sample_key / "shared" / fname
+            if candidate.is_file():
+                return load_tensor(candidate, map_location=map_location)
 
-        # 3. Search under run_dir
-        for p in run_dir.rglob("*.pt"):
-            if artifact_id in p.name:
-                return load_tensor(p, map_location=map_location)
+        # 3. Direct path check in run_dir (e.g. run-level tensor)
+        candidate = run_dir / fname
+        if candidate.is_file():
+            return load_tensor(candidate, map_location=map_location)
 
-        # 4. Search under storage_dir/tensors/run_id
-        legacy_dir = self.resolver.storage_dir / "tensors" / run_id
-        if legacy_dir.is_dir():
-            for p in legacy_dir.rglob("*.pt"):
-                if artifact_id in p.name:
-                    return load_tensor(p, map_location=map_location)
+        # 4. Explicit relative subpath in run_dir
+        candidate = run_dir / artifact_id
+        if candidate.is_file():
+            return load_tensor(candidate, map_location=map_location)
 
         raise FileNotFoundError(
             f"Tensor artifact '{artifact_id}' not found for run '{run_id}'."
