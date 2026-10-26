@@ -1,12 +1,27 @@
 import copy
 import os
+from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def isolate_test_environment(monkeypatch):
+def isolate_test_environment(monkeypatch, tmp_path_factory):
     """Ensure tests run strictly isolated from ambient MLflow servers and production runs."""
+    test_env_dir = tmp_path_factory.mktemp("test_env")
+    storage_dir = test_env_dir / "storage"
+    cache_dir = test_env_dir / ".cache"
+    mlflow_dir = storage_dir / "mlflow"
+    artifacts_dir = test_env_dir / "artifacts"
+
+    monkeypatch.setenv("LATENTMAS_STORAGE_DIR", str(storage_dir))
+    monkeypatch.setenv("LATENTMAS_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("LATENTMAS_MLFLOW_DIR", str(mlflow_dir))
+    monkeypatch.setenv("LATENTMAS_ARTIFACTS_DIR", str(artifacts_dir))
+
+    repo_root = Path(__file__).resolve().parent.parent
+    monkeypatch.setenv("LATENTMAS_PROJECT_ROOT", str(repo_root))
+
     if "MLFLOW_TRACKING_URI" in os.environ:
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
 

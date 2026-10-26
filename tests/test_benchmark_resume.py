@@ -103,9 +103,10 @@ def test_completed_samples_resume_and_are_not_overwritten(tmp_path):
     model = argparse.Namespace(
         dtype_name="float16", load_time_sec=1.5, device=torch.device("cpu")
     )
-    args = _args(max_samples=-1, generate_bs=1)
+    run_id = build_run_id(_args(max_samples=-1, generate_bs=1), "float16")
+    args = _args(max_samples=-1, generate_bs=1, run_id=run_id)
 
-    store = BenchmarkRunStore(cache, build_run_id(args, "float16"))
+    store = BenchmarkRunStore(cache, run_id)
     store.append(
         {
             "sample_key": compute_sample_key("gsm8k", "test", "one plus one"),

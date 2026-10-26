@@ -58,7 +58,7 @@ def test_clean_volatile_cache(tmp_path):
     persistent_db.parent.mkdir(parents=True, exist_ok=True)
     persistent_db.write_text("dummy db")
 
-    tensor_file = resolver.tensors_dir / "test_tensor.pt"
+    tensor_file = resolver.experiments_dir / "test_run" / "kv.pt"
     tensor_file.parent.mkdir(parents=True, exist_ok=True)
     tensor_file.write_text("dummy tensor")
 

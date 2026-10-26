@@ -15,7 +15,6 @@ def test_path_resolver_directories():
     assert resolver.data_dir.name == "data"
     assert resolver.storage_dir.name == "storage"
     assert resolver.experiments_dir.name == "experiments"
-    assert resolver.tensors_dir.name == "tensors"
     assert resolver.mlflow_dir.name == "mlflow"
     assert resolver.artifacts_dir.name == "artifacts"
     assert resolver.medqa_json_path.name == "medqa.json"

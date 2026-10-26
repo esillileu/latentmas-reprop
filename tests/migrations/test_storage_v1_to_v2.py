@@ -8,7 +8,7 @@ import torch
 
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage.reader import ResearchDataReader
-from latentmas_reprop.infrastructure.storage.tensor_store import TensorStore
+from latentmas_reprop.infrastructure.storage.tensor_store import FileStorage
 from tools.migrations.storage_v1_to_v2.inventory import generate_inventory
 from tools.migrations.storage_v1_to_v2.migrate import StorageMigrator, compute_sha256
 from tools.migrations.storage_v1_to_v2.schemas import MigrationStatus
@@ -180,7 +180,7 @@ def test_migration_execution_and_verification(
 
     # 4. Check ResearchDataReader reads migrated artifacts and tensors
     resolver = PathResolver(tmp_path)
-    store = TensorStore(resolver)
+    store = FileStorage(resolver)
     reader = ResearchDataReader(path_resolver=resolver, tensor_store=store)
 
     # Load migrated tensor
