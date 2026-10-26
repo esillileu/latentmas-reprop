@@ -109,13 +109,6 @@ class PathResolver:
         return path
 
     @property
-    def tensors_dir(self) -> Path:
-        """Root directory for persistent large tensor storage."""
-        path = self.storage_dir / "tensors"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    @property
     def mlflow_dir(self) -> Path:
         """Root directory for persistent MLflow backend database and artifacts.
 
@@ -166,7 +159,6 @@ class PathResolver:
             self.root.resolve(),
             self.storage_dir.resolve(),
             self.experiments_dir.resolve(),
-            self.tensors_dir.resolve(),
             self.mlflow_dir.resolve(),
             self.data_dir.resolve(),
             self.configs_dir.resolve(),

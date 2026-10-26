@@ -1,6 +1,7 @@
 """Simple, file-based execution storage utilities and FileStorage service."""
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -11,36 +12,31 @@ from ...domain.models.tensor_artifact import (
     ImmutableTensorOverwriteError,
     TensorMissingError,
 )
-from ...domain.ports.tensor_store_port import TensorStorePort
 from ..paths.resolver import PathResolver, get_path_resolver
 
 
-def save_tensor(
-    path: Path | str, tensor: torch.Tensor, overwrite: bool = False
-) -> Path:
-    """Atomically save a torch tensor to disk via a temporary file."""
+def save_tensor(path: Path | str, tensor: Any, overwrite: bool = False) -> Path:
+    """Atomically save a torch tensor or KV cache structure via a unique temp file."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if target.is_file() and not overwrite:
-        try:
-            existing = torch.load(target, map_location="cpu", weights_only=False)
-            if torch.equal(existing, tensor):
-                return target
-        except Exception:
-            pass
         raise ImmutableTensorOverwriteError(
             f"Cannot overwrite immutable tensor at '{target}' without overwrite=True."
         )
 
-    tmp = target.with_suffix(f"{target.suffix}.tmp")
-    torch.save(tensor, tmp)
-    tmp.replace(target)
+    tmp = target.with_name(f"{target.name}.tmp.{uuid.uuid4().hex[:8]}")
+    try:
+        torch.save(tensor, tmp)
+        tmp.replace(target)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
     return target
 
 
-def load_tensor(path: Path | str, map_location: Any = None) -> torch.Tensor:
-    """Load a torch tensor from disk, raising TensorMissingError if absent."""
+def load_tensor(path: Path | str, map_location: Any = None) -> Any:
+    """Load a torch tensor or KV cache structure from disk."""
     target = Path(path)
     if not target.is_file():
         raise TensorMissingError(f"Tensor file not found on disk: {target}")
@@ -48,13 +44,17 @@ def load_tensor(path: Path | str, map_location: Any = None) -> torch.Tensor:
 
 
 def save_json_atomic(path: Path | str, data: Any) -> Path:
-    """Atomically write data as JSON using a temporary file and atomic replace."""
+    """Atomically write data as JSON using a unique temp file and atomic replace."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(f"{target.suffix}.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    tmp.replace(target)
+    tmp = target.with_name(f"{target.name}.tmp.{uuid.uuid4().hex[:8]}")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        tmp.replace(target)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
     return target
 
 
@@ -68,7 +68,7 @@ def load_json(path: Path | str) -> Any:
 
 
 def is_condition_complete(condition_dir: Path | str) -> bool:
-    """Judge condition completion based on valid result.json and existence of required files."""
+    """Judge condition completion based on valid result.json, no errors, and required files."""
     cdir = Path(condition_dir)
     res_path = cdir / "result.json"
     if not res_path.is_file():
@@ -80,6 +80,9 @@ def is_condition_complete(condition_dir: Path | str) -> bool:
     if not isinstance(data, dict):
         return False
 
+    if data.get("error") is not None or data.get("error_msg") is not None:
+        return False
+
     required_files = data.get("files", [])
     return all((cdir / fname).is_file() for fname in required_files)
 
@@ -87,7 +90,7 @@ def is_condition_complete(condition_dir: Path | str) -> bool:
 def save_condition_result(
     condition_dir: Path | str,
     result_data: dict[str, Any],
-    tensors: dict[str, torch.Tensor] | None = None,
+    tensors: dict[str, Any] | None = None,
     overwrite: bool = False,
 ) -> Path:
     """Save condition tensors first, then atomically commit result.json."""
@@ -97,11 +100,18 @@ def save_condition_result(
     if not overwrite and is_condition_complete(cdir):
         return cdir / "result.json"
 
+    if result_data.get("error") is not None or result_data.get("error_msg") is not None:
+        err_path = cdir / "error.json"
+        save_json_atomic(err_path, result_data)
+        return err_path
+
+    effective_overwrite = overwrite or (not is_condition_complete(cdir))
+
     file_list = list(result_data.get("files", []))
     if tensors:
         for name, t in tensors.items():
             fname = name if name.endswith(".pt") else f"{name}.pt"
-            save_tensor(cdir / fname, t, overwrite=overwrite)
+            save_tensor(cdir / fname, t, overwrite=effective_overwrite)
             if fname not in file_list:
                 file_list.append(fname)
 
@@ -122,21 +132,37 @@ def verify_run_config(
         existing = load_json(cfg_path)
         keys = essential_keys or [
             "model_name",
-            "task",
+            "model_revision",
+            "dtype",
+            "backend",
             "method",
-            "latent_steps",
-            "seed",
+            "task",
             "split",
             "prompt",
+            "latent_steps",
+            "max_new_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "cross_policy",
         ]
         mismatches = {}
         for k in keys:
-            if (
-                k in existing
-                and k in requested_config
-                and str(existing[k]) != str(requested_config[k])
-            ):
-                mismatches[k] = (existing[k], requested_config[k])
+            if k in requested_config and requested_config[k] is not None:
+                if k not in existing:
+                    mismatches[k] = ("<missing in existing>", requested_config[k])
+                elif str(existing[k]) != str(requested_config[k]):
+                    mismatches[k] = (existing[k], requested_config[k])
+
+        if (
+            "sample_keys" in requested_config
+            and requested_config["sample_keys"] is not None
+        ):
+            if "sample_keys" not in existing:
+                mismatches["sample_keys"] = ("<missing in existing>", "sample_keys")
+            elif existing["sample_keys"] != requested_config["sample_keys"]:
+                mismatches["sample_keys"] = ("sample keys or ordering mismatch",)
+
         if mismatches:
             raise ConfigurationMismatchError(
                 f"Configuration mismatch when resuming run at '{rdir}': {mismatches}"
@@ -145,7 +171,7 @@ def verify_run_config(
         save_json_atomic(cfg_path, requested_config)
 
 
-class FileStorage(TensorStorePort):
+class FileStorage:
     """File-based experiment storage rooted at PathResolver.experiments_dir."""
 
     def __init__(self, path_resolver: PathResolver | None = None) -> None:
@@ -176,7 +202,7 @@ class FileStorage(TensorStorePort):
         sample_key: str,
         condition: str,
         result_data: dict[str, Any],
-        tensors: dict[str, torch.Tensor] | None = None,
+        tensors: dict[str, Any] | None = None,
         overwrite: bool = False,
     ) -> Path:
         cdir = self.get_condition_dir(run_id, sample_key, condition)
@@ -197,7 +223,7 @@ class FileStorage(TensorStorePort):
         condition: str,
         name: str = "hidden",
         map_location: Any = None,
-    ) -> torch.Tensor:
+    ) -> Any:
         cdir = self.get_condition_dir(run_id, sample_key, condition)
         fname = name if name.endswith(".pt") else f"{name}.pt"
         return load_tensor(cdir / fname, map_location=map_location)
@@ -205,7 +231,7 @@ class FileStorage(TensorStorePort):
     def save_tensor(
         self,
         path: Path | str,
-        tensor: torch.Tensor,
+        tensor: Any,
         overwrite: bool = False,
     ) -> Path:
         return save_tensor(path, tensor, overwrite=overwrite)
@@ -214,17 +240,12 @@ class FileStorage(TensorStorePort):
         self,
         path: Path | str,
         map_location: Any = None,
-    ) -> torch.Tensor:
+    ) -> Any:
         return load_tensor(path, map_location=map_location)
 
 
-TensorStore = FileStorage
 DEFAULT_FILE_STORAGE = FileStorage()
 
 
 def get_file_storage() -> FileStorage:
-    return DEFAULT_FILE_STORAGE
-
-
-def get_tensor_store() -> FileStorage:
     return DEFAULT_FILE_STORAGE
