@@ -42,9 +42,9 @@ def test_distinct_run_ids_for_identical_config(tmp_path):
     )
     args1 = SimpleNamespace(
         method="latent_mas",
-        model_name="Qwen/test",
+        model_name="Q/t",
         task="gsm8k",
-        prompt="sequential",
+        prompt="seq",
         seed=42,
         latent_steps=10,
         max_samples=0,
@@ -53,7 +53,7 @@ def test_distinct_run_ids_for_identical_config(tmp_path):
         temperature=0.6,
         top_p=0.95,
         split="test",
-        tracking_experiment_name="test_exp",
+        tracking_experiment_name="te",
     )
     args2 = SimpleNamespace(**vars(args1))
     model = SimpleNamespace(dtype_name="float16", load_time_sec=0.0)
@@ -71,43 +71,18 @@ def test_config_mismatch_raises_on_resume(tmp_path):
     """Missing or mismatched decisive config keys raise ConfigurationMismatchError."""
     exp_dir = tmp_path / "exp1"
     exp_dir.mkdir()
-    (exp_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "model_name": "test_model",
-                "latent_steps": 10,
-                "seed": 42,
-                "split": "test",
-                "sample_keys": ["k1", "k2"],
-            }
-        ),
-        encoding="utf-8",
-    )
-    # Mismatched seed
+    base = {
+        "model_name": "m",
+        "latent_steps": 10,
+        "seed": 42,
+        "split": "t",
+        "sample_keys": ["k1"],
+    }
+    (exp_dir / "config.json").write_text(json.dumps(base), encoding="utf-8")
     with pytest.raises(ConfigurationMismatchError):
-        verify_run_config(
-            exp_dir,
-            {
-                "model_name": "test_model",
-                "latent_steps": 10,
-                "seed": 999,
-                "split": "test",
-                "sample_keys": ["k1", "k2"],
-            },
-        )
-    # Missing decisive key in existing
+        verify_run_config(exp_dir, {**base, "seed": 999})
     with pytest.raises(ConfigurationMismatchError):
-        verify_run_config(
-            exp_dir,
-            {
-                "model_name": "test_model",
-                "latent_steps": 10,
-                "seed": 42,
-                "split": "test",
-                "prompt": "chain_of_thought",
-                "sample_keys": ["k1", "k2"],
-            },
-        )
+        verify_run_config(exp_dir, {**base, "prompt": "cot"})
 
 
 def test_incomplete_condition_triggers_reexecution(tmp_path):
@@ -265,13 +240,13 @@ def test_migration_tool_experiment_artifact_location_and_sample_extraction(tmp_p
     cur = conn.cursor()
     cur.execute("CREATE TABLE experiments (experiment_id TEXT, artifact_location TEXT)")
     cur.execute(
-        "INSERT INTO experiments VALUES ('1', 'file:///old/path/.cache/mlflow_artifacts/1')"
+        "INSERT INTO experiments VALUES ('1', 'file:///p/.cache/mlflow_artifacts/1')"
     )
     cur.execute(
         "CREATE TABLE runs (run_uuid TEXT, experiment_id TEXT, name TEXT, status TEXT, artifact_uri TEXT)"
     )
     cur.execute(
-        "INSERT INTO runs VALUES ('r1', '1', 'run1', 'FINISHED', 'file:///old/path/.cache/mlflow_artifacts/1/r1/artifacts')"
+        "INSERT INTO runs VALUES ('r1', '1', 'r', 'FINISHED', 'file:///p/.cache/mlflow_artifacts/1/r1/a')"
     )
     conn.commit()
     conn.close()
