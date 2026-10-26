@@ -146,11 +146,17 @@ class BenchmarkUseCase:
         args.exp_relpath = exp_relpath
         args.run_id = exp_relpath
 
-        resolver = (
-            getattr(self.cache_port, "_resolver", None)
-            or getattr(self.cache_port, "resolver", None)
-            or get_path_resolver()
+        cand = getattr(self.cache_port, "_resolver", None) or getattr(
+            self.cache_port, "resolver", None
         )
+        if (
+            cand
+            and not callable(getattr(cand, "assert_called", None))
+            and hasattr(cand, "get_experiment_dir")
+        ):
+            resolver = cand
+        else:
+            resolver = get_path_resolver()
         exp_dir = resolver.get_experiment_dir(exp_relpath)
         saved_cfg = config_snapshot(args)
         saved_cfg["requested_max_samples"] = requested_max_samples
