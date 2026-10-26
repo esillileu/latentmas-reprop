@@ -27,29 +27,46 @@ class BenchmarkRunStore:
         return json.loads(self.summary_path.read_text(encoding="utf-8"))
 
     def read_records(self) -> list[dict[str, Any]]:
-        """Load completed samples, dropping a truncated final line after a crash."""
+        """Load completed samples, dropping any corrupted or incomplete lines."""
         if not self.samples_path.is_file():
             return []
         lines = self.samples_path.read_text(encoding="utf-8").splitlines()
         records: list[dict[str, Any]] = []
-        for index, line in enumerate(lines):
+        dirty = False
+        for line in lines:
             if not line.strip():
                 continue
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
-                if index == len(lines) - 1:
-                    write_jsonl(self.samples_path, records)
-                    break
-                raise
+                dirty = True
+                continue
+            if not _is_valid_record(record):
+                dirty = True
+                continue
             records.append(record)
+        if dirty:
+            write_jsonl(self.samples_path, records)
         return records
 
-    def is_complete(self) -> bool:
+    def has_keys(self, required_keys: set[str] | list[str]) -> bool:
+        """Check if all required sample keys exist in valid completed records."""
+        if not required_keys:
+            return True
+        return set(required_keys).issubset(self.completed_keys())
+
+    def is_complete(self, target_samples: int | None = None) -> bool:
+        records = self.read_records()
+        if not records:
+            return False
+        if target_samples is not None:
+            return len(records) >= target_samples and target_samples > 0
         summary = self.read_summary()
         if not summary or summary.get("status") != "complete":
             return False
-        records = self.read_records()
+        config = summary.get("config") or {}
+        if config.get("requested_max_samples") != -1:
+            return False
         metrics = summary.get("metrics") or {}
         return (
             summary.get("sample_count") == len(records)
@@ -88,22 +105,45 @@ class BenchmarkRunStore:
 
     def write_complete(self, payload: dict[str, Any]) -> None:
         """Persist the finished summary without touching samples already stored."""
-        if self.is_complete():
-            return
         self.root.mkdir(parents=True, exist_ok=True)
         temporary = self.summary_path.with_suffix(".json.tmp")
         write_json(temporary, payload)
         temporary.replace(self.summary_path)
 
-    def load_finished(self) -> tuple[BenchmarkMetrics, list[dict[str, Any]]]:
+    def load_finished(
+        self, target_samples: int | None = None
+    ) -> tuple[BenchmarkMetrics, list[dict[str, Any]]]:
         summary = self.read_summary()
-        if summary is None:
-            raise FileNotFoundError(f"No summary for run {self.run_id}")
+        records = self.read_records()
+        if not records:
+            raise FileNotFoundError(f"No records found for run {self.run_id}")
+        if target_samples is not None and len(records) >= target_samples:
+            records = records[:target_samples]
         known = {field.name for field in fields(BenchmarkMetrics)}
-        metrics = BenchmarkMetrics(
-            **{key: value for key, value in summary["metrics"].items() if key in known}
-        )
-        predictions = [_without_sample_key(record) for record in self.read_records()]
+        if summary is not None:
+            metrics_dict = dict(summary.get("metrics") or {})
+            if target_samples is not None and len(records) != summary.get("sample_count"):
+                correct = sum(1 for r in records if r.get("correct", False))
+                metrics_dict["correct"] = correct
+                metrics_dict["total"] = len(records)
+                metrics_dict["max_samples"] = len(records)
+                metrics_dict["accuracy"] = correct / max(1, len(records))
+            metrics = BenchmarkMetrics(
+                **{key: value for key, value in metrics_dict.items() if key in known}
+            )
+        else:
+            correct = sum(1 for r in records if r.get("correct", False))
+            metrics = BenchmarkMetrics(
+                method="",
+                model="",
+                split="",
+                seed=0,
+                max_samples=len(records),
+                accuracy=correct / max(1, len(records)),
+                correct=correct,
+                total=len(records),
+            )
+        predictions = [_without_sample_key(record) for record in records]
         return metrics, predictions
 
 
@@ -124,3 +164,13 @@ def predictions_in_dataset_order(
             raise RuntimeError(f"Missing stored sample for {key}")
         predictions.append(_without_sample_key(record))
     return predictions
+
+
+def _is_valid_record(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if not record.get("sample_key"):
+        return False
+    if "prediction" not in record:
+        return False
+    return "correct" in record

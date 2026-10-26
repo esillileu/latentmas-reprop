@@ -33,11 +33,7 @@ def format_setting(value: Any) -> str:
 
 
 def build_run_id(args: Any, dtype_name: str) -> str:
-    """Identify a run by method, model, task, sampling, and dtype.
-
-    ``max_samples`` stays at the requested value, including ``-1``. A five-sample
-    smoke run therefore cannot overwrite or resume a full-test run.
-    """
+    """Identify a run by method, model, task, sampling, and dtype."""
     model = str(args.model_name).replace("/", "_").replace("\\", "_")
     return (
         f"{args.method}__{model}__{args.task}__{args.prompt}"
@@ -45,7 +41,6 @@ def build_run_id(args: Any, dtype_name: str) -> str:
         f"__mt{int(args.max_new_tokens)}"
         f"_temp{format_setting(float(args.temperature))}"
         f"_top{format_setting(float(args.top_p))}"
-        f"_bs{int(args.generate_bs)}_ms{int(args.max_samples)}"
         f"_think{format_setting(bool(getattr(args, 'think', False)))}"
         f"_realign{format_setting(bool(getattr(args, 'latent_space_realign', False)))}"
         f"_vllm{format_setting(bool(getattr(args, 'use_vllm', False)))}"
