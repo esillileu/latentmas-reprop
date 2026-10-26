@@ -81,10 +81,8 @@ def run_acquisition_loop(
             )
             for mode in modes:
                 cond_name = f"{mode}_{condition}" if mode != "none" else str(condition)
-                if run_id:
-                    cond_dir = resolver.get_condition_dir(
-                        run_id, target.sample_id, cond_name
-                    )
+                if run_id and not getattr(args, "overwrite", False):
+                    cond_dir = resolver.get_condition_dir(run_id, index, cond_name)
                     if is_condition_complete(cond_dir):
                         try:
                             d = load_json(cond_dir / "result.json")
@@ -201,10 +199,13 @@ def run_acquisition_loop(
                     tensors = {"hidden": st_hidden}
 
                 if run_id:
-                    cond_dir = resolver.get_condition_dir(
-                        run_id, target.sample_id, cond_name
+                    cond_dir = resolver.get_condition_dir(run_id, index, cond_name)
+                    save_condition_result(
+                        cond_dir,
+                        record.to_dict(),
+                        tensors=tensors,
+                        overwrite=bool(getattr(args, "overwrite", False)),
                     )
-                    save_condition_result(cond_dir, record.to_dict(), tensors=tensors)
 
             sample_records = [r for r in records if r.sample_index == index]
             if root is not None:

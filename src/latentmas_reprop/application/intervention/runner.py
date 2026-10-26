@@ -14,6 +14,7 @@ from ...domain.services.kv_cache import (
 )
 from ...domain.services.latent_mas import LatentMASMethod
 from ...infrastructure.models.model_wrapper import ModelWrapper
+from ...infrastructure.paths.naming import is_overwrite_requested
 from ...infrastructure.paths.resolver import get_path_resolver
 from ...infrastructure.storage import (
     is_condition_complete,
@@ -92,26 +93,26 @@ def run_intervention_decoding(
 
     for i, item in enumerate(tqdm(dataset_iter, desc="Intervention decoding")):
         sample_id = f"sample_{i}"
-        s_key = sample_keys[i]
+        s_key = sample_keys[i] if sample_keys and i < len(sample_keys) else f"{i:06d}"
         cross_j = cross_indices[i] if "cross" in conditions and cross_indices else None
         expected_cross_key = (
             sample_keys[cross_j]
-            if cross_j is not None and cross_j < len(sample_keys)
-            else None
+            if cross_j is not None and sample_keys and cross_j < len(sample_keys)
+            else (f"{cross_j:06d}" if cross_j is not None else None)
         )
 
         # Check condition-level completion from storage/experiments/<run_id>/samples/<s_key>/<cond>
         completed_conditions: dict[str, SampleInterventionRecord] = {}
-        if run_id:
+        overwrite = is_overwrite_requested(args)
+        if run_id and not overwrite:
             for cond in conditions:
                 cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
                 if is_condition_complete(cond_dir):
                     try:
                         d = load_json(cond_dir / "result.json")
-                        if d.get("sample_key") != s_key:
-                            continue
                         if (
                             cond == "cross"
+                            and expected_cross_key is not None
                             and d.get("source_sample_key") != expected_cross_key
                         ):
                             continue
@@ -230,7 +231,7 @@ def run_intervention_decoding(
 
                 if run_id:
                     cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
-                    save_condition_result(cond_dir, rec.to_dict())
+                    save_condition_result(cond_dir, rec.to_dict(), overwrite=overwrite)
 
             del own_context_gpu
             if torch.cuda.is_available():

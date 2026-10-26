@@ -31,6 +31,13 @@ def main() -> None:
         default=paths.root / "artifacts" / "receiver_acquisition",
     )
     parser.add_argument(
+        "--experiment-dir",
+        "--input-dir",
+        action="append",
+        default=[],
+        help="Specify experiment directories to analyze.",
+    )
+    parser.add_argument(
         "--canonical-run-id",
         action="append",
         default=[],
@@ -53,6 +60,16 @@ def main() -> None:
     )
     if len(experiments) != 1:
         raise ValueError("Expected one latentmas_receiver_acquisition experiment")
+    if args.experiment_dir:
+        for ed in args.experiment_dir:
+            edir_path = paths.get_experiment_dir(ed)
+            found = client.search_runs(
+                [experiments[0].experiment_id],
+                filter_string=f"tags.data_dir = '{edir_path.resolve()!s}'",
+                max_results=1,
+            )
+            for r in found:
+                args.canonical_run_id.append(r.info.run_id)
     candidates = []
     records_by_id = {}
     probes_by_id = {}

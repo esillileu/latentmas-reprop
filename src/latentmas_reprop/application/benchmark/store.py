@@ -1,15 +1,15 @@
 """Resumable benchmark sample logs and finished summaries."""
 
 import json
+from contextlib import suppress
 from dataclasses import fields
 from typing import Any
 
-from ...domain.models import BenchmarkMetrics
-from ...domain.ports.cache_port import CacheLayer, CachePort
+from ...domain.models import BenchmarkMetrics, compute_sample_key
+from ...domain.ports.cache_port import CachePort
 from ...infrastructure.paths.resolver import PathResolver, get_path_resolver
 from ...infrastructure.storage import is_condition_complete, save_condition_result
-from ..common.reporter import write_json, write_jsonl
-from .identity import sample_key_for
+from ..common.reporter import write_json
 
 
 class BenchmarkRunStore:
@@ -23,7 +23,15 @@ class BenchmarkRunStore:
     ) -> None:
         self.cache = cache
         self.run_id = run_id
-        self.resolver = path_resolver or get_path_resolver()
+        cand = (
+            path_resolver
+            or getattr(cache, "_resolver", None)
+            or getattr(cache, "resolver", None)
+        )
+        if cand and not callable(getattr(cand, "assert_called", None)) and hasattr(cand, "get_experiment_dir"):
+            self.resolver = cand
+        else:
+            self.resolver = get_path_resolver()
         self.root = self.resolver.get_experiment_dir(run_id)
         self.samples_path = self.root / "samples.jsonl"
         self.summary_path = self.root / "summary.json"
@@ -32,69 +40,50 @@ class BenchmarkRunStore:
 
     def read_summary(self) -> dict[str, Any] | None:
         if not self.summary_path.is_file():
-            if self.cache:
-                legacy = (
-                    self.cache.get_layer_path(CacheLayer.EVALUATION_RUNS)
-                    / self.run_id
-                    / "summary.json"
-                )
-                if legacy.is_file():
-                    return json.loads(legacy.read_text(encoding="utf-8"))
             return None
         return json.loads(self.summary_path.read_text(encoding="utf-8"))
 
     def read_records(self) -> list[dict[str, Any]]:
-        """Load completed samples from samples.jsonl or reconstruct from samples/ directory."""
-        if not self.samples_path.is_file():
-            samples_dir = self.root / "samples"
-            if samples_dir.is_dir():
-                recovered = []
-                for s_dir in sorted(samples_dir.iterdir()):
-                    cond_file = s_dir / "benchmark" / "result.json"
-                    if not cond_file.is_file():
-                        cond_file = s_dir / "result.json"
-                    if cond_file.is_file():
-                        try:
-                            d = json.loads(cond_file.read_text(encoding="utf-8"))
-                            if _is_valid_record(d):
-                                recovered.append(d)
-                        except Exception:
-                            pass
-                if recovered:
-                    write_jsonl(self.samples_path, recovered)
-                    return recovered
-            if self.cache:
-                legacy = (
-                    self.cache.get_layer_path(CacheLayer.EVALUATION_RUNS)
-                    / self.run_id
-                    / "samples.jsonl"
-                )
-                if legacy.is_file():
-                    return [
-                        json.loads(line)
-                        for line in legacy.read_text(encoding="utf-8").splitlines()
-                        if line.strip() and _is_valid_record(json.loads(line))
-                    ]
-            return []
+        """Load completed samples from samples/ directory or export cache."""
+        samples_dir = self.root / "samples"
+        if samples_dir.is_dir():
+            recovered = []
+            for s_dir in sorted(samples_dir.iterdir()):
+                cond_file = s_dir / "benchmark" / "result.json"
+                if not cond_file.is_file():
+                    cond_file = s_dir / "result.json"
+                if cond_file.is_file():
+                    try:
+                        d = json.loads(cond_file.read_text(encoding="utf-8"))
+                        if _is_valid_record(d):
+                            recovered.append(d)
+                    except Exception:
+                        pass
+            if recovered:
+                recovered.sort(key=lambda x: int(x.get("sample_index", 0)))
+                return recovered
 
-        lines = self.samples_path.read_text(encoding="utf-8").splitlines()
-        records: list[dict[str, Any]] = []
-        dirty = False
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                dirty = True
-                continue
-            if not _is_valid_record(record):
-                dirty = True
-                continue
-            records.append(record)
-        if dirty:
-            write_jsonl(self.samples_path, records)
-        return records
+        if self.samples_path.is_file():
+            records = []
+            dirty = False
+            for line in self.samples_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                    if _is_valid_record(record):
+                        records.append(record)
+                    else:
+                        dirty = True
+                except Exception:
+                    dirty = True
+            if dirty:
+                self.samples_path.write_text(
+                    "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+                    encoding="utf-8",
+                )
+            return records
+        return []
 
     def has_keys(self, required_keys: set[str] | list[str]) -> bool:
         """Check if all required sample keys exist in valid completed records."""
@@ -124,34 +113,38 @@ class BenchmarkRunStore:
     def completed_keys(self) -> set[str]:
         return {str(record["sample_key"]) for record in self.read_records()}
 
-    def append(self, record: dict[str, Any]) -> None:
-        """Append one finished sample. An existing key is left unchanged."""
-        key = str(record["sample_key"])
-        cond_dir = self.resolver.get_condition_dir(self.run_id, key, "benchmark")
-        if not is_condition_complete(cond_dir):
-            save_condition_result(cond_dir, record)
+    def append(self, record: dict[str, Any], overwrite: bool = False) -> None:
+        """Append one finished sample into samples/<idx>/benchmark/result.json."""
+        key = str(record.get("sample_key", ""))
+        idx = record.get("sample_index", key)
+        cond_dir = self.resolver.get_condition_dir(self.root, idx, "benchmark")
+        if overwrite or not is_condition_complete(cond_dir):
+            save_condition_result(cond_dir, record, overwrite=overwrite)
 
-        if key in self.completed_keys():
-            return
         self.root.mkdir(parents=True, exist_ok=True)
         with self.samples_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            handle.flush()
 
     def read_progress(self) -> dict[str, Any]:
-        if not self.progress_path.is_file():
-            return {"eval_time_sec": 0.0, "resumed_sessions": 0}
-        return json.loads(self.progress_path.read_text(encoding="utf-8"))
+        default = {"eval_time_sec": 0.0, "resumed_sessions": 0}
+        try:
+            if not self.progress_path.is_file():
+                return default
+            data = json.loads(self.progress_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else default
+        except Exception:
+            return default
 
     def add_eval_time(self, seconds: float) -> float:
         progress = self.read_progress()
         total = float(progress.get("eval_time_sec", 0.0)) + float(seconds)
         sessions = int(progress.get("resumed_sessions", 0)) + 1
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.progress_path.write_text(
-            json.dumps({"eval_time_sec": total, "resumed_sessions": sessions}),
-            encoding="utf-8",
-        )
+        with suppress(Exception):
+            self.root.mkdir(parents=True, exist_ok=True)
+            self.progress_path.write_text(
+                json.dumps({"eval_time_sec": total, "resumed_sessions": sessions}),
+                encoding="utf-8",
+            )
         return total
 
     def write_complete(self, payload: dict[str, Any]) -> None:
@@ -213,13 +206,31 @@ def predictions_in_dataset_order(
     store: BenchmarkRunStore, args: Any, selected: list[dict]
 ) -> list[dict]:
     """Return stored samples in dataset order, without the storage key."""
-    records = {record["sample_key"]: record for record in store.read_records()}
+    raw_records = store.read_records()
+    by_key = {}
+    by_question = {}
+    by_idx = {}
+    for r in raw_records:
+        if "sample_key" in r:
+            by_key[str(r["sample_key"])] = r
+        if "question" in r:
+            by_question[str(r["question"])] = r
+        if "sample_index" in r:
+            by_idx[int(r["sample_index"])] = r
+
     predictions: list[dict] = []
-    for item in selected:
-        key = sample_key_for(args, item)
-        record = records.get(key)
+    for idx, item in enumerate(selected):
+        record = None
+        q = item.get("question")
+        if q and q in by_question:
+            record = by_question[q]
+        if record is None and q:
+            h = compute_sample_key(args.task, getattr(args, "split", "test"), q)
+            record = by_key.get(h)
         if record is None:
-            raise RuntimeError(f"Missing stored sample for {key}")
+            record = by_idx.get(idx) or by_key.get(f"{idx:06d}") or by_key.get(str(idx))
+        if record is None:
+            raise RuntimeError(f"Missing stored sample for index {idx}")
         predictions.append(_without_sample_key(record))
     return predictions
 

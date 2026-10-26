@@ -7,6 +7,8 @@ from ...domain.models import BenchmarkMetrics
 from ...domain.ports.cache_port import CacheLayer, CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.models.dtype import peak_allocated_bytes
+from ...infrastructure.paths.naming import build_experiment_relpath
+from ...infrastructure.paths.resolver import get_path_resolver
 from ..common.reporter import clean_config_args, write_jsonl
 
 
@@ -24,8 +26,9 @@ def start_benchmark_tracker(
             "MLflow tracking experiment name must be specified (--tracking_experiment_name or via config) before running benchmark."
         )
 
-    run_name = f"{args.model_name}_{args.task}_{args.method}"
     backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
+    run_name = build_experiment_relpath(args, backend=backend_name)
+    exp_dir = get_path_resolver().get_experiment_dir(run_name)
     tags = {
         "model": args.model_name,
         "task": args.task,
@@ -33,13 +36,11 @@ def start_benchmark_tracker(
         "split": getattr(args, "split", "test"),
         "seed": str(args.seed),
         "experiment_type": "benchmark",
+        "data_dir": str(exp_dir.resolve()),
+        "rel_dir": run_name,
     }
     if hasattr(args, "latent_steps") and args.latent_steps:
         tags["latent_steps"] = str(args.latent_steps)
-    if hasattr(args, "config_id") and args.config_id:
-        tags["config_id"] = str(args.config_id)
-    if hasattr(args, "run_id") and args.run_id:
-        tags["storage_run_id"] = str(args.run_id)
 
     tracker_port.start_run(
         experiment_name=exp_name,

@@ -1,13 +1,13 @@
 """Paired receiver compute curves with a single trajectory per handoff."""
 
-import tempfile
 import traceback
 from copy import copy
-from pathlib import Path
 
 from ..domain.models import compute_sample_key
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
+from ..infrastructure.paths.naming import build_experiment_relpath
+from ..infrastructure.paths.resolver import get_path_resolver
 from ..infrastructure.tracking.mlflow_tracker import get_git_commit_hash
 from .common.reporter import clean_config_args, write_json, write_jsonl, write_yaml
 from .receiver_compute_preflight.collection import collect_samples
@@ -51,17 +51,46 @@ class ReceiverComputePreflightUseCase:
             "receiver_latency_definition": "synchronized generation including receiver prefill; excludes cache transfer, evaluation and discarded retries",
             "compute_proxy_definition": "causal attention pairs per layer/head and processed transformer positions; not FLOPs",
         }
+        args.receiver_compute_preflight = True
+        exp_relpath = build_experiment_relpath(
+            args, dtype_name=str(config.get("model_dtype", ""))
+        )
+        directory = get_path_resolver().get_experiment_dir(exp_relpath)
+        summary_file = directory / "collection_summary.json"
+        records_file = directory / "sample_results.jsonl"
+        config_file = directory / "resolved_config.yaml"
+        write_yaml(config_file, config)
+
+        if not getattr(args, "overwrite", False) and summary_file.is_file():
+            import json
+
+            try:
+                summary = json.loads(summary_file.read_text(encoding="utf-8"))
+                records = []
+                if records_file.is_file():
+                    records = [
+                        json.loads(line)
+                        for line in records_file.read_text(
+                            encoding="utf-8"
+                        ).splitlines()
+                        if line.strip()
+                    ]
+                print(f"Reusing completed preflight at {exp_relpath}")
+                return summary, records
+            except Exception:
+                pass
+
         tracker = self.tracker
-        name, kind, label = run_identity(args, len(items))
+        _name, kind, label = run_identity(args, len(items))
         config.update(
-            run_name=name,
+            run_name=exp_relpath,
             run_kind=kind,
             run_label=label,
             version_tag=args.version_tag or "receiver-compute-preflight",
         )
         tracker.start_run(
             experiment_name=args.tracking_experiment_name,
-            run_name=name,
+            run_name=exp_relpath,
             tags={
                 k: config[k]
                 for k in (
@@ -75,16 +104,18 @@ class ReceiverComputePreflightUseCase:
                     "seed",
                 )
             }
-            | {"experiment_type": "receiver_compute_preflight"},
+            | {
+                "experiment_type": "receiver_compute_preflight",
+                "data_dir": str(directory.resolve()),
+                "rel_dir": exp_relpath,
+            },
         )
-        config["run_id"] = tracker.active_run_id
+        config["run_id"] = exp_relpath
         tracker.log_params(config)
         manifest = []
         records = []
         runtime = RuntimeMeasurements(model)
-        with tempfile.TemporaryDirectory(prefix="receiver-compute-") as tmp:
-            directory = Path(tmp)
-            write_yaml(directory / "resolved_config.yaml", config)
+        if True:
             try:
                 collect_samples(
                     model,
@@ -97,16 +128,16 @@ class ReceiverComputePreflightUseCase:
                     runtime,
                     records,
                     manifest,
-                    directory / "sample_results.jsonl",
+                    records_file,
                 )
                 summary = {
                     "sample_count": len(items),
                     "result_count": len(records),
                     "trace_count": len(manifest),
-                    "run_id": config["run_id"],
+                    "run_id": exp_relpath,
                     "runtime": runtime.run_peak(),
                 }
-                write_json(directory / "collection_summary.json", summary)
+                write_json(summary_file, summary)
             except (Exception, KeyboardInterrupt):
                 write_json(
                     directory / "failure.json", {"traceback": traceback.format_exc()}

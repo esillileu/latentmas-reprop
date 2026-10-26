@@ -47,14 +47,8 @@ def build_intervention_contexts(
     resolver = get_path_resolver()
 
     for idx, item in enumerate(tqdm(dataset_iter, desc="Building latent contexts")):
-        if sample_keys and idx < len(sample_keys):
-            s_key = sample_keys[idx]
-        else:
-            s_key = compute_sample_key(task, split, item.get("question", ""))
-        key_prefix = s_key[:16]
-
         shared_dir = (
-            resolver.get_condition_dir(run_id, s_key, "shared") if run_id else None
+            resolver.get_condition_dir(run_id, idx, "shared") if run_id else None
         )
         if shared_dir and is_condition_complete(shared_dir):
             with contextlib.suppress(Exception):
@@ -109,8 +103,9 @@ def build_intervention_contexts(
             latent_steps = getattr(method, "latent_steps", 0)
 
             cfg_part = f"_cfg{config_hash}" if config_hash else f"_ls{latent_steps}"
+            s_key = compute_sample_key(task, split, item.get("question", ""))
             isolated_name = (
-                f"latent_{task}_{model_slug}{cfg_part}_key_{key_prefix}_s{seed}.pt"
+                f"latent_{task}_{model_slug}{cfg_part}_key_{s_key[:16]}_s{seed}.pt"
             )
             try:
                 cache_port.save_torch(

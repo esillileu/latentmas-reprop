@@ -21,6 +21,7 @@ from ..domain.services.prompts.acquisition import (
 )
 from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.models.model_wrapper import ModelWrapper
+from ..infrastructure.paths.naming import build_experiment_relpath
 from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
 from ..infrastructure.storage import verify_run_config
 from .receiver_acquisition.aggregation import aggregate_receiver_records
@@ -88,8 +89,16 @@ class ReceiverAcquisitionUseCase:
             if "cross" in conditions
             else [0] * len(samples)
         )
+        args.acquisition = True
         git_hash = get_git_commit_hash()
-        run_id = getattr(args, "run_id", None)
+        dtype_name = str(
+            getattr(getattr(model, "model", None), "dtype", "bfloat16")
+        ).replace("torch.", "")
+        exp_relpath = build_experiment_relpath(args, dtype_name=dtype_name)
+        exp_dir = get_path_resolver().get_experiment_dir(exp_relpath)
+        args.run_id = exp_relpath
+        args.exp_relpath = exp_relpath
+
         if self.tracker_port:
             tags = {
                 "experiment_type": "receiver_acquisition",
@@ -99,27 +108,15 @@ class ReceiverAcquisitionUseCase:
                 "git_commit": git_hash,
                 "seed": str(args.seed),
                 "latent_steps": str(args.latent_steps),
+                "data_dir": str(exp_dir.resolve()),
+                "rel_dir": exp_relpath,
             }
-            if run_id:
-                tags["storage_run_id"] = run_id
             self.tracker_port.start_run(
                 experiment_name="latentmas_receiver_acquisition",
-                run_name=f"{args.model_name}_{args.task}_receiver_acquisition",
+                run_name=exp_relpath,
                 tags=tags,
             )
-        if (
-            not run_id
-            and self.tracker_port
-            and isinstance(self.tracker_port.active_run_id, str)
-        ):
-            run_id = self.tracker_port.active_run_id
-        if not run_id:
-            import uuid
 
-            run_id = uuid.uuid4().hex
-        args.run_id = run_id
-
-        exp_dir = get_path_resolver().get_experiment_dir(run_id)
         verify_run_config(
             exp_dir,
             {
@@ -131,11 +128,9 @@ class ReceiverAcquisitionUseCase:
                 "context_modes": sorted(modes),
                 "acquisition_conditions": sorted(conditions),
                 "cross_pairing_policy": CROSS_PAIRING_POLICY,
-                "sample_keys": [s.sample_id for s in samples],
+                "sample_count": len(samples),
             },
         )
-        if self.tracker_port:
-            self.tracker_port.set_data_dir(run_id, exp_dir)
 
         try:
             receiver_ids, receiver_mask, mapping = prepare_receiver_scoring(model)
@@ -184,7 +179,7 @@ class ReceiverAcquisitionUseCase:
                 receiver_mask,
                 mapping,
                 self.tracker_port,
-                run_id=run_id,
+                run_id=exp_relpath,
             )
             sender_states = None
             if args.probe_sender_latents:

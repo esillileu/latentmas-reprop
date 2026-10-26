@@ -1,44 +1,23 @@
 """Artifact persistence and MLflow artifact logging for intervention experiments."""
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
 from ...domain.models import InterventionMetrics, SampleInterventionRecord
 from ...domain.ports.cache_port import CacheLayer, CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
+from ...infrastructure.paths.naming import build_experiment_relpath
+from ...infrastructure.paths.resolver import get_path_resolver
 from ..common.reporter import clean_config_args, write_json, write_jsonl, write_yaml
 
 
 def build_intervention_config_id(
     args: Any, model_dtype: str = "unknown"
 ) -> tuple[str, str]:
-    """Generate deterministic config_id and compact config_hash for intervention experiments.
-
-    Captures model, revision, prompt, task, split, latent steps, seed, precision,
-    and decoding hyperparameters to completely isolate KV caches across conditions.
-    """
-    model = (
-        str(getattr(args, "model_name", "model")).replace("/", "_").replace("\\", "_")
-    )
-    task = str(getattr(args, "task", "task"))
-    split = str(getattr(args, "split", "test"))
-    prompt = str(getattr(args, "prompt", "sequential"))
-    latent_steps = int(getattr(args, "latent_steps", 0))
-    seed = int(getattr(args, "seed", 42))
-    temp = str(getattr(args, "temperature", 0.0))
-    top_p = str(getattr(args, "top_p", 1.0))
-    max_tokens = int(getattr(args, "max_new_tokens", 512))
+    """Return canonical relative experiment path."""
     backend = "vllm" if getattr(args, "use_vllm", False) else "transformers"
-    revision = str(getattr(args, "model_revision", "main"))
-
-    config_str = (
-        f"intervention__{model}__rev_{revision}__{task}__{split}__{prompt}"
-        f"__ls{latent_steps}__s{seed}__{model_dtype}__{backend}__mt{max_tokens}"
-        f"__temp{temp}__topp{top_p}"
-    )
-    config_hash = hashlib.sha256(config_str.encode("utf-8")).hexdigest()[:12]
-    return config_str, config_hash
+    rel_path = build_experiment_relpath(args, dtype_name=model_dtype, backend=backend)
+    return rel_path, ""
 
 
 def start_intervention_tracker(
@@ -62,7 +41,8 @@ def start_intervention_tracker(
         return config_id, config_hash
 
     exp_name = getattr(args, "tracking_experiment_name", "latentmas_intervention")
-    run_name = f"{args.model_name}_{args.task}_intervention"
+    run_name = config_id
+    exp_dir = get_path_resolver().get_experiment_dir(run_name)
 
     tracker_port.start_run(
         experiment_name=exp_name,
@@ -73,8 +53,8 @@ def start_intervention_tracker(
             "method": args.method,
             "experiment_type": "intervention",
             "git_commit": git_hash,
-            "config_id": config_id,
-            "config_hash": config_hash,
+            "data_dir": str(exp_dir.resolve()),
+            "rel_dir": run_name,
         },
     )
     tracker_port.log_params(

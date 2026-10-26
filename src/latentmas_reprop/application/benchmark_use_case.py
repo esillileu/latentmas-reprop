@@ -1,11 +1,10 @@
 import time
-import uuid
 from typing import Any
 
 import torch
 from tqdm import tqdm
 
-from ..domain.models import BenchmarkMetrics
+from ..domain.models import BenchmarkMetrics, compute_sample_key
 from ..domain.ports.cache_port import CachePort
 from ..domain.ports.dataset_port import DatasetPort
 from ..domain.ports.evaluator_port import EvaluatorPort
@@ -18,12 +17,14 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
-from ..infrastructure.paths import PathResolver, get_path_resolver
-from ..infrastructure.storage import verify_run_config
+from ..infrastructure.paths import (
+    build_experiment_relpath,
+    get_path_resolver,
+)
+from ..infrastructure.storage import is_condition_complete, verify_run_config
 from .benchmark import (
     BenchmarkRunStore,
     build_metrics,
-    build_run_id,
     config_snapshot,
     predictions_in_dataset_order,
     runtime_metadata,
@@ -137,48 +138,65 @@ class BenchmarkUseCase:
             )
 
         dtype_name = str(getattr(model, "dtype_name", ""))
+        backend = "vllm" if getattr(args, "use_vllm", False) else "transformers"
         requested_max_samples = int(args.max_samples)
-        config_id = build_run_id(args, dtype_name)
-        args.config_id = config_id
-
-        explicit_run_id = getattr(args, "run_id", None)
-        if explicit_run_id:
-            run_id = explicit_run_id
-        else:
-            active_id = self.tracker_port.active_run_id if self.tracker_port else None
-            run_id = active_id or uuid.uuid4().hex
-            args.run_id = run_id
+        exp_relpath = build_experiment_relpath(
+            args, dtype_name=dtype_name, backend=backend
+        )
+        args.exp_relpath = exp_relpath
+        args.run_id = exp_relpath
 
         resolver = (
-            self.cache_port.resolver
-            if isinstance(getattr(self.cache_port, "resolver", None), PathResolver)
-            else get_path_resolver()
+            getattr(self.cache_port, "_resolver", None)
+            or getattr(self.cache_port, "resolver", None)
+            or get_path_resolver()
         )
-        exp_dir = resolver.get_experiment_dir(run_id)
+        exp_dir = resolver.get_experiment_dir(exp_relpath)
         saved_cfg = config_snapshot(args)
         saved_cfg["requested_max_samples"] = requested_max_samples
         saved_cfg["dtype"] = dtype_name
-        saved_cfg["backend"] = (
-            "vllm" if getattr(args, "use_vllm", False) else "transformers"
-        )
+        saved_cfg["backend"] = backend
         verify_run_config(exp_dir, saved_cfg)
 
-        store = BenchmarkRunStore(self.cache_port, run_id, path_resolver=resolver)
+        store = BenchmarkRunStore(self.cache_port, exp_relpath, path_resolver=resolver)
         start_benchmark_tracker(self.tracker_port, args)
 
         dataset = list(self.dataset_port.load(task=args.task, split=args.split))
         target = len(dataset) if requested_max_samples == -1 else requested_max_samples
         target = min(target, len(dataset))
+        selected = dataset[:target]
+        for idx, item in enumerate(selected):
+            item["sample_index"] = idx
 
-        required_keys = [sample_key_for(args, item) for item in dataset[:target]]
-        if explicit_run_id and store.has_keys(required_keys):
-            print(f"Reusing completed run {run_id}")
+        overwrite = bool(getattr(args, "overwrite", False))
+        if not overwrite:
+            done_keys = store.completed_keys()
+            pending = [
+                item
+                for item in selected
+                if not is_condition_complete(
+                    resolver.get_condition_dir(
+                        exp_dir, item["sample_index"], "benchmark"
+                    )
+                )
+                and f"{item['sample_index']:06d}" not in done_keys
+                and sample_key_for(args, item) not in done_keys
+                and compute_sample_key(
+                    args.task, getattr(args, "split", "test"), item.get("question", "")
+                )
+                not in done_keys
+            ]
+        else:
+            pending = list(selected)
+
+        if not pending and store.read_records():
+            print(f"Reusing completed run at {exp_relpath}")
             metrics, predictions = store.load_finished(target)
             save_benchmark_artifacts(
                 self.cache_port,
                 self.tracker_port,
                 args,
-                f"{run_id}.json",
+                "summary.json",
                 metrics,
                 predictions,
             )
@@ -186,12 +204,6 @@ class BenchmarkUseCase:
 
         try:
             method = self.create_method(model, args)
-            selected = dataset[:target]
-            done = store.completed_keys()
-            pending = [
-                item for item in selected if sample_key_for(args, item) not in done
-            ]
-
             session_start = time.perf_counter()
             booked = 0.0
 
@@ -220,8 +232,10 @@ class BenchmarkUseCase:
                     )
                     for offset, result in enumerate(fresh):
                         stored = dict(result)
-                        stored["sample_key"] = sample_key_for(args, batch[offset])
-                        store.append(stored)
+                        sample_idx = batch[offset]["sample_index"]
+                        stored["sample_index"] = sample_idx
+                        stored["sample_key"] = f"{sample_idx:06d}"
+                        store.append(stored, overwrite=overwrite)
                     commit_eval_time()
                     batch = []
                     if torch.cuda.is_available():
@@ -242,7 +256,7 @@ class BenchmarkUseCase:
             metrics = build_metrics(
                 args,
                 predictions,
-                run_id=run_id,
+                run_id=exp_relpath,
                 dtype_name=dtype_name,
                 eval_seconds=eval_seconds,
                 model_load_seconds=float(getattr(model, "load_time_sec", 0.0)),
@@ -250,7 +264,7 @@ class BenchmarkUseCase:
             store.write_complete(
                 {
                     "status": "complete",
-                    "run_id": run_id,
+                    "run_id": exp_relpath,
                     "sample_count": len(predictions),
                     "metrics": metrics.to_dict(),
                     "config": saved_config,
@@ -261,7 +275,7 @@ class BenchmarkUseCase:
                 self.cache_port,
                 self.tracker_port,
                 args,
-                f"{run_id}.json",
+                "summary.json",
                 metrics,
                 predictions,
             )

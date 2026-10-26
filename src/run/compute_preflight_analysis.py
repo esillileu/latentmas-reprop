@@ -199,35 +199,18 @@ def analyze_run(
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-id", help="Direct MLflow run ID to analyze.")
-    parser.add_argument(
-        "--model",
-        "--model-name",
-        dest="model_name",
-        help="Model name to analyze (e.g. 'Qwen/Qwen3-4B', 'Qwen3-4B', '4B', or 'all').",
-    )
-    parser.add_argument(
-        "--experiment-name",
-        default="latentmas_receiver_compute_preflight",
-        help="MLflow experiment name to search when --model is specified.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Custom output directory. Defaults to artifacts/receiver_compute_preflight/<model_name>.",
-    )
+    parser.add_argument("--experiment-dir", "--input-dir", dest="experiment_dir", type=Path)
+    parser.add_argument("--run-id")
+    parser.add_argument("--model", "--model-name", dest="model_name")
+    parser.add_argument("--experiment-name", default="latentmas_receiver_compute_preflight")
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--bootstrap-count", type=int, default=2000)
     parser.add_argument("--target-accuracies", default="0.5,0.7,0.9")
-    parser.add_argument(
-        "--no-plots",
-        action="store_true",
-        default=False,
-        help="Skip generating graphical curve plots.",
-    )
+    parser.add_argument("--no-plots", action="store_true", default=False)
     args = parser.parse_args(argv)
 
-    if not args.run_id and not args.model_name:
-        parser.error("Either --model/--model-name or --run-id must be specified.")
+    if not args.run_id and not args.model_name and not args.experiment_dir:
+        parser.error("Must specify --experiment-dir, --model, or --run-id.")
 
     if args.bootstrap_count < 1:
         parser.error("bootstrap count must be positive")
@@ -241,15 +224,48 @@ def main(argv=None):
     MLflowTracker()
     client = MlflowClient()
 
-    if args.run_id:
-        analyze_run(
-            client=client,
-            run_id=args.run_id,
-            output_dir=args.output_dir,
-            bootstrap_count=args.bootstrap_count,
-            target_accuracies=targets,
-            generate_plots=not args.no_plots,
+    target_rid = args.run_id
+    if not target_rid and args.experiment_dir:
+        from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
+
+        edir = str(
+            get_path_resolver().get_experiment_dir(args.experiment_dir).resolve()
         )
+        exp = client.get_experiment_by_name(args.experiment_name)
+        runs = (
+            client.search_runs(
+                [exp.experiment_id],
+                filter_string=f"tags.data_dir = '{edir}'",
+                max_results=1,
+            )
+            if exp
+            else []
+        )
+        target_rid = runs[0].info.run_id if runs else None
+
+    if target_rid:
+        if len(target_rid) != 32 or "/" in target_rid:
+            exp = client.get_experiment_by_name(args.experiment_name)
+            runs = (
+                client.search_runs(
+                    [exp.experiment_id],
+                    filter_string=f"tags.rel_dir = '{target_rid}'",
+                    max_results=1,
+                )
+                if exp
+                else []
+            )
+            if runs:
+                target_rid = runs[0].info.run_id
+        analyze_run(
+            client,
+            target_rid,
+            args.output_dir,
+            args.bootstrap_count,
+            targets,
+            not args.no_plots,
+        )
+        return
     else:
         run_ids = find_runs_by_model(client, args.experiment_name, args.model_name)
         for rid in run_ids:

@@ -16,7 +16,6 @@ from typing import Any
 from ..domain.models import (
     InterventionMetrics,
     SampleInterventionRecord,
-    compute_sample_key,
 )
 from ..domain.ports.cache_port import CachePort
 from ..domain.ports.dataset_port import DatasetPort
@@ -27,6 +26,7 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
+from ..infrastructure.paths.naming import build_experiment_relpath
 from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
 from ..infrastructure.storage import verify_run_config
 from .common.reporter import build_run_stem
@@ -92,12 +92,12 @@ class InterventionUseCase:
                 f"Intervention condition 'cross' requires at least 2 samples, got {n_samples}."
             )
 
-        split_str = getattr(args, "split", "test")
-        task_str = getattr(args, "task", "gsm8k")
-        sample_keys = [
-            compute_sample_key(task_str, split_str, item.get("question", ""))
-            for item in dataset_iter
-        ]
+        args.intervention = True
+        sample_keys = [f"{i:06d}" for i in range(n_samples)]
+        dtype_name = str(getattr(model, "dtype_name", ""))
+        exp_relpath = build_experiment_relpath(args, dtype_name=dtype_name)
+        args.run_id = exp_relpath
+        args.exp_relpath = exp_relpath
 
         method = LatentMASMethod(
             model,
@@ -114,20 +114,7 @@ class InterventionUseCase:
             self.tracker_port, args, model, n_samples, conditions, git_hash
         )
 
-        run_id = getattr(args, "run_id", None)
-        if (
-            not run_id
-            and self.tracker_port
-            and isinstance(self.tracker_port.active_run_id, str)
-        ):
-            run_id = self.tracker_port.active_run_id
-        if not run_id:
-            import uuid
-
-            run_id = uuid.uuid4().hex
-        args.run_id = run_id
-
-        exp_dir = get_path_resolver().get_experiment_dir(run_id)
+        exp_dir = get_path_resolver().get_experiment_dir(exp_relpath)
         verify_run_config(
             exp_dir,
             {
@@ -142,11 +129,9 @@ class InterventionUseCase:
                 "temperature": getattr(args, "temperature", 0.6),
                 "top_p": getattr(args, "top_p", 0.95),
                 "cross_policy": cross_policy,
-                "sample_keys": sample_keys,
+                "sample_count": n_samples,
             },
         )
-        if self.tracker_port:
-            self.tracker_port.set_data_dir(run_id, exp_dir)
 
         try:
             return self._run_experiment(
@@ -163,7 +148,7 @@ class InterventionUseCase:
                 git_hash=git_hash,
                 config_id=config_id,
                 config_hash=config_hash,
-                run_id=run_id,
+                run_id=exp_relpath,
             )
         except Exception:
             exc_text = traceback.format_exc()

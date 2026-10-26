@@ -3,6 +3,9 @@
 from typing import Any
 
 from ...domain.models import compute_sample_key
+from ...infrastructure.paths.naming import (
+    build_experiment_relpath,
+)
 
 _RUN_FIELDS = (
     "method",
@@ -23,34 +26,18 @@ _RUN_FIELDS = (
 )
 
 
-def format_setting(value: Any) -> str:
-    """Format a config value so equivalent numbers share one run id."""
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    if isinstance(value, float):
-        return format(value, ".6g")
-    return str(value)
+def build_run_id(args: Any, dtype_name: str = "") -> str:
+    """Identify a run by its canonical relative experiment directory path."""
+    return build_experiment_relpath(args, dtype_name=dtype_name)
 
 
-def build_run_id(args: Any, dtype_name: str) -> str:
-    """Identify a run by method, model, task, sampling, and dtype."""
-    model = str(args.model_name).replace("/", "_").replace("\\", "_")
-    return (
-        f"{args.method}__{model}__{args.task}__{args.prompt}"
-        f"__ls{int(getattr(args, 'latent_steps', 0))}__seed{int(args.seed)}__{dtype_name}"
-        f"__mt{int(args.max_new_tokens)}"
-        f"_temp{format_setting(float(args.temperature))}"
-        f"_top{format_setting(float(args.top_p))}"
-        f"_think{format_setting(bool(getattr(args, 'think', False)))}"
-        f"_realign{format_setting(bool(getattr(args, 'latent_space_realign', False)))}"
-        f"_vllm{format_setting(bool(getattr(args, 'use_vllm', False)))}"
-        f"_split{args.split}"
-    )
-
-
-def sample_key_for(args: Any, item: dict) -> str:
-    """Stable sample id shared by a fresh run and a resumed run."""
-    return compute_sample_key(args.task, args.split, item["question"])
+def sample_key_for(args: Any, item: dict, idx: int | None = None) -> str:
+    """Zero-padded sample index (e.g. '000000') or fallback key."""
+    if idx is not None:
+        return f"{int(idx):06d}"
+    if isinstance(item, dict) and "sample_index" in item:
+        return f"{int(item['sample_index']):06d}"
+    return compute_sample_key(args.task, args.split, item.get("question", ""))
 
 
 def config_snapshot(args: Any) -> dict[str, Any]:
