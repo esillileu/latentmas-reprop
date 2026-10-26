@@ -12,7 +12,6 @@ from .tensor_store import (
     save_condition_result,
     save_json_atomic,
     save_tensor,
-    verify_run_config,
 )
 
 __all__ = [
@@ -27,5 +26,4 @@ __all__ = [
     "save_condition_result",
     "save_json_atomic",
     "save_tensor",
-    "verify_run_config",
 ]

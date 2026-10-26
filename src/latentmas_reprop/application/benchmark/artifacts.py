@@ -27,10 +27,13 @@ def start_benchmark_tracker(
 
     backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
     dtype_name = getattr(args, "model_dtype", "") or getattr(args, "dtype", "")
-    run_name = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+    exp_rel = getattr(args, "exp_relpath", None) or build_experiment_relpath(
         args, dtype_name=dtype_name, backend=backend_name
     )
-    exp_dir = get_path_resolver().get_experiment_dir(run_name)
+    max_s = getattr(args, "max_samples", None)
+    scope_str = f"n{max_s}" if max_s is not None and int(max_s) > 0 else "all"
+    run_name = f"{exp_rel}_{scope_str}"
+    exp_dir = get_path_resolver().get_experiment_dir(exp_rel)
     tags = {
         "model": args.model_name,
         "task": args.task,
@@ -39,7 +42,8 @@ def start_benchmark_tracker(
         "seed": str(args.seed),
         "experiment_type": "benchmark",
         "data_dir": str(exp_dir.resolve()),
-        "rel_dir": run_name,
+        "rel_dir": exp_rel,
+        "run_name": run_name,
     }
     if hasattr(args, "latent_steps") and args.latent_steps:
         tags["latent_steps"] = str(args.latent_steps)
@@ -186,13 +190,14 @@ def save_benchmark_artifacts(
 
     tracker_port.log_metrics(metrics.to_mlflow_metrics())
     clean_args = clean_config_args(args)
-    tracker_port.log_dict(
-        {
-            "metrics": metrics.to_dict(),
-            "config": clean_args,
-        },
-        "results/summary.json",
-    )
+    summary_dict = {
+        "status": "complete",
+        "sample_count": len(preds),
+        "metrics": metrics.to_dict(),
+        "config": clean_args,
+    }
+    tracker_port.log_dict(summary_dict, "results/summary.json")
+    tracker_port.log_dict(summary_dict, "summary.json")
     tracker_port.log_dict(clean_args, "config/resolved_config.yaml")
     tracker_port.log_artifact(samples_path, artifact_path="results")
 

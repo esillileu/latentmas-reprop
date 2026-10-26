@@ -28,7 +28,7 @@ from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
 from ..infrastructure.paths.naming import build_experiment_relpath
 from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
-from ..infrastructure.storage import verify_run_config
+from ..infrastructure.storage import save_json_atomic
 from .common.reporter import build_run_stem
 from .intervention.algo import generate_cross_indices
 from .intervention.artifacts import (
@@ -96,7 +96,7 @@ class InterventionUseCase:
         sample_keys = [f"{i:06d}" for i in range(n_samples)]
         dtype_name = str(getattr(model, "dtype_name", ""))
         exp_relpath = build_experiment_relpath(args, dtype_name=dtype_name)
-        args.run_id = exp_relpath
+        args.run_id = getattr(args, "run_id", None) or exp_relpath
         args.exp_relpath = exp_relpath
 
         method = LatentMASMethod(
@@ -114,22 +114,13 @@ class InterventionUseCase:
             self.tracker_port, args, model, n_samples, conditions, git_hash
         )
 
-        exp_dir = get_path_resolver().get_experiment_dir(exp_relpath)
-        verify_run_config(
-            exp_dir,
+        exp_dir = get_path_resolver().get_experiment_dir(args.run_id)
+        cfg_dict = vars(args) if hasattr(args, "__dict__") else dict(args)
+        save_json_atomic(
+            exp_dir / "config.json",
             {
-                "model_name": args.model_name,
-                "task": args.task,
-                "method": args.method,
-                "latent_steps": getattr(args, "latent_steps", 0),
-                "seed": args.seed,
-                "split": getattr(args, "split", "test"),
-                "prompt": getattr(args, "prompt", "sequential"),
-                "max_new_tokens": getattr(args, "max_new_tokens", 2048),
-                "temperature": getattr(args, "temperature", 0.6),
-                "top_p": getattr(args, "top_p", 0.95),
-                "cross_policy": cross_policy,
-                "sample_count": n_samples,
+                k: str(v) if not isinstance(v, (int, float, bool, list, dict, type(None))) else v
+                for k, v in cfg_dict.items()
             },
         )
 
@@ -146,7 +137,7 @@ class InterventionUseCase:
                 method=method,
                 start_total_time=start_total_time,
                 git_hash=git_hash,
-                run_id=exp_relpath,
+                run_id=args.run_id,
             )
         except Exception:
             exc_text = traceback.format_exc()

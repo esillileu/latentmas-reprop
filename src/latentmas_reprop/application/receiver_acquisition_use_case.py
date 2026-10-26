@@ -23,7 +23,6 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.models.model_wrapper import ModelWrapper
 from ..infrastructure.paths.naming import build_experiment_relpath
 from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
-from ..infrastructure.storage import verify_run_config
 from .receiver_acquisition.aggregation import aggregate_receiver_records
 from .receiver_acquisition.artifacts import log_receiver_artifacts
 from .receiver_acquisition.runner import run_acquisition_loop
@@ -110,27 +109,13 @@ class ReceiverAcquisitionUseCase:
                 "latent_steps": str(args.latent_steps),
                 "data_dir": str(exp_dir.resolve()),
                 "rel_dir": exp_relpath,
+                "run_name": f"{exp_relpath}_n{len(samples)}",
             }
             self.tracker_port.start_run(
                 experiment_name="latentmas_receiver_acquisition",
-                run_name=exp_relpath,
+                run_name=f"{exp_relpath}_n{len(samples)}",
                 tags=tags,
             )
-
-        verify_run_config(
-            exp_dir,
-            {
-                "model_name": args.model_name,
-                "task": args.task,
-                "method": args.method,
-                "latent_steps": getattr(args, "latent_steps", 0),
-                "seed": args.seed,
-                "context_modes": sorted(modes),
-                "acquisition_conditions": sorted(conditions),
-                "cross_pairing_policy": CROSS_PAIRING_POLICY,
-                "sample_count": len(samples),
-            },
-        )
 
         try:
             receiver_ids, receiver_mask, mapping = prepare_receiver_scoring(model)

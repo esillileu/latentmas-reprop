@@ -104,12 +104,24 @@ def run_intervention_decoding(
         # Check condition-level completion from storage/experiments/<run_id>/samples/<s_key>/<cond>
         completed_conditions: dict[str, SampleInterventionRecord] = {}
         overwrite = is_overwrite_requested(args)
+
         if run_id and not overwrite:
             for cond in conditions:
                 cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
-                if is_condition_complete(cond_dir):
+                src_dir = (
+                    resolver.get_condition_dir(run_id, s_key, f"cross_src_{cross_j}")
+                    if cond == "cross" and cross_j is not None
+                    else None
+                )
+                target_dir = None
+                if src_dir and is_condition_complete(src_dir):
+                    target_dir = src_dir
+                elif is_condition_complete(cond_dir):
+                    target_dir = cond_dir
+
+                if target_dir:
                     try:
-                        d = load_json(cond_dir / "result.json")
+                        d = load_json(target_dir / "result.json")
                         if (
                             cond == "cross"
                             and expected_cross_key is not None
@@ -231,7 +243,10 @@ def run_intervention_decoding(
 
                 if run_id:
                     cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
-                    save_condition_result(cond_dir, rec.to_dict(), overwrite=overwrite)
+                    save_condition_result(cond_dir, rec.to_dict(), overwrite=True)
+                    if cond == "cross" and cross_j is not None:
+                        src_dir = resolver.get_condition_dir(run_id, s_key, f"cross_src_{cross_j}")
+                        save_condition_result(src_dir, rec.to_dict(), overwrite=True)
 
             del own_context_gpu
             if torch.cuda.is_available():

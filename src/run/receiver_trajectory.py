@@ -39,6 +39,7 @@ from latentmas_reprop.infrastructure.paths.resolver import (
 )
 from latentmas_reprop.infrastructure.storage import (
     is_condition_complete,
+    load_json,
     save_condition_result,
 )
 from latentmas_reprop.infrastructure.tracking import MLflowTracker
@@ -225,16 +226,23 @@ def main(argv=None):
                     f"Exact parity failed; no trajectory was run. See {directory / 'parity.json'}"
                 )
             tracker.log_metrics({"parity_passed": 1})
-            records = collect_trajectory(
-                model, selected, receiver, directory / "sample_results.jsonl", tracker
+            records = []
+            for idx, sample in enumerate(selected):
+                cond_dir = paths.get_condition_dir(directory, idx, "trajectory")
+                if not getattr(args, "overwrite", False) and is_condition_complete(cond_dir):
+                    cached_data = load_json(cond_dir / "result.json")
+                    cached_rows = cached_data.get("rows", [cached_data])
+                    records.extend(cached_rows)
+                    continue
+                s_file = directory / f"sample_{idx}.jsonl"
+                sample_rows = collect_trajectory(model, [sample], receiver, s_file, tracker)
+                save_condition_result(cond_dir, {"rows": sample_rows}, overwrite=True)
+                records.extend(sample_rows)
+                s_file.unlink(missing_ok=True)
+            (directory / "sample_results.jsonl").write_text(
+                "\n".join(json.dumps(r) for r in records) + "\n"
             )
             (directory / "sample_results.json").write_text(json.dumps(records) + "\n")
-            for idx, r in enumerate(records):
-                save_condition_result(
-                    paths.get_condition_dir(directory, idx, "trajectory"),
-                    r if isinstance(r, dict) else {"record": r},
-                    overwrite=getattr(args, "overwrite", False),
-                )
             states = collect_sender_states(model, latent_steps=20, template_count=20)
             torch.save(states.payload(), directory / "sender_latent_states.pt")
             (directory / "sender_probe_inputs.jsonl").write_text(

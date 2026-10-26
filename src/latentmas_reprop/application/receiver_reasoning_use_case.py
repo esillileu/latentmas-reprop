@@ -62,7 +62,7 @@ class ReceiverReasoningUseCase:
         config["model_dtype"] = getattr(model, "dtype_name", None)
         config["git_commit"] = get_git_commit_hash()
         args.receiver_reasoning = True
-        exp_relpath = build_experiment_relpath(
+        exp_relpath = getattr(args, "exp_relpath", None) or build_experiment_relpath(
             args, dtype_name=str(config.get("model_dtype", ""))
         )
         directory = get_path_resolver().get_experiment_dir(exp_relpath)
@@ -118,17 +118,19 @@ class ReceiverReasoningUseCase:
 
         tracker = self.tracker_port
         if tracker:
+            run_name = f"{exp_relpath}_n{len(items)}"
             tags = {
                 "experiment_type": "receiver_reasoning",
                 "git_commit": config["git_commit"],
                 "data_dir": str(directory.resolve()),
                 "rel_dir": exp_relpath,
+                "run_name": run_name,
             }
             if getattr(args, "version_tag", None):
                 tags["version_tag"] = args.version_tag
             tracker.start_run(
                 experiment_name=args.tracking_experiment_name,
-                run_name=exp_relpath,
+                run_name=run_name,
                 tags=tags,
             )
             tracker.log_params(config)

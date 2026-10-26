@@ -214,21 +214,31 @@ def test_corrupted_and_incomplete_samples_are_dropped_and_rewritten(tmp_path):
     store = BenchmarkRunStore(cache, "test_corrupted_run")
     store.root.mkdir(parents=True, exist_ok=True)
 
-    # Write valid record, corrupted JSON, and incomplete record (missing prediction)
-    lines = [
-        '{"sample_key": "k1", "prediction": "ans1", "correct": true}',
-        '{"sample_key": "k2", broken json...',
-        '{"sample_key": "k3", "prediction": null, "correct": false}',
-        '{"sample_key": "k4", "prediction": "ans4", "correct": true}',
-    ]
-    store.samples_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Sample 0: valid
+    s0 = store.resolver.get_condition_dir(store.root, 0, "benchmark")
+    (s0 / "result.json").write_text(
+        '{"sample_index": 0, "prediction": "ans1", "correct": true}',
+        encoding="utf-8",
+    )
+    # Sample 1: broken json
+    s1 = store.resolver.get_condition_dir(store.root, 1, "benchmark")
+    (s1 / "result.json").write_text(
+        '{"sample_index": 1, broken json...', encoding="utf-8"
+    )
+    # Sample 2: incomplete record (missing prediction)
+    s2 = store.resolver.get_condition_dir(store.root, 2, "benchmark")
+    (s2 / "result.json").write_text(
+        '{"sample_index": 2, "prediction": null, "correct": false}',
+        encoding="utf-8",
+    )
+    # Sample 3: valid
+    s3 = store.resolver.get_condition_dir(store.root, 3, "benchmark")
+    (s3 / "result.json").write_text(
+        '{"sample_index": 3, "prediction": "ans4", "correct": true}',
+        encoding="utf-8",
+    )
 
-    # read_records should drop broken and incomplete records, and rewrite the file
+    # read_records should ignore broken and incomplete records
     records = store.read_records()
     assert len(records) == 2
-    assert [r["sample_key"] for r in records] == ["k1", "k4"]
-    assert store.completed_keys() == {"k1", "k4"}
-
-    # Check that disk file was cleaned and re-written
-    cleaned_lines = store.samples_path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(cleaned_lines) == 2
+    assert [r["sample_index"] for r in records] == [0, 3]

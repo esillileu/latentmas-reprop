@@ -22,6 +22,15 @@ from .sampling import SecretDigitSample, SenderCacheBundle
 from .sender import build_sender_cache
 
 
+def _resolve_acquisition_cond_name(
+    mode: str, condition: str, target_digit: int, source_digit: int | None = None
+) -> str:
+    base = f"{mode}_{condition}" if mode != "none" else str(condition)
+    if condition == "cross" and source_digit is not None:
+        return f"{base}_d{target_digit}_src{source_digit}"
+    return f"{base}_d{target_digit}"
+
+
 def _resolve_condition_cache(
     mode: str,
     condition: str,
@@ -80,20 +89,39 @@ def run_acquisition_loop(
                 else args.context_modes
             )
             for mode in modes:
-                cond_name = f"{mode}_{condition}" if mode != "none" else str(condition)
+                base_name = f"{mode}_{condition}" if mode != "none" else str(condition)
+                cond_name = _resolve_acquisition_cond_name(
+                    mode, condition, target.digit, cross.digit if cross is not None else None
+                )
                 if run_id and not getattr(args, "overwrite", False):
                     cond_dir = resolver.get_condition_dir(run_id, index, cond_name)
-                    if is_condition_complete(cond_dir):
+                    fallback_dir = resolver.get_condition_dir(run_id, index, base_name)
+                    target_dir = (
+                        cond_dir
+                        if is_condition_complete(cond_dir)
+                        else (
+                            fallback_dir
+                            if is_condition_complete(fallback_dir)
+                            else None
+                        )
+                    )
+                    if target_dir:
                         try:
-                            d = load_json(cond_dir / "result.json")
-                            if d.get("sample_id") != target.sample_id:
-                                continue
+                            d = load_json(target_dir / "result.json")
+                            if d.get("target_digit") not in (None, target.digit):
+                                target_dir = None
                             if (
                                 condition == "cross"
                                 and cross is not None
-                                and d.get("source_sample_id") != cross.sample_id
+                                and d.get("source_digit") not in (None, cross.digit)
                             ):
-                                continue
+                                target_dir = None
+                        except Exception:
+                            target_dir = None
+
+                    if target_dir:
+                        try:
+                            d = load_json(target_dir / "result.json")
                             rec_kwargs = {
                                 f.name: d.get(
                                     f.name,
@@ -111,7 +139,7 @@ def run_acquisition_loop(
                                 "files", []
                             ):
                                 hidden[rec.hidden_state_artifact_key] = load_tensor(
-                                    cond_dir / "hidden.pt"
+                                    target_dir / "hidden.pt"
                                 )
                             continue
                         except Exception:
@@ -204,7 +232,7 @@ def run_acquisition_loop(
                         cond_dir,
                         record.to_dict(),
                         tensors=tensors,
-                        overwrite=bool(getattr(args, "overwrite", False)),
+                        overwrite=True,
                     )
 
             sample_records = [r for r in records if r.sample_index == index]

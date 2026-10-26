@@ -47,6 +47,20 @@ def auto_device(device: str | None = None) -> torch.device:
     return torch.device("cpu")
 
 
+def finalize_run_args(args: Any) -> None:
+    """Ensure all decisive calculation options are fixed before model loading and path resolution."""
+    if getattr(args, "receiver_reasoning", False):
+        args.temperature = 0.0
+        args.top_p = 1.0
+        if getattr(args, "handoff_positions", None) is not None and args.handoff_positions <= 0:
+            raise ValueError("Handoff positions must be positive")
+        args.handoff_mode = "full" if getattr(args, "handoff_positions", None) is None else "tail"
+        args.include_no_handoff = True
+    elif getattr(args, "receiver_compute_preflight", False):
+        args.temperature = 0.0
+        args.top_p = 1.0
+
+
 def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
     """Return finished experiment results without loading the model if completely done."""
     if getattr(args, "overwrite", False):
@@ -58,75 +72,53 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
     exp_dir = resolver.get_experiment_dir(exp_rel)
 
     summary_path = exp_dir / "summary.json"
-    if not summary_path.is_file():
+    if not summary_path.is_file() and (exp_dir / "collection_summary.json").is_file():
         summary_path = exp_dir / "collection_summary.json"
 
     # Determine required conditions and target count
     if getattr(args, "receiver_compute_preflight", False):
         max_s = int(getattr(args, "max_samples", 0))
         upstream = getattr(args, "upstream_steps", [20])
-        conditions = (
-            ["no_handoff"]
-            + [f"u{s}_matched" for s in upstream]
-            + [f"u{s}_mismatched" for s in upstream]
-        )
+        conditions = ["no_handoff"] + [f"u{s}_matched" for s in upstream] + [f"u{s}_mismatched" for s in upstream]
     elif getattr(args, "receiver_reasoning", False):
         max_s = int(getattr(args, "max_samples", 0))
         upstream = [0, *getattr(args, "upstream_steps", [20])]
         conditions = [f"u{s}_{m}" for s in upstream for m in ("answer_only", "free")]
     elif getattr(args, "acquisition", False):
         max_s = int(getattr(args, "max_samples", 100))
-        modes = list(
-            getattr(args, "context_modes", ["full", "latent_only", "prompt_only"])
-        )
+        modes = list(getattr(args, "context_modes", ["full", "latent_only", "prompt_only"]))
         conds = list(getattr(args, "acquisition_conditions", ["own", "cross", "drop"]))
-        conditions = []
-        for c in conds:
-            if c in {"drop", "drop_position_matched"}:
-                conditions.append(c)
-            else:
-                for m in modes:
-                    conditions.append(f"{m}_{c}")
+        conditions = [c if c in {"drop", "drop_position_matched"} else f"{m}_{c}" for c in conds for m in ([""] if c in {"drop", "drop_position_matched"} else modes)]
     elif getattr(args, "intervention", False):
         max_s = int(getattr(args, "max_samples", 0))
-        raw_c = getattr(
-            args, "intervention_conditions", ["own", "cross", "drop", "zero"]
-        )
-        conditions = (
-            [c.strip() for c in raw_c.split(",")]
-            if isinstance(raw_c, str)
-            else list(raw_c)
-        )
+        raw_c = getattr(args, "intervention_conditions", ["own", "cross", "drop", "zero"])
+        conditions = [c.strip() for c in raw_c.split(",")] if isinstance(raw_c, str) else list(raw_c)
     else:
         max_s = int(getattr(args, "max_samples", 0))
         conditions = ["benchmark"]
 
     if max_s > 0:
         target_count = max_s
-        if summary_path.is_file():
-            try:
-                sdata = json.loads(summary_path.read_text(encoding="utf-8"))
-                if (
-                    isinstance(sdata, dict)
-                    and sdata.get("sample_count", 0) < target_count
-                ):
-                    return None
-            except Exception:
-                return None
     else:
-        if not summary_path.is_file():
-            return None
         try:
-            sdata = json.loads(summary_path.read_text(encoding="utf-8"))
-            if not isinstance(sdata, dict):
-                return None
-            cfg = sdata.get("config", {})
-            if cfg.get("requested_max_samples") not in (-1, None, 0):
-                return None
-            target_count = int(sdata.get("sample_count", 0))
-            if target_count <= 0:
-                return None
+            from latentmas_reprop.infrastructure.datasets.registry import (
+                DEFAULT_DATASET_REGISTRY,
+            )
+
+            dataset = list(
+                DEFAULT_DATASET_REGISTRY.load(
+                    task=getattr(args, "task", "gsm8k"),
+                    split=getattr(args, "split", "test"),
+                )
+            )
+            target_count = len(dataset)
         except Exception:
+            samples_dir = exp_dir / "samples"
+            if samples_dir.is_dir():
+                target_count = len([d for d in samples_dir.iterdir() if d.is_dir()])
+            else:
+                return None
+        if target_count <= 0:
             return None
 
     # Verify every required sample and condition is complete on disk
@@ -138,25 +130,85 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
                     exp_dir / "samples" / f"{idx:06d}"
                 ):
                     continue
+                sdir = exp_dir / "samples" / f"{idx:06d}"
+                if sdir.is_dir() and any(
+                    is_condition_complete(c)
+                    for c in sdir.iterdir()
+                    if c.name == cond or c.name.startswith(f"{cond}_")
+                ):
+                    continue
                 return None
 
-    # Read summary and records
-    summary_data = {}
-    if summary_path.is_file():
-        with contextlib.suppress(Exception):
-            summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
-    metrics = summary_data.get("metrics", summary_data)
-
+    # Read records from disk
     records = []
     for idx in range(target_count):
         for cond in conditions:
             rf = resolver.get_condition_dir(exp_dir, idx, cond) / "result.json"
             if not rf.is_file() and cond == "benchmark":
                 rf = exp_dir / "samples" / f"{idx:06d}" / "result.json"
+            if not rf.is_file():
+                sdir = exp_dir / "samples" / f"{idx:06d}"
+                if sdir.is_dir():
+                    candidates = [
+                        c / "result.json"
+                        for c in sdir.iterdir()
+                        if (c.name == cond or c.name.startswith(f"{cond}_"))
+                        and (c / "result.json").is_file()
+                    ]
+                    if candidates:
+                        rf = candidates[0]
             if rf.is_file():
                 with contextlib.suppress(Exception):
                     records.append(json.loads(rf.read_text(encoding="utf-8")))
 
+    # Read or synthesize summary
+    summary_data = {}
+    if summary_path.is_file():
+        with contextlib.suppress(Exception):
+            summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    if not summary_data:
+        correct = sum(1 for r in records if r.get("correct", False))
+        acc = correct / max(1, len(records))
+        summary_data = {
+            "status": "complete",
+            "sample_count": len(records),
+            "requested_trajectories": target_count,
+            "reused_trajectories": len(records),
+            "fresh_trajectories": 0,
+            "failed_trajectories": 0,
+            "metrics": {
+                "accuracy": acc,
+                "correct": correct,
+                "total": len(records),
+                "max_samples": len(records),
+            },
+        }
+        with contextlib.suppress(Exception):
+            summary_path.write_text(
+                json.dumps(summary_data, indent=2) + "\n", encoding="utf-8"
+            )
+
+    # Log to MLflow if tracking experiment is specified
+    exp_name = getattr(args, "tracking_experiment_name", None)
+    if exp_name:
+        with contextlib.suppress(Exception):
+            tracker = MLflowTracker()
+            scope_str = f"n{target_count}"
+            run_name = f"{exp_rel}_{scope_str}"
+            tracker.start_run(
+                experiment_name=exp_name,
+                run_name=run_name,
+                tags={
+                    "data_dir": str(exp_dir.resolve()),
+                    "rel_dir": exp_rel,
+                    "run_name": run_name,
+                },
+            )
+            tracker.log_dict(summary_data, "summary.json")
+            tracker.end_run("FINISHED")
+
+    metrics = summary_data.get("metrics", summary_data)
     print(f"Reusing completed experiment at {exp_rel}")
     if getattr(args, "print_summary", False):
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
@@ -165,6 +217,7 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
 
 def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
     """Execute a benchmark experiment with given parsed arguments."""
+    finalize_run_args(args)
     exp_name = getattr(args, "tracking_experiment_name", None)
     if not exp_name:
         raise ValueError(

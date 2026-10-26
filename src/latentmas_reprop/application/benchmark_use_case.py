@@ -22,7 +22,7 @@ from ..infrastructure.paths import (
     get_path_resolver,
     resolve_experiment_dtype_name,
 )
-from ..infrastructure.storage import is_condition_complete, verify_run_config
+from ..infrastructure.storage import is_condition_complete
 from .benchmark import (
     BenchmarkRunStore,
     build_metrics,
@@ -164,7 +164,6 @@ class BenchmarkUseCase:
         saved_cfg["requested_max_samples"] = requested_max_samples
         saved_cfg["dtype"] = dtype_name
         saved_cfg["backend"] = backend
-        verify_run_config(exp_dir, saved_cfg)
 
         store = BenchmarkRunStore(self.cache_port, exp_relpath, path_resolver=resolver)
         start_benchmark_tracker(self.tracker_port, args)
@@ -193,6 +192,10 @@ class BenchmarkUseCase:
         if not pending and store.read_records():
             print(f"Reusing completed run at {exp_relpath}")
             metrics, predictions = store.load_finished(target)
+            metrics.requested_trajectories = target
+            metrics.reused_trajectories = target
+            metrics.fresh_trajectories = 0
+            metrics.failed_trajectories = 0
             save_benchmark_artifacts(
                 self.cache_port,
                 self.tracker_port,
@@ -227,7 +230,6 @@ class BenchmarkUseCase:
                         stored = dict(result)
                         sample_idx = batch[offset]["sample_index"]
                         stored["sample_index"] = sample_idx
-                        stored["sample_key"] = f"{sample_idx:06d}"
                         store.append(stored, overwrite=overwrite)
                     batch = []
                     if torch.cuda.is_available():
@@ -251,11 +253,21 @@ class BenchmarkUseCase:
                 eval_seconds=eval_seconds,
                 model_load_seconds=float(getattr(model, "load_time_sec", 0.0)),
             )
+            reused_count = target - len(pending)
+            fresh_count = len(pending)
+            metrics.requested_trajectories = target
+            metrics.reused_trajectories = reused_count
+            metrics.fresh_trajectories = fresh_count
+            metrics.failed_trajectories = 0
             store.write_complete(
                 {
                     "status": "complete",
                     "run_id": exp_relpath,
                     "sample_count": len(predictions),
+                    "requested_trajectories": target,
+                    "reused_trajectories": reused_count,
+                    "fresh_trajectories": fresh_count,
+                    "failed_trajectories": 0,
                     "metrics": metrics.to_dict(),
                     "config": saved_config,
                     "runtime": runtime_metadata(model, dtype_name, eval_seconds),

@@ -111,22 +111,18 @@ def collect_trajectory(model, samples, receiver, records_path, tracker_port=None
                     bundle = build_sender_cache(
                         model, acquisition_args(model.model_name, 20), sample
                     )
-                    contexts.write(
-                        dumps(
-                            {
-                                "sample_id": sample.sample_id,
-                                "sample_key": sample.sample_key,
-                                "digit": sample.digit,
-                                "model": model.model_name,
-                                "latent_steps": 20,
-                                **bundle.prompt_input,
-                                "cache_sequence_length": bundle.full_len,
-                                "prompt_len": bundle.prompt_len,
-                                "latency_sec": bundle.build_latency_sec,
-                            }
-                        )
-                        + "\n"
-                    )
+                    sender_ctx = {
+                        "sample_id": sample.sample_id,
+                        "sample_key": sample.sample_key,
+                        "digit": sample.digit,
+                        "model": model.model_name,
+                        "latent_steps": 20,
+                        **bundle.prompt_input,
+                        "cache_sequence_length": bundle.full_len,
+                        "prompt_len": bundle.prompt_len,
+                        "latency_sec": bundle.build_latency_sec,
+                    }
+                    contexts.write(dumps(sender_ctx) + "\n")
                     contexts.flush()
                     if span is not None:
                         span.set_inputs(

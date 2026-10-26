@@ -8,7 +8,6 @@ from typing import Any
 import torch
 
 from ...domain.models.tensor_artifact import (
-    ConfigurationMismatchError,
     ImmutableTensorOverwriteError,
     TensorMissingError,
 )
@@ -92,28 +91,18 @@ def is_experiment_complete(
     target_count: int = 0,
     conditions: list[str] | None = None,
 ) -> bool:
-    """Judge experiment completion: verifies that all required sample conditions are complete."""
+    """Judge experiment completion: verifies that all required sample conditions are complete on disk."""
     edir = Path(exp_dir)
     conds = conditions or ["benchmark"]
     resolver = get_path_resolver()
 
     if target_count <= 0:
-        summary_path = edir / "summary.json"
-        if not summary_path.is_file():
-            summary_path = edir / "collection_summary.json"
-        if not summary_path.is_file():
+        samples_dir = edir / "samples"
+        if not samples_dir.is_dir():
             return False
-        try:
-            sdata = load_json(summary_path)
-            if not isinstance(sdata, dict):
-                return False
-            cfg = sdata.get("config", {})
-            if cfg.get("requested_max_samples") not in (-1, None, 0):
-                return False
-            target_count = int(sdata.get("sample_count", 0))
-            if target_count <= 0:
-                return False
-        except Exception:
+        sample_subdirs = [d for d in samples_dir.iterdir() if d.is_dir()]
+        target_count = len(sample_subdirs)
+        if target_count <= 0:
             return False
 
     for idx in range(target_count):
@@ -161,55 +150,7 @@ def save_condition_result(
     return save_json_atomic(cdir / "result.json", payload)
 
 
-def verify_run_config(
-    run_dir: Path | str,
-    requested_config: dict[str, Any],
-    essential_keys: list[str] | None = None,
-) -> None:
-    """Verify requested config matches config.json when resuming, or initialize it."""
-    rdir = Path(run_dir)
-    cfg_path = rdir / "config.json"
-    if cfg_path.is_file():
-        existing = load_json(cfg_path)
-        keys = essential_keys or [
-            "model_name",
-            "model_revision",
-            "dtype",
-            "backend",
-            "method",
-            "task",
-            "split",
-            "prompt",
-            "latent_steps",
-            "max_new_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "cross_policy",
-        ]
-        mismatches = {}
-        for k in keys:
-            if k in requested_config and requested_config[k] is not None:
-                if k not in existing:
-                    mismatches[k] = ("<missing in existing>", requested_config[k])
-                elif str(existing[k]) != str(requested_config[k]):
-                    mismatches[k] = (existing[k], requested_config[k])
 
-        if (
-            "sample_keys" in requested_config
-            and requested_config["sample_keys"] is not None
-        ):
-            if "sample_keys" not in existing:
-                mismatches["sample_keys"] = ("<missing in existing>", "sample_keys")
-            elif existing["sample_keys"] != requested_config["sample_keys"]:
-                mismatches["sample_keys"] = ("sample keys or ordering mismatch",)
-
-        if mismatches:
-            raise ConfigurationMismatchError(
-                f"Configuration mismatch when resuming run at '{rdir}': {mismatches}"
-            )
-    else:
-        save_json_atomic(cfg_path, requested_config)
 
 
 class FileStorage:

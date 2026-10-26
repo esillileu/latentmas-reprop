@@ -95,15 +95,12 @@ class MLflowTracker(ExperimentTrackerPort):
         else:
             experiment_id = experiment.experiment_id
 
-        # Search existing run by data_dir or rel_dir tag to prevent duplicates
-        data_dir_tag = run_tags.get("data_dir")
+        # Search existing run by run_name tag or run_name attribute to prevent duplicates of same scope
+        if run_name and "run_name" not in run_tags:
+            run_tags["run_name"] = str(run_name)
         existing_rid = None
-        if data_dir_tag or run_name:
-            filt = (
-                f"tags.data_dir = '{data_dir_tag}'"
-                if data_dir_tag
-                else f"tags.rel_dir = '{run_name}'"
-            )
+        if run_name:
+            filt = f"tags.run_name = '{run_name}'"
             with suppress(Exception):
                 runs = mlflow.tracking.MlflowClient().search_runs(
                     experiment_ids=[experiment_id],
@@ -124,12 +121,12 @@ class MLflowTracker(ExperimentTrackerPort):
                 experiment_id=experiment_id, run_name=run_name, tags=run_tags
             )
 
-        if run_name and not data_dir_tag:
-            p = str(self.resolver.get_experiment_dir(run_name).resolve())
+        rel_dir = run_tags.get("rel_dir") or run_name
+        if rel_dir and "data_dir" not in run_tags:
+            p = str(self.resolver.get_experiment_dir(rel_dir).resolve())
             tags = {
                 "data_dir": p,
-                "rel_dir": str(run_name),
-                "storage_run_id": str(run_name),
+                "rel_dir": str(rel_dir),
             }
             with suppress(Exception):
                 mlflow.set_tags(tags)
@@ -147,7 +144,6 @@ class MLflowTracker(ExperimentTrackerPort):
         tags = {
             "data_dir": p,
             "rel_dir": str(rel_or_id),
-            "storage_run_id": str(rel_or_id),
         }
         with suppress(Exception):
             mlflow.set_tags(tags)

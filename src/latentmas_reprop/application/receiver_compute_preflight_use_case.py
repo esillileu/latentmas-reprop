@@ -106,15 +106,16 @@ class ReceiverComputePreflightUseCase:
 
         tracker = self.tracker
         _name, kind, label = run_identity(args, len(items))
+        run_name = f"{exp_relpath}_n{len(items)}"
         config.update(
-            run_name=exp_relpath,
+            run_name=run_name,
             run_kind=kind,
             run_label=label,
             version_tag=args.version_tag or "receiver-compute-preflight",
         )
         tracker.start_run(
             experiment_name=args.tracking_experiment_name,
-            run_name=exp_relpath,
+            run_name=run_name,
             tags={
                 k: config[k]
                 for k in (
@@ -132,6 +133,7 @@ class ReceiverComputePreflightUseCase:
                 "experiment_type": "receiver_compute_preflight",
                 "data_dir": str(directory.resolve()),
                 "rel_dir": exp_relpath,
+                "run_name": run_name,
             },
         )
         config["run_id"] = exp_relpath

@@ -5,10 +5,8 @@ import json
 import pytest
 import torch
 
-from latentmas_reprop.domain.models.tensor_artifact import (
-    ConfigurationMismatchError,
-)
 from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
+from latentmas_reprop.infrastructure.paths.naming import build_experiment_relpath
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage import (
     FileStorage,
@@ -16,7 +14,6 @@ from latentmas_reprop.infrastructure.storage import (
     is_condition_complete,
     save_condition_result,
     save_tensor,
-    verify_run_config,
 )
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
@@ -121,28 +118,28 @@ def test_4_missing_hidden_file_reexecution(tmp_path):
 
 
 def test_5_different_config_resume_rejected(tmp_path):
-    """5. 다른 설정으로 기존 Run을 재개하려 하면 거부하는가?"""
-    resolver = PathResolver(tmp_path)
-    run_dir = resolver.get_experiment_dir("run_cfg_test")
+    """5. 서로 다른 설정은 서로 다른 결정론적 경로로 분리되는가?"""
+    from types import SimpleNamespace
 
-    initial_cfg = {
-        "model_name": "Qwen/Qwen3-4B",
-        "task": "gsm8k",
-        "method": "latent_mas",
-        "latent_steps": 20,
-        "seed": 42,
-    }
-    verify_run_config(run_dir, initial_cfg)
-
-    # Same config should pass cleanly
-    verify_run_config(run_dir, initial_cfg)
-
-    # Different config should be rejected
-    mismatched_cfg = dict(initial_cfg)
-    mismatched_cfg["latent_steps"] = 40
-
-    with pytest.raises(ConfigurationMismatchError, match="Configuration mismatch"):
-        verify_run_config(run_dir, mismatched_cfg)
+    cfg1 = SimpleNamespace(
+        task="gsm8k",
+        model_name="Qwen/Qwen3-4B",
+        method="latent_mas",
+        prompt="sequential",
+        latent_steps=20,
+        seed=42,
+    )
+    cfg2 = SimpleNamespace(
+        task="gsm8k",
+        model_name="Qwen/Qwen3-4B",
+        method="latent_mas",
+        prompt="sequential",
+        latent_steps=40,
+        seed=42,
+    )
+    path1 = build_experiment_relpath(cfg1)
+    path2 = build_experiment_relpath(cfg2)
+    assert path1 != path2
 
 
 def test_6_atomic_save_failure_leaves_no_completion_file(tmp_path, monkeypatch):

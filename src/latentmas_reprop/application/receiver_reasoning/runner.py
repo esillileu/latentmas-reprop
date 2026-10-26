@@ -59,7 +59,21 @@ def collect_sample(
         sample_measurements = {}
         try:
             with runtime.measure(root) as sample_measurements:
+                exp_dir = records_path.parent
+                resolver = get_path_resolver()
+                overwrite = getattr(args, "overwrite", False)
+
                 for step in [0, *args.upstream_steps]:
+                    ao_dir = resolver.get_condition_dir(exp_dir, index, f"u{step}_answer_only")
+                    free_dir = resolver.get_condition_dir(exp_dir, index, f"u{step}_free")
+                    if not overwrite and is_condition_complete(ao_dir) and is_condition_complete(free_dir):
+                        try:
+                            records.append(load_json(ao_dir / "result.json"))
+                            records.append(load_json(free_dir / "result.json"))
+                            continue
+                        except Exception:
+                            pass
+
                     method = LatentMASMethod(
                         model,
                         latent_steps=step,
@@ -82,9 +96,6 @@ def collect_sample(
                         runtime,
                     )
                     length = measurements["handoff_positions"]
-                    exp_dir = records_path.parent
-                    resolver = get_path_resolver()
-                    overwrite = getattr(args, "overwrite", False)
 
                     for mode in ("answer_only", "free"):
                         cond_name = f"u{step}_{mode}"

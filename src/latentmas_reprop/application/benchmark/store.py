@@ -46,7 +46,7 @@ class BenchmarkRunStore:
         return json.loads(self.summary_path.read_text(encoding="utf-8"))
 
     def read_records(self) -> list[dict[str, Any]]:
-        """Load completed samples strictly from samples/ directory with legacy fallback."""
+        """Load completed samples strictly from samples/ directory."""
         samples_dir = self.root / "samples"
         recovered = []
         if samples_dir.is_dir():
@@ -61,30 +61,8 @@ class BenchmarkRunStore:
                             recovered.append(d)
                     except Exception:
                         pass
-        if not recovered and self.samples_path.is_file():
-            valid_lines = []
-            for line in self.samples_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    d = json.loads(line)
-                    if _is_valid_record(d):
-                        recovered.append(d)
-                        valid_lines.append(json.dumps(d))
-                except Exception:
-                    pass
-            self.samples_path.write_text(
-                "\n".join(valid_lines) + "\n" if valid_lines else "",
-                encoding="utf-8",
-            )
         recovered.sort(key=lambda x: int(x.get("sample_index", 0)))
         return recovered
-
-    def has_keys(self, required_keys: set[str] | list[str]) -> bool:
-        """Check if all required sample keys exist in valid completed records."""
-        if not required_keys:
-            return True
-        return set(required_keys).issubset(self.completed_keys())
 
     def is_complete(self, target_samples: int | None = None) -> bool:
         records = self.read_records()
@@ -92,29 +70,7 @@ class BenchmarkRunStore:
             return False
         if target_samples is not None:
             return len(records) >= target_samples and target_samples > 0
-        summary = self.read_summary()
-        if not summary or summary.get("status") != "complete":
-            return False
-        config = summary.get("config") or {}
-        if config.get("requested_max_samples") not in (-1, None, 0):
-            return False
-        metrics = summary.get("metrics") or {}
-        return (
-            summary.get("sample_count") == len(records)
-            and metrics.get("max_samples") == len(records)
-            and len(records) > 0
-        )
-
-    def completed_keys(self) -> set[str]:
-        keys = set()
-        for record in self.read_records():
-            if "sample_key" in record:
-                keys.add(str(record["sample_key"]))
-            if "sample_index" in record:
-                idx = int(record["sample_index"])
-                keys.add(f"{idx:06d}")
-                keys.add(str(idx))
-        return keys
+        return len(records) > 0
 
     def append(self, record: dict[str, Any], overwrite: bool = False) -> None:
         """Append one finished sample into samples/<idx>/benchmark/result.json."""

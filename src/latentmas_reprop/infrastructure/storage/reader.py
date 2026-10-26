@@ -84,11 +84,10 @@ class ResearchDataReader:
                     return Path(tag_dir)
                 alt_id = (
                     run.data.tags.get("rel_dir")
-                    or run.data.tags.get("storage_run_id")
                     or run.data.tags.get("resumed_from_run_id")
                 )
                 if alt_id:
-                    _validate_safe_path(alt_id, "storage_run_id")
+                    _validate_safe_path(alt_id, "rel_dir")
                     return self.resolver.get_experiment_dir(alt_id)
 
             with contextlib.suppress(Exception):

@@ -13,7 +13,6 @@ from latentmas_reprop.application.receiver_acquisition.runner import (
     run_acquisition_loop,
 )
 from latentmas_reprop.application.receiver_acquisition.sampling import SecretDigitSample
-from latentmas_reprop.domain.models.tensor_artifact import ConfigurationMismatchError
 from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
 from latentmas_reprop.infrastructure.paths.resolver import (
     PathResolver,
@@ -25,7 +24,6 @@ from latentmas_reprop.infrastructure.storage import (
     load_tensor,
     save_condition_result,
     save_tensor,
-    verify_run_config,
 )
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 from tools.migrations.storage_v1_to_v2.migrate import StorageMigrator
@@ -76,21 +74,24 @@ def test_identical_config_uses_same_directory(tmp_path):
 
 
 def test_config_mismatch_raises_on_resume(tmp_path):
-    """Missing or mismatched decisive config keys raise ConfigurationMismatchError."""
-    exp_dir = tmp_path / "exp1"
-    exp_dir.mkdir()
-    base = {
-        "model_name": "m",
-        "latent_steps": 10,
-        "seed": 42,
-        "split": "t",
-        "sample_keys": ["k1"],
-    }
-    (exp_dir / "config.json").write_text(json.dumps(base), encoding="utf-8")
-    with pytest.raises(ConfigurationMismatchError):
-        verify_run_config(exp_dir, {**base, "seed": 999})
-    with pytest.raises(ConfigurationMismatchError):
-        verify_run_config(exp_dir, {**base, "prompt": "cot"})
+    """Decisive configuration differences yield distinct experiment directories."""
+    from types import SimpleNamespace
+
+    from latentmas_reprop.infrastructure.paths.naming import build_experiment_relpath
+
+    base = SimpleNamespace(
+        task="gsm8k",
+        model_name="m",
+        method="latent_mas",
+        prompt="sequential",
+        latent_steps=10,
+        seed=42,
+        split="test",
+    )
+    diff_seed = SimpleNamespace(**{**vars(base), "seed": 999})
+    diff_prompt = SimpleNamespace(**{**vars(base), "prompt": "cot"})
+    assert build_experiment_relpath(base) != build_experiment_relpath(diff_seed)
+    assert build_experiment_relpath(base) != build_experiment_relpath(diff_prompt)
 
 
 def test_incomplete_condition_triggers_reexecution(tmp_path):
@@ -212,7 +213,7 @@ def test_mlflow_linking_and_failure_close(tmp_path):
     client = tracker.client
     r_info = client.get_run(run_id)
     assert r_info.data.tags.get("data_dir") == str(data_dir.resolve())
-    assert r_info.data.tags.get("storage_run_id") == "custom_storage_01"
+    assert r_info.data.tags.get("rel_dir") == "custom_storage_01"
 
     tracker.end_run(status="FAILED")
     r_after = client.get_run(run_id)

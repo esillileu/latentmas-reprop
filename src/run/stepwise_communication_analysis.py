@@ -214,6 +214,9 @@ def main(argv=None):
     from mlflow.tracking import MlflowClient
 
     from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
+    from latentmas_reprop.infrastructure.tracking.analysis_tracking import (
+        log_analysis_results_to_mlflow,
+    )
     from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
     from .stepwise_communication_sources import load_inputs
@@ -269,27 +272,15 @@ def main(argv=None):
         "independent_run_ids": independent_ids, "inputs": provenance,
     }
     (output / "source_runs.json").write_text(json.dumps(sources, indent=2) + "\n")
-    exp = client.get_experiment_by_name("latentmas_receiver_trajectory")
-    run = client.create_run(
-        exp.experiment_id if exp else "0",
-        tags={
-            "mlflow.runName": "stepwise-communication-analysis",
-            "phase": "analysis", "analysis_type": "stepwise_communication",
-            "data_dir": str(output.resolve()), "rel_dir": "stepwise_communication",
-        },
+    analyze(probes, sweep, independent, output, args.annotate_steps)
+    analysis_name = "stepwise_communication"
+    log_analysis_results_to_mlflow(
+        tracker,
+        analysis_name,
+        output,
+        params={"annotate_steps": args.annotate_steps},
     )
-    run_id = run.info.run_id
-    status = "FAILED"
-    try:
-        analyze(probes, sweep, independent, output, args.annotate_steps)
-        status = "FINISHED"
-    finally:
-        try:
-            for path in sorted(output.iterdir()):
-                client.log_artifact(run_id, str(path), "communication")
-        finally:
-            client.set_terminated(run_id, status)
-            print(f"MLflow analysis run: {run_id} ({status})")
+    print(f"MLflow analysis recorded under latentmas-analysis for: {output}")
 
 
 if __name__ == "__main__":
