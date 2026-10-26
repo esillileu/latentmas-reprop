@@ -97,48 +97,48 @@ class MLflowTracker(ExperimentTrackerPort):
         else:
             experiment_id = experiment.experiment_id
 
-        self._active_run = mlflow.start_run(
-            experiment_id=experiment_id,
-            run_name=run_name,
-            tags=run_tags,
-        )
-        active_id = None
-        if self._active_run is not None:
-            active_info = getattr(self._active_run, "info", None)
-            active_id = (
-                getattr(active_info, "run_id", None)
-                if active_info is not None
-                else None
+        # Search existing run by data_dir or rel_dir tag to prevent duplicates
+        data_dir_tag = run_tags.get("data_dir")
+        existing_rid = None
+        if data_dir_tag or run_name:
+            filt = (
+                f"tags.data_dir = '{data_dir_tag}'"
+                if data_dir_tag
+                else f"tags.rel_dir = '{run_name}'"
             )
-        if active_id:
-            storage_run_id = (
-                run_tags.get("storage_run_id") or run_tags.get("run_id") or active_id
-            )
-            exp_dir = self.resolver.get_experiment_dir(storage_run_id)
-            tag_dict = {
-                "data_dir": str(exp_dir),
-                "storage_run_id": str(storage_run_id),
-            }
-            if str(storage_run_id) != str(active_id):
-                tag_dict["resumed_from_run_id"] = str(storage_run_id)
             with suppress(Exception):
-                mlflow.set_tags(tag_dict)
+                runs = mlflow.tracking.MlflowClient().search_runs(
+                    experiment_ids=[experiment_id],
+                    filter_string=filt,
+                    max_results=1,
+                )
+                if runs:
+                    existing_rid = runs[0].info.run_id
+
+        if mlflow.active_run() is not None:
+            with suppress(Exception):
+                mlflow.end_run()
+
+        if existing_rid:
+            self._active_run = mlflow.start_run(run_id=existing_rid, tags=run_tags)
+        else:
+            self._active_run = mlflow.start_run(
+                experiment_id=experiment_id, run_name=run_name, tags=run_tags
+            )
+
+        if run_name and not data_dir_tag:
+            p = str(self.resolver.get_experiment_dir(run_name).resolve())
+            tags = {"data_dir": p, "rel_dir": str(run_name), "storage_run_id": str(run_name)}
+            with suppress(Exception):
+                mlflow.set_tags(tags)
         return self._active_run
 
-    def set_data_dir(
-        self, storage_run_id: str, data_dir: Path | str | None = None
-    ) -> None:
+    def set_data_dir(self, rel_or_id: str, data_dir: Path | str | None = None) -> None:
         """Explicitly set or update the storage directory tags for the active run."""
-        path = (
-            Path(data_dir)
-            if data_dir
-            else self.resolver.get_experiment_dir(storage_run_id)
-        )
-        tag_dict = {"data_dir": str(path), "storage_run_id": str(storage_run_id)}
-        if self.active_run_id and str(storage_run_id) != str(self.active_run_id):
-            tag_dict["resumed_from_run_id"] = str(storage_run_id)
+        p = str((Path(data_dir) if data_dir else self.resolver.get_experiment_dir(rel_or_id)).resolve())
+        tags = {"data_dir": p, "rel_dir": str(rel_or_id), "storage_run_id": str(rel_or_id)}
         with suppress(Exception):
-            mlflow.set_tags(tag_dict)
+            mlflow.set_tags(tags)
 
     @property
     def client(self) -> Any:
@@ -152,20 +152,11 @@ class MLflowTracker(ExperimentTrackerPort):
         return active.info.run_id if active is not None else None
 
     def log_params(self, params: dict[str, Any]) -> None:
-        flat_params: dict[str, Any] = {}
-        for k, v in params.items():
-            if v is None:
-                flat_params[k] = "None"
-            elif isinstance(v, (list, tuple, dict)):
-                flat_params[k] = str(v)
-            else:
-                flat_params[k] = v
-        # MLflow parameter values truncated to 500 characters
-        safe_params = {
-            k: (str(v)[:500] if len(str(v)) > 500 else v)
-            for k, v in flat_params.items()
+        safe = {
+            k: ("None" if v is None else str(v)[:500] if isinstance(v, (list, tuple, dict)) or len(str(v)) > 500 else v)
+            for k, v in params.items()
         }
-        mlflow.log_params(safe_params)
+        mlflow.log_params(safe)
 
     def log_metrics(
         self, metrics: dict[str, float | int], step: int | None = None

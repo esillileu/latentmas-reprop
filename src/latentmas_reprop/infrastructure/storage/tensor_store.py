@@ -87,6 +87,38 @@ def is_condition_complete(condition_dir: Path | str) -> bool:
     return all((cdir / fname).is_file() for fname in required_files)
 
 
+def is_experiment_complete(
+    exp_dir: Path | str,
+    target_count: int = 0,
+    conditions: list[str] | None = None,
+) -> bool:
+    """Judge experiment completion: summary.json exists or all sample conditions complete."""
+    edir = Path(exp_dir)
+    summary_path = edir / "summary.json"
+    if summary_path.is_file():
+        try:
+            sdata = load_json(summary_path)
+            if (
+                isinstance(sdata, dict)
+                and sdata.get("status", "complete") == "complete"
+            ):
+                sc = sdata.get("sample_count", 0)
+                if target_count <= 0 or sc >= target_count:
+                    return True
+        except Exception:
+            pass
+
+    if target_count <= 0 or not conditions:
+        return False
+
+    resolver = get_path_resolver()
+    for idx in range(target_count):
+        for cond in conditions:
+            if not is_condition_complete(resolver.get_condition_dir(edir, idx, cond)):
+                return False
+    return True
+
+
 def save_condition_result(
     condition_dir: Path | str,
     result_data: dict[str, Any],

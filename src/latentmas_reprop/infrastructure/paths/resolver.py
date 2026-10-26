@@ -87,21 +87,32 @@ class PathResolver:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def get_experiment_dir(self, run_id: str) -> Path:
+    def get_experiment_dir(self, run_id: str | Path) -> Path:
         """Get or create directory for a specific experiment run."""
-        clean_run_id = str(run_id).replace("/", "_").replace("\\", "_")
-        path = self.experiments_dir / clean_run_id
+        if isinstance(run_id, Path) and run_id.is_absolute():
+            path = run_id
+        else:
+            clean_rel = str(run_id).strip("/\\")
+            path = self.experiments_dir / clean_rel
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def get_sample_dir(self, run_id: str, sample_key: str) -> Path:
+    def get_sample_dir(self, run_id: str | Path, sample_key: int | str) -> Path:
         """Get or create directory for a specific sample within an experiment run."""
-        clean_sample_key = str(sample_key).replace("/", "_").replace("\\", "_")
-        path = self.get_experiment_dir(run_id) / "samples" / clean_sample_key
+        key_str = str(sample_key)
+        idx_str = (
+            f"{int(key_str):06d}" if key_str.isdigit() else key_str.replace("/", "_")
+        )
+        if isinstance(run_id, Path) and run_id.is_absolute():
+            path = run_id / "samples" / idx_str
+        else:
+            path = self.get_experiment_dir(run_id) / "samples" / idx_str
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def get_condition_dir(self, run_id: str, sample_key: str, condition: str) -> Path:
+    def get_condition_dir(
+        self, run_id: str | Path, sample_key: int | str, condition: str
+    ) -> Path:
         """Get or create directory for a specific condition within a sample."""
         clean_condition = str(condition).replace("/", "_").replace("\\", "_")
         path = self.get_sample_dir(run_id, sample_key) / clean_condition
