@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import random
@@ -7,10 +8,6 @@ from typing import Any
 import numpy as np
 import torch
 
-from latentmas_reprop.application.benchmark import (
-    BenchmarkRunStore,
-    sample_key_for,
-)
 from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
 from latentmas_reprop.application.intervention_use_case import InterventionUseCase
 from latentmas_reprop.application.receiver_acquisition_use_case import (
@@ -22,9 +19,9 @@ from latentmas_reprop.application.receiver_compute_preflight_use_case import (
 from latentmas_reprop.application.receiver_reasoning_use_case import (
     ReceiverReasoningUseCase,
 )
-from latentmas_reprop.infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
-from latentmas_reprop.infrastructure.datasets.registry import DatasetRegistry
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
+from latentmas_reprop.infrastructure.paths.naming import build_experiment_relpath
+from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
 
@@ -46,38 +43,52 @@ def auto_device(device: str | None = None) -> torch.device:
     return torch.device("cpu")
 
 
-def _reuse_completed_benchmark(
-    args: Any, device: torch.device
-) -> tuple[dict, list[dict]] | None:
-    """Return a finished benchmark without loading the model again if explicitly resumed."""
-    explicit_run_id = getattr(args, "run_id", None)
-    if not explicit_run_id:
+def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
+    """Return finished experiment results without loading the model if completely done."""
+    if getattr(args, "overwrite", False):
         return None
-    if any(
-        getattr(args, name, False)
-        for name in (
-            "acquisition",
-            "intervention",
-            "receiver_reasoning",
-            "receiver_compute_preflight",
-        )
-    ):
+    backend = "vllm" if getattr(args, "use_vllm", False) else "transformers"
+    exp_rel = build_experiment_relpath(args, backend=backend)
+    exp_dir = get_path_resolver().get_experiment_dir(exp_rel)
+    summary_path = exp_dir / "summary.json"
+    if not summary_path.is_file():
+        summary_path = exp_dir / "collection_summary.json"
+    if not summary_path.is_file():
         return None
-    store = BenchmarkRunStore(DEFAULT_CACHE_MANAGER, explicit_run_id)
-
-    dataset = list(DatasetRegistry().load(task=args.task, split=args.split))
-    requested_max_samples = int(getattr(args, "max_samples", -1))
-    target = len(dataset) if requested_max_samples == -1 else requested_max_samples
-    target = min(target, len(dataset))
-    required_keys = [sample_key_for(args, item) for item in dataset[:target]]
-    if not store.has_keys(required_keys):
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
         return None
 
-    metrics, preds = store.load_finished(target)
-    print(f"Reusing completed run {explicit_run_id}")
+    records = []
+    samples_dir = exp_dir / "samples"
+    if samples_dir.is_dir():
+        for sdir in sorted(samples_dir.iterdir()):
+            for cond in ("benchmark", "own", "result", "shared"):
+                rf = sdir / cond / "result.json"
+                if not rf.is_file():
+                    rf = sdir / "result.json"
+                if rf.is_file():
+                    with contextlib.suppress(Exception):
+                        records.append(json.loads(rf.read_text(encoding="utf-8")))
+                    break
+    if not records and (exp_dir / "sample_results.jsonl").is_file():
+        with contextlib.suppress(Exception):
+            for line in (
+                (exp_dir / "sample_results.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ):
+                if line.strip():
+                    records.append(json.loads(line))
+
+    metrics = data.get("metrics", data)
+    print(f"Reusing completed experiment at {exp_rel}")
     if getattr(args, "print_summary", False):
-        print(json.dumps(metrics.to_dict(), ensure_ascii=False))
-    return metrics.to_dict(), preds
+        print(json.dumps(metrics, ensure_ascii=False, indent=2))
+    return metrics, records
 
 
 def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
@@ -90,7 +101,7 @@ def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
 
     set_seed(args.seed)
     device = auto_device(args.device)
-    reused = _reuse_completed_benchmark(args, device)
+    reused = _reuse_completed_run(args)
     if reused is not None:
         return reused
 

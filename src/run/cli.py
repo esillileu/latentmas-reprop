@@ -43,10 +43,9 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         help="Print the expanded run matrix without loading models or running experiments.",
     )
     parser.add_argument(
-        "--run_id",
-        type=str,
-        default=defaults.get("run_id"),
-        help="Explicit run ID to execute or resume from storage/experiments/<run_id>.",
+        "--overwrite",
+        action="store_true",
+        help="Force recalculation and overwrite existing completed results.",
     )
 
     # Core args for experiments
@@ -280,10 +279,6 @@ def parse_run_matrix(args=None) -> list[argparse.Namespace]:
             seen.add(sig)
             parsed_runs.append(parsed)
 
-    if len(parsed_runs) > 1 and any(getattr(r, "run_id", None) for r in parsed_runs):
-        raise ValueError(
-            "Cannot specify explicit --run_id when configuration expands into multiple sweep runs."
-        )
     return parsed_runs
 
 
