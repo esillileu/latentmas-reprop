@@ -1,7 +1,6 @@
 """Execution runner for latent communication intervention experiments."""
 
 import random
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -78,7 +77,6 @@ def run_intervention_decoding(
     cache_bytes_list: list[int],
     tracker_port: ExperimentTrackerPort | None,
     git_hash: str,
-    incremental_jsonl_path: Any = None,
     run_id: str | None = None,
 ) -> tuple[
     list[SampleInterventionRecord], dict[str, list[float]], dict[str, list[int]]
@@ -91,25 +89,6 @@ def run_intervention_decoding(
     num_layers = get_past_kv_num_layers(contexts[0]) if contexts else 0
     cache_dtype = get_past_kv_dtype(contexts[0]) if contexts else None
     resolver = get_path_resolver()
-
-    # Fallback to incremental jsonl if present
-    completed_by_key: dict[str, list[SampleInterventionRecord]] = {}
-    if incremental_jsonl_path:
-        chk_path = Path(incremental_jsonl_path)
-        if chk_path.is_file():
-            import json
-
-            for line in chk_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                d = json.loads(line)
-                k = d.get("sample_key")
-                if k:
-                    fields = SampleInterventionRecord.__dataclass_fields__.keys()
-                    rec = SampleInterventionRecord(
-                        **{f: d[f] for f in fields if f in d}
-                    )
-                    completed_by_key.setdefault(k, []).append(rec)
 
     for i, item in enumerate(tqdm(dataset_iter, desc="Intervention decoding")):
         sample_id = f"sample_{i}"
@@ -130,9 +109,6 @@ def run_intervention_decoding(
                         completed_conditions[cond] = rec
                     except Exception:
                         pass
-        elif s_key in completed_by_key:
-            for rec in completed_by_key[s_key]:
-                completed_conditions[rec.condition] = rec
 
         # If all conditions were already completed, skip sample evaluation entirely
         if all(cond in completed_conditions for cond in conditions):
@@ -250,14 +226,6 @@ def run_intervention_decoding(
             trace_id = _finalize_root_span(
                 root_span, tracker_port, i, s_key, conditions, cond_preds
             )
-
-        if incremental_jsonl_path is not None:
-            import json
-
-            with open(incremental_jsonl_path, "a", encoding="utf-8") as f:
-                for rec in sample_results.values():
-                    f.write(json.dumps(rec.to_dict(), ensure_ascii=False) + "\n")
-                f.flush()
 
         log_sample_assessments(
             tracker_port,

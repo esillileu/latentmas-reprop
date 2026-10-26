@@ -1,8 +1,6 @@
 """Execution runner for receiver acquisition experiments."""
 
 import contextlib
-import json
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -54,30 +52,12 @@ def run_acquisition_loop(
     receiver_mask: torch.Tensor,
     mapping: dict[str, Any],
     tracker_port: ExperimentTrackerPort | None,
-    incremental_jsonl_path: Any = None,
     run_id: str | None = None,
 ) -> tuple[list[ReceiverAcquisitionRecord], dict[str, Any], float]:
     """Execute sender caching and receiver evaluation loop across all samples and conditions."""
     records: list[ReceiverAcquisitionRecord] = []
     hidden: dict[str, torch.Tensor] = {}
     resolver = get_path_resolver()
-
-    # Legacy jsonl checkpoint support
-    completed_by_index: dict[int, list[ReceiverAcquisitionRecord]] = {}
-    if incremental_jsonl_path:
-        chk = Path(incremental_jsonl_path)
-        if chk.is_file():
-            for line in chk.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                d = json.loads(line)
-                idx = d.get("sample_index")
-                if idx is not None:
-                    fields = ReceiverAcquisitionRecord.__dataclass_fields__.keys()
-                    rec = ReceiverAcquisitionRecord(
-                        **{f: d[f] for f in fields if f in d}
-                    )
-                    completed_by_index.setdefault(idx, []).append(rec)
 
     bundles = [build_sender_cache(model, args, sample) for sample in samples]
     context_runtime = sum(bundle.build_latency_sec for bundle in bundles)
@@ -126,15 +106,6 @@ def run_acquisition_loop(
                             continue
                         except Exception:
                             pass
-                elif index in completed_by_index:
-                    matched = [
-                        r
-                        for r in completed_by_index[index]
-                        if r.condition == condition and r.context_mode == mode
-                    ]
-                    if matched:
-                        records.append(matched[0])
-                        continue
 
                 pending_conditions.append((condition, mode, cond_name))
 
@@ -218,11 +189,6 @@ def run_acquisition_loop(
                     )
 
             sample_records = [r for r in records if r.sample_index == index]
-            if incremental_jsonl_path is not None:
-                with open(incremental_jsonl_path, "a", encoding="utf-8") as f:
-                    for r in sample_records:
-                        f.write(json.dumps(r.to_dict(), ensure_ascii=False) + "\n")
-                    f.flush()
             if root is not None:
                 root.set_outputs(
                     {

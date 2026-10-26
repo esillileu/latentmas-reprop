@@ -209,10 +209,6 @@ class InterventionUseCase:
             if "cross" in conditions
             else []
         )
-        runtime_dir = self.cache_port.get_layer_path("runtime")
-        incremental_path = (
-            runtime_dir / f"intervention_checkpoint_{config_hash or 'default'}.jsonl"
-        )
         records, cond_latencies, cond_tokens = run_intervention_decoding(
             model=model,
             method=method,
@@ -228,7 +224,6 @@ class InterventionUseCase:
             cache_bytes_list=cache_bytes,
             tracker_port=self.tracker_port,
             git_hash=git_hash,
-            incremental_jsonl_path=incremental_path,
             run_id=run_id,
         )
         total_time = time.time() - start_total_time
