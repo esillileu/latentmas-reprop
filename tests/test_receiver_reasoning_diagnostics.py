@@ -55,8 +55,9 @@ def test_unrecorded_legacy_measurements_remain_absent():
 
 @pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
 def test_failure_preserves_partial_records_and_experimental_diagnostics(
-    tmp_path, error_type
+    monkeypatch, tmp_path, error_type
 ):
+    monkeypatch.setenv("LATENTMAS_STORAGE_DIR", str(tmp_path / "storage"))
     args = parse_args(["-c", "lmas/receiver_reasoning/gsm8k", "--max_samples", "1"])
 
     class Method:
@@ -98,7 +99,9 @@ def test_failure_preserves_partial_records_and_experimental_diagnostics(
         pytest.raises(error_type, match="receiver failed"),
     ):
         use_case.execute(SimpleNamespace(device="cpu", load_time_sec=1.25), args)
-    failure = json.loads(next(tmp_path.glob("*/failure.json")).read_text())
+    failure = json.loads(
+        next((tmp_path / "storage").glob("**/failure.json")).read_text()
+    )
     assert "receiver failed" in failure["failure_traceback"]
     assert failure["execution"]["n_records_expected"] == 6
     assert failure["execution"]["n_records_completed"] == 1
@@ -107,7 +110,12 @@ def test_failure_preserves_partial_records_and_experimental_diagnostics(
     assert failure["execution"]["empty_output_count"] == 1
     assert failure["runtime"]["model_load_time_sec"] == 1.25
     assert (
-        len(next(tmp_path.glob("*/sample_results.jsonl")).read_text().splitlines()) == 1
+        len(
+            next((tmp_path / "storage").glob("**/sample_results.jsonl"))
+            .read_text()
+            .splitlines()
+        )
+        == 1
     )
     tracker.end_run.assert_called_once_with(
         status="KILLED" if error_type is KeyboardInterrupt else "FAILED"

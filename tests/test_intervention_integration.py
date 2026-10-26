@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from latentmas_reprop.application.intervention_use_case import InterventionUseCase
-from latentmas_reprop.domain.models import compute_sample_key
 from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage import (
@@ -109,8 +108,8 @@ def test_intervention_use_case_execute_all_conditions(tmp_path):
         assert conditions_found == {"own", "cross", "drop", "zero"}
 
         # Verify cross pairing logic: shift_1 pairs idx 0 with 1, and idx 1 with 0
-        key_0 = compute_sample_key("gsm8k", "test", samples[0]["question"])
-        key_1 = compute_sample_key("gsm8k", "test", samples[1]["question"])
+        key_0 = f"{0:06d}"
+        key_1 = f"{1:06d}"
 
         cross_0 = next(
             r for r in records if r.sample_index == 0 and r.condition == "cross"
@@ -127,12 +126,12 @@ def test_intervention_use_case_execute_all_conditions(tmp_path):
         assert cross_1.source_sample_key == key_0
 
         # Verify disk storage integrity
-        exp_dir = resolver.get_experiment_dir("integ_run_01")
+        exp_dir = resolver.get_experiment_dir(args.run_id)
         assert (exp_dir / "config.json").is_file()
 
         for s_idx, key in enumerate([key_0, key_1]):
             for cond in ["own", "cross", "drop", "zero"]:
-                cond_dir = resolver.get_condition_dir("integ_run_01", key, cond)
+                cond_dir = resolver.get_condition_dir(args.run_id, key, cond)
                 assert is_condition_complete(cond_dir)
                 data = load_json(cond_dir / "result.json")
                 assert data["sample_index"] == s_idx

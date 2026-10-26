@@ -208,7 +208,7 @@ def test_8_mlflow_run_finds_local_data_dir(tmp_path):
     reader = ResearchDataReader(mlflow_client=tracker.client, path_resolver=resolver)
     found_dir = reader.get_run_data_dir(run_id)
 
-    assert found_dir == resolver.get_experiment_dir(run_id)
+    assert found_dir == resolver.get_experiment_dir("exp_1")
     assert found_dir.is_dir()
     tracker.end_run()
 

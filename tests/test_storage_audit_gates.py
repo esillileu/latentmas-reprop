@@ -31,8 +31,8 @@ from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracke
 from tools.migrations.storage_v1_to_v2.migrate import StorageMigrator
 
 
-def test_distinct_run_ids_for_identical_config(tmp_path):
-    """Two new runs of same config get distinct run_ids and directories."""
+def test_identical_config_uses_same_directory(tmp_path):
+    """Two executions of same config point to identical directory, different configs differ."""
     resolver = PathResolver(tmp_path)
     cache = ExecutionCacheManager(resolver)
     use_case = BenchmarkUseCase(
@@ -42,9 +42,9 @@ def test_distinct_run_ids_for_identical_config(tmp_path):
     )
     args1 = SimpleNamespace(
         method="latent_mas",
-        model_name="Q/t",
+        model_name="Qwen/Qwen3-0.6B",
         task="gsm8k",
-        prompt="seq",
+        prompt="sequential",
         seed=42,
         latent_steps=10,
         max_samples=0,
@@ -61,9 +61,17 @@ def test_distinct_run_ids_for_identical_config(tmp_path):
     m1, _ = use_case.execute(model, args1)
     m2, _ = use_case.execute(model, args2)
 
-    assert m1.run_id != m2.run_id
-    assert resolver.get_experiment_dir(m1.run_id) != resolver.get_experiment_dir(
+    assert m1.run_id == m2.run_id
+    assert resolver.get_experiment_dir(m1.run_id) == resolver.get_experiment_dir(
         m2.run_id
+    )
+
+    args3 = SimpleNamespace(**vars(args1))
+    args3.temperature = 0.8
+    m3, _ = use_case.execute(model, args3)
+    assert m3.run_id != m1.run_id
+    assert resolver.get_experiment_dir(m3.run_id) != resolver.get_experiment_dir(
+        m1.run_id
     )
 
 
@@ -128,7 +136,7 @@ def test_acquisition_lazy_cache_build():
         SecretDigitSample(sample_id="s1", sample_index=1, sample_key="s1", digit=2),
     ]
     # Mark s0 complete on disk
-    c_dir = resolver.get_condition_dir("run_acq", "s0", "full_own")
+    c_dir = resolver.get_condition_dir("run_acq", 0, "full_own")
     save_condition_result(
         c_dir,
         {

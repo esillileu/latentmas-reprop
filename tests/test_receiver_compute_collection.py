@@ -217,8 +217,8 @@ def test_collection_builds_each_context_once_and_uses_other_sample(
     }
 
     assert "Qwen3" in tracker.run_options["run_name"]
-    assert "smoke" in tracker.run_options["run_name"]
-    assert "_u10-20_r2-4-free_seed" in tracker.run_options["run_name"]
+    assert "gsm8k" in tracker.run_options["run_name"]
+    assert "upstream10-20" in tracker.run_options["run_name"]
     if not persist_traces:
         assert len(tracker.roots) == 10  # two no-handoff, four matched, four mismatched
         assert len([s for s in tracker.spans if s[2] == "LLM"]) == 10

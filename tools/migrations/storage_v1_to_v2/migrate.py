@@ -102,20 +102,25 @@ class StorageMigrator:
     def _migrate_benchmark_samples(self, dest: Path) -> None:
         try:
             with open(dest, encoding="utf-8") as f:
-                for line in f:
+                for line_idx, line in enumerate(f):
                     if not line.strip():
                         continue
                     row = json.loads(line)
-                    skey = row.get("sample_key")
-                    if skey:
-                        sample_dir = dest.parent / "samples" / skey / "benchmark"
-                        sample_dir.mkdir(parents=True, exist_ok=True)
-                        res_file = sample_dir / "result.json"
-                        if not res_file.exists():
-                            tmp_file = res_file.with_suffix(".tmp")
-                            with open(tmp_file, "w", encoding="utf-8") as out_f:
-                                json.dump(row, out_f, indent=2)
-                            tmp_file.replace(res_file)
+                    if "sample_index" in row:
+                        skey = f"{int(row['sample_index']):06d}"
+                    elif "sample_key" in row:
+                        sk = str(row["sample_key"])
+                        skey = f"{int(sk):06d}" if sk.isdigit() else sk
+                    else:
+                        skey = f"{line_idx:06d}"
+                    sample_dir = dest.parent / "samples" / skey / "benchmark"
+                    sample_dir.mkdir(parents=True, exist_ok=True)
+                    res_file = sample_dir / "result.json"
+                    if not res_file.exists():
+                        tmp_file = res_file.with_suffix(".tmp")
+                        with open(tmp_file, "w", encoding="utf-8") as out_f:
+                            json.dump(row, out_f, indent=2)
+                        tmp_file.replace(res_file)
         except Exception:
             pass
 
