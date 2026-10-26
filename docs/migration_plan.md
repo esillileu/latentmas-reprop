@@ -96,8 +96,8 @@ flowchart TD
 ### Step 8: 마이그레이션 실패 시 원상 복구 계획 (Rollback Procedure)
 - In the event of any validation failure or schema incompatibility:
   1. Restore original `.cache/mlflow.db` from `${BACKUP_DIR}/mlflow.db.bak`.
-  2. Set `LATENTMAS_USE_LEGACY_MLFLOW_CACHE=1` to immediately route all tools back to `.cache/`.
-  3. Purge incomplete `storage/mlflow/` files.
+  2. Purge incomplete `storage/mlflow/` files.
+  3. Revert git checkout or branch to pre-migration baseline commit.
   4. Document the exact mismatch in the post-mortem log.
 
 ### Step 9: 새 저장 정책 적용 및 운영 전환 (Cutover)

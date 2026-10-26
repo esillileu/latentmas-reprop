@@ -27,8 +27,8 @@ This repository is structured around **Hexagonal Architecture (Ports & Adapters)
 │  - Models: Agent, BenchmarkMetrics,  │   │ reprop/infrastructure)      │
 │            TensorEntry, Manifest ... │◄──┤  - Adapters implementing    │
 │  - Ports: ModelPort, DatasetPort,    │   │    Domain Ports             │
-│           EvaluatorPort, CachePort,  │   │  - TensorStore              │
-│           TrackingPort, TensorStorePort   │  - ResearchDataReader       │
+│           EvaluatorPort, CachePort,  │   │  - FileStorage              │
+│           TrackingPort               │   │  - ResearchDataReader       │
 │  - Services: LatentMAS, TextMAS,     │   │  - MLflowTracker            │
 │              Baseline, Prompts       │   │  - ExecutionCacheManager    │
 └──────────────────────────────────────┘   │  - ModelWrapper (HF / vLLM) │
