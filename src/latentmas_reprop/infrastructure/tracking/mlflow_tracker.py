@@ -111,15 +111,34 @@ class MLflowTracker(ExperimentTrackerPort):
                 else None
             )
         if active_id:
-            exp_dir = self.resolver.get_experiment_dir(active_id)
+            storage_run_id = (
+                run_tags.get("storage_run_id") or run_tags.get("run_id") or active_id
+            )
+            exp_dir = self.resolver.get_experiment_dir(storage_run_id)
+            tag_dict = {
+                "data_dir": str(exp_dir),
+                "storage_run_id": str(storage_run_id),
+            }
+            if str(storage_run_id) != str(active_id):
+                tag_dict["resumed_from_run_id"] = str(storage_run_id)
             with suppress(Exception):
-                mlflow.set_tags(
-                    {
-                        "data_dir": str(exp_dir),
-                        "storage_run_id": active_id,
-                    }
-                )
+                mlflow.set_tags(tag_dict)
         return self._active_run
+
+    def set_data_dir(
+        self, storage_run_id: str, data_dir: Path | str | None = None
+    ) -> None:
+        """Explicitly set or update the storage directory tags for the active run."""
+        path = (
+            Path(data_dir)
+            if data_dir
+            else self.resolver.get_experiment_dir(storage_run_id)
+        )
+        tag_dict = {"data_dir": str(path), "storage_run_id": str(storage_run_id)}
+        if self.active_run_id and str(storage_run_id) != str(self.active_run_id):
+            tag_dict["resumed_from_run_id"] = str(storage_run_id)
+        with suppress(Exception):
+            mlflow.set_tags(tag_dict)
 
     @property
     def client(self) -> Any:

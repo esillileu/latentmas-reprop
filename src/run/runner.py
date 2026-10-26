@@ -9,7 +9,6 @@ import torch
 
 from latentmas_reprop.application.benchmark import (
     BenchmarkRunStore,
-    build_run_id,
     sample_key_for,
 )
 from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
@@ -25,7 +24,6 @@ from latentmas_reprop.application.receiver_reasoning_use_case import (
 )
 from latentmas_reprop.infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from latentmas_reprop.infrastructure.datasets.registry import DatasetRegistry
-from latentmas_reprop.infrastructure.models.dtype import dtype_name, resolve_model_dtype
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
@@ -51,7 +49,10 @@ def auto_device(device: str | None = None) -> torch.device:
 def _reuse_completed_benchmark(
     args: Any, device: torch.device
 ) -> tuple[dict, list[dict]] | None:
-    """Return a finished benchmark without loading the model again."""
+    """Return a finished benchmark without loading the model again if explicitly resumed."""
+    explicit_run_id = getattr(args, "run_id", None)
+    if not explicit_run_id:
+        return None
     if any(
         getattr(args, name, False)
         for name in (
@@ -62,9 +63,7 @@ def _reuse_completed_benchmark(
         )
     ):
         return None
-    selected_dtype = resolve_model_dtype(device)
-    run_id = build_run_id(args, dtype_name(selected_dtype))
-    store = BenchmarkRunStore(DEFAULT_CACHE_MANAGER, run_id)
+    store = BenchmarkRunStore(DEFAULT_CACHE_MANAGER, explicit_run_id)
 
     dataset = list(DatasetRegistry().load(task=args.task, split=args.split))
     requested_max_samples = int(getattr(args, "max_samples", -1))
@@ -75,7 +74,7 @@ def _reuse_completed_benchmark(
         return None
 
     metrics, preds = store.load_finished(target)
-    print(f"Reusing completed run {run_id}")
+    print(f"Reusing completed run {explicit_run_id}")
     if getattr(args, "print_summary", False):
         print(json.dumps(metrics.to_dict(), ensure_ascii=False))
     return metrics.to_dict(), preds

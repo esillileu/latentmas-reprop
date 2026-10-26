@@ -89,22 +89,24 @@ class ReceiverAcquisitionUseCase:
             else [0] * len(samples)
         )
         git_hash = get_git_commit_hash()
+        run_id = getattr(args, "run_id", None)
         if self.tracker_port:
+            tags = {
+                "experiment_type": "receiver_acquisition",
+                "model": args.model_name,
+                "task": args.task,
+                "method": args.method,
+                "git_commit": git_hash,
+                "seed": str(args.seed),
+                "latent_steps": str(args.latent_steps),
+            }
+            if run_id:
+                tags["storage_run_id"] = run_id
             self.tracker_port.start_run(
                 experiment_name="latentmas_receiver_acquisition",
                 run_name=f"{args.model_name}_{args.task}_receiver_acquisition",
-                tags={
-                    "experiment_type": "receiver_acquisition",
-                    "model": args.model_name,
-                    "task": args.task,
-                    "method": args.method,
-                    "git_commit": git_hash,
-                    "seed": str(args.seed),
-                    "latent_steps": str(args.latent_steps),
-                },
+                tags=tags,
             )
-        safe_model = str(args.model_name).replace("/", "_").replace("\\", "_")
-        run_id = getattr(args, "run_id", None)
         if (
             not run_id
             and self.tracker_port
@@ -112,7 +114,10 @@ class ReceiverAcquisitionUseCase:
         ):
             run_id = self.tracker_port.active_run_id
         if not run_id:
-            run_id = f"acq_{safe_model}_ls{args.latent_steps}_s{args.seed}"
+            import uuid
+
+            run_id = uuid.uuid4().hex
+        args.run_id = run_id
 
         exp_dir = get_path_resolver().get_experiment_dir(run_id)
         verify_run_config(
@@ -123,8 +128,14 @@ class ReceiverAcquisitionUseCase:
                 "method": args.method,
                 "latent_steps": getattr(args, "latent_steps", 0),
                 "seed": args.seed,
+                "context_modes": sorted(modes),
+                "acquisition_conditions": sorted(conditions),
+                "cross_pairing_policy": CROSS_PAIRING_POLICY,
+                "sample_keys": [s.sample_id for s in samples],
             },
         )
+        if self.tracker_port:
+            self.tracker_port.set_data_dir(run_id, exp_dir)
 
         try:
             receiver_ids, receiver_mask, mapping = prepare_receiver_scoring(model)

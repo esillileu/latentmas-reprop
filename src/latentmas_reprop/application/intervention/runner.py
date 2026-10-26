@@ -93,6 +93,12 @@ def run_intervention_decoding(
     for i, item in enumerate(tqdm(dataset_iter, desc="Intervention decoding")):
         sample_id = f"sample_{i}"
         s_key = sample_keys[i]
+        cross_j = cross_indices[i] if "cross" in conditions and cross_indices else None
+        expected_cross_key = (
+            sample_keys[cross_j]
+            if cross_j is not None and cross_j < len(sample_keys)
+            else None
+        )
 
         # Check condition-level completion from storage/experiments/<run_id>/samples/<s_key>/<cond>
         completed_conditions: dict[str, SampleInterventionRecord] = {}
@@ -102,6 +108,13 @@ def run_intervention_decoding(
                 if is_condition_complete(cond_dir):
                     try:
                         d = load_json(cond_dir / "result.json")
+                        if d.get("sample_key") != s_key:
+                            continue
+                        if (
+                            cond == "cross"
+                            and d.get("source_sample_key") != expected_cross_key
+                        ):
+                            continue
                         fields = SampleInterventionRecord.__dataclass_fields__.keys()
                         rec = SampleInterventionRecord(
                             **{f: d[f] for f in fields if f in d}

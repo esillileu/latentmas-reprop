@@ -38,6 +38,8 @@ def start_benchmark_tracker(
         tags["latent_steps"] = str(args.latent_steps)
     if hasattr(args, "config_id") and args.config_id:
         tags["config_id"] = str(args.config_id)
+    if hasattr(args, "run_id") and args.run_id:
+        tags["storage_run_id"] = str(args.run_id)
 
     tracker_port.start_run(
         experiment_name=exp_name,

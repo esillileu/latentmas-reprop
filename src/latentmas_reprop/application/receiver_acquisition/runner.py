@@ -1,6 +1,7 @@
 """Execution runner for receiver acquisition experiments."""
 
 import contextlib
+import dataclasses
 from typing import Any
 
 import torch
@@ -58,15 +59,15 @@ def run_acquisition_loop(
     records: list[ReceiverAcquisitionRecord] = []
     hidden: dict[str, torch.Tensor] = {}
     resolver = get_path_resolver()
+    sender_bundles: dict[int, Any] = {}
 
-    bundles = [build_sender_cache(model, args, sample) for sample in samples]
-    context_runtime = sum(bundle.build_latency_sec for bundle in bundles)
+    def get_bundle(idx: int):
+        if idx not in sender_bundles:
+            sender_bundles[idx] = build_sender_cache(model, args, samples[idx])
+        return sender_bundles[idx]
 
     for index, target in enumerate(tqdm(samples, desc="Receiver evaluation")):
         cross = samples[cross_indices[index]] if cross_indices else None
-        target_bundle = bundles[index]
-        source_bundle = bundles[cross_indices[index]] if cross_indices else None
-        full_len = target_bundle.full_len
 
         # Check conditions
         pending_conditions = []
@@ -79,9 +80,7 @@ def run_acquisition_loop(
                 else args.context_modes
             )
             for mode in modes:
-                cond_name = (
-                    f"{mode}_{condition}" if mode != "none" else str(condition)
-                )
+                cond_name = f"{mode}_{condition}" if mode != "none" else str(condition)
                 if run_id:
                     cond_dir = resolver.get_condition_dir(
                         run_id, target.sample_id, cond_name
@@ -89,16 +88,29 @@ def run_acquisition_loop(
                     if is_condition_complete(cond_dir):
                         try:
                             d = load_json(cond_dir / "result.json")
-                            fields = (
-                                ReceiverAcquisitionRecord.__dataclass_fields__.keys()
-                            )
-                            rec = ReceiverAcquisitionRecord(
-                                **{f: d[f] for f in fields if f in d}
-                            )
-                            records.append(rec)
+                            if d.get("sample_id") != target.sample_id:
+                                continue
                             if (
-                                rec.hidden_state_artifact_key
-                                and "hidden.pt" in d.get("files", [])
+                                condition == "cross"
+                                and cross is not None
+                                and d.get("source_sample_id") != cross.sample_id
+                            ):
+                                continue
+                            rec_kwargs = {
+                                f.name: d.get(
+                                    f.name,
+                                    (
+                                        f.default
+                                        if f.default is not dataclasses.MISSING
+                                        else None
+                                    ),
+                                )
+                                for f in dataclasses.fields(ReceiverAcquisitionRecord)
+                            }
+                            rec = ReceiverAcquisitionRecord(**rec_kwargs)
+                            records.append(rec)
+                            if rec.hidden_state_artifact_key and "hidden.pt" in d.get(
+                                "files", []
                             ):
                                 hidden[rec.hidden_state_artifact_key] = load_tensor(
                                     cond_dir / "hidden.pt"
@@ -111,6 +123,14 @@ def run_acquisition_loop(
 
         if not pending_conditions:
             continue
+
+        needs_target = any(c != "drop" for c, _, _ in pending_conditions)
+        needs_cross = any(c == "cross" for c, _, _ in pending_conditions)
+        target_bundle = get_bundle(index) if needs_target else None
+        source_bundle = (
+            get_bundle(cross_indices[index]) if needs_cross and cross_indices else None
+        )
+        full_len = target_bundle.full_len if target_bundle else 0
 
         trace_ctx = (
             tracker_port.start_sample_trace(
@@ -141,10 +161,10 @@ def run_acquisition_loop(
                         "sample_id": target.sample_id,
                         "digit": target.digit,
                         "latent_steps": args.latent_steps,
-                        **target_bundle.prompt_input,
+                        **(target_bundle.prompt_input if target_bundle else {}),
                     },
                 ) as span:
-                    if span is not None:
+                    if span is not None and target_bundle is not None:
                         span.set_outputs(
                             {
                                 "cache_present": True,
@@ -184,9 +204,7 @@ def run_acquisition_loop(
                     cond_dir = resolver.get_condition_dir(
                         run_id, target.sample_id, cond_name
                     )
-                    save_condition_result(
-                        cond_dir, record.to_dict(), tensors=tensors
-                    )
+                    save_condition_result(cond_dir, record.to_dict(), tensors=tensors)
 
             sample_records = [r for r in records if r.sample_index == index]
             if root is not None:
@@ -225,4 +243,5 @@ def run_acquisition_loop(
                         rationale="; ".join(errors) if errors else None,
                     )
 
+    context_runtime = sum(b.build_latency_sec for b in sender_bundles.values())
     return records, hidden, context_runtime

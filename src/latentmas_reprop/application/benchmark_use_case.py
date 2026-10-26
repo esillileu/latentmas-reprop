@@ -1,4 +1,5 @@
 import time
+import uuid
 from typing import Any
 
 import torch
@@ -17,6 +18,8 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
+from ..infrastructure.paths import PathResolver, get_path_resolver
+from ..infrastructure.storage import verify_run_config
 from .benchmark import (
     BenchmarkRunStore,
     build_metrics,
@@ -135,9 +138,32 @@ class BenchmarkUseCase:
 
         dtype_name = str(getattr(model, "dtype_name", ""))
         requested_max_samples = int(args.max_samples)
-        run_id = build_run_id(args, dtype_name)
-        args.config_id = run_id
-        store = BenchmarkRunStore(self.cache_port, run_id)
+        config_id = build_run_id(args, dtype_name)
+        args.config_id = config_id
+
+        explicit_run_id = getattr(args, "run_id", None)
+        if explicit_run_id:
+            run_id = explicit_run_id
+        else:
+            active_id = self.tracker_port.active_run_id if self.tracker_port else None
+            run_id = active_id or uuid.uuid4().hex
+            args.run_id = run_id
+
+        resolver = (
+            self.cache_port.resolver
+            if isinstance(getattr(self.cache_port, "resolver", None), PathResolver)
+            else get_path_resolver()
+        )
+        exp_dir = resolver.get_experiment_dir(run_id)
+        saved_cfg = config_snapshot(args)
+        saved_cfg["requested_max_samples"] = requested_max_samples
+        saved_cfg["dtype"] = dtype_name
+        saved_cfg["backend"] = (
+            "vllm" if getattr(args, "use_vllm", False) else "transformers"
+        )
+        verify_run_config(exp_dir, saved_cfg)
+
+        store = BenchmarkRunStore(self.cache_port, run_id, path_resolver=resolver)
         start_benchmark_tracker(self.tracker_port, args)
 
         dataset = list(self.dataset_port.load(task=args.task, split=args.split))
@@ -145,7 +171,7 @@ class BenchmarkUseCase:
         target = min(target, len(dataset))
 
         required_keys = [sample_key_for(args, item) for item in dataset[:target]]
-        if store.has_keys(required_keys):
+        if explicit_run_id and store.has_keys(required_keys):
             print(f"Reusing completed run {run_id}")
             metrics, predictions = store.load_finished(target)
             save_benchmark_artifacts(
@@ -209,6 +235,10 @@ class BenchmarkUseCase:
             saved_config = config_snapshot(args)
             saved_config["requested_max_samples"] = requested_max_samples
             saved_config["resolved_max_samples"] = target
+            saved_config["dtype"] = dtype_name
+            saved_config["backend"] = (
+                "vllm" if getattr(args, "use_vllm", False) else "transformers"
+            )
             metrics = build_metrics(
                 args,
                 predictions,
