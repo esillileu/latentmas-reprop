@@ -59,7 +59,9 @@ def observe(
     return asdict(record)
 
 
-def collect_trajectory(model, samples, receiver, records_path, tracker_port=None):
+def collect_trajectory(
+    model, samples, receiver, records_path, tracker_port=None, append: bool = False
+):
     """Build one full20 cache per sample; evaluate own k=1..20 and one drop."""
     from json import dumps
 
@@ -69,7 +71,7 @@ def collect_trajectory(model, samples, receiver, records_path, tracker_port=None
     with (
         records_path.open("w", encoding="utf-8") as stream,
         records_path.with_name("sender_contexts.jsonl").open(
-            "w", encoding="utf-8"
+            "a" if append else "w", encoding="utf-8"
         ) as contexts,
         torch.inference_mode(),
     ):

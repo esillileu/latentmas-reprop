@@ -167,27 +167,35 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
         with contextlib.suppress(Exception):
             summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
 
-    if not summary_data:
-        correct = sum(1 for r in records if r.get("correct", False))
-        acc = correct / max(1, len(records))
-        summary_data = {
-            "status": "complete",
-            "sample_count": len(records),
-            "requested_trajectories": target_count,
-            "reused_trajectories": len(records),
-            "fresh_trajectories": 0,
-            "failed_trajectories": 0,
-            "metrics": {
-                "accuracy": acc,
-                "correct": correct,
-                "total": len(records),
-                "max_samples": len(records),
-            },
-        }
-        with contextlib.suppress(Exception):
-            summary_path.write_text(
-                json.dumps(summary_data, indent=2) + "\n", encoding="utf-8"
+    s_count = summary_data.get("sample_count") or summary_data.get("metrics", {}).get("total")
+    if not summary_data or s_count != target_count:
+        if getattr(args, "receiver_reasoning", False):
+            from latentmas_reprop.application.receiver_reasoning.metrics import (
+                summarize_receiver_records,
             )
+
+            steps = getattr(args, "upstream_steps", [20])
+            agg = summarize_receiver_records(records, steps)
+            summary_data = agg | {"sample_count": target_count, "config": summary_data.get("config", {})}
+        else:
+            correct = sum(1 for r in records if r.get("correct", False))
+            acc = correct / max(1, len(records))
+            metrics_dict = dict(summary_data.get("metrics", {}))
+            metrics_dict.update({
+                "accuracy": acc, "correct": correct, "total": len(records), "max_samples": len(records),
+                "sample_count": len(records),
+                "requested_trajectories": target_count, "reused_trajectories": len(records),
+                "fresh_trajectories": 0, "failed_trajectories": 0,
+            })
+            summary_data = {
+                "status": "complete", "sample_count": len(records),
+                "requested_trajectories": target_count, "reused_trajectories": len(records),
+                "fresh_trajectories": 0, "failed_trajectories": 0,
+                "metrics": metrics_dict, "config": summary_data.get("config", {}),
+            }
+        if not summary_path.is_file():
+            with contextlib.suppress(Exception):
+                summary_path.write_text(json.dumps(summary_data, indent=2) + "\n", encoding="utf-8")
 
     # Log to MLflow if tracking experiment is specified
     exp_name = getattr(args, "tracking_experiment_name", None)

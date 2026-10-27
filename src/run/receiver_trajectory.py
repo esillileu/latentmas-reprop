@@ -227,6 +227,8 @@ def main(argv=None):
                 )
             tracker.log_metrics({"parity_passed": 1})
             records = []
+            if getattr(args, "overwrite", False):
+                (directory / "sender_contexts.jsonl").unlink(missing_ok=True)
             for idx, sample in enumerate(selected):
                 cond_dir = paths.get_condition_dir(directory, idx, "trajectory")
                 if not getattr(args, "overwrite", False) and is_condition_complete(cond_dir):
@@ -235,7 +237,9 @@ def main(argv=None):
                     records.extend(cached_rows)
                     continue
                 s_file = directory / f"sample_{idx}.jsonl"
-                sample_rows = collect_trajectory(model, [sample], receiver, s_file, tracker)
+                sample_rows = collect_trajectory(
+                    model, [sample], receiver, s_file, tracker, append=True
+                )
                 save_condition_result(cond_dir, {"rows": sample_rows}, overwrite=True)
                 records.extend(sample_rows)
                 s_file.unlink(missing_ok=True)

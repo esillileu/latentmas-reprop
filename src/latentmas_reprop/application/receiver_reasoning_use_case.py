@@ -113,6 +113,11 @@ class ReceiverReasoningUseCase:
                         ).splitlines()
                         if line.strip()
                     ]
+                if summary.get("sample_count") != len(items):
+                    summary = summarize_receiver_records(records, steps) | {
+                        "config": config,
+                        "sample_count": len(items),
+                    }
                 print(f"Reusing completed receiver reasoning at {exp_relpath}")
                 return summary, records
 
