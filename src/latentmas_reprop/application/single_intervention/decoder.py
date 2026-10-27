@@ -3,6 +3,7 @@
 from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from ...domain.services.kv_cache import (
     clone_past_kv,
@@ -30,6 +31,8 @@ def decode_tokens_with_hiddens(
     max_new_tokens: int,
     temperature: float = 0.0,
     top_p: float = 1.0,
+    report_progress: bool = True,
+    desc: str = "Generating",
 ) -> tuple[list[int], list[torch.Tensor], str, bool]:
     """Autoregressive explicit decoding recording the hidden state predicting each token."""
     lm_head = get_lm_head(model)
@@ -38,39 +41,53 @@ def decode_tokens_with_hiddens(
     curr_hidden = initial_hidden
     kv = past_kv
 
-    for _ in range(max(1, max_new_tokens)):
-        hiddens.append(curr_hidden.detach().cpu())
-        logits = lm_head(curr_hidden)
-        if logits.dim() == 2:
-            logits = logits[-1]
-        if temperature > 0.0:
-            probs = torch.softmax(logits / temperature, dim=-1)
-            next_id = int(torch.multinomial(probs, num_samples=1).item())
-        else:
-            next_id = int(torch.argmax(logits, dim=-1).item())
+    progress = tqdm(
+        total=max_new_tokens,
+        desc=desc,
+        unit="token",
+        dynamic_ncols=True,
+        mininterval=0.5,
+        leave=False,
+        disable=not report_progress,
+    )
 
-        if next_id == tokenizer.eos_token_id:
-            return ids, hiddens[:-1], "stop", False
+    try:
+        for _ in range(max(1, max_new_tokens)):
+            hiddens.append(curr_hidden.detach().cpu())
+            logits = lm_head(curr_hidden)
+            if logits.dim() == 2:
+                logits = logits[-1]
+            if temperature > 0.0:
+                probs = torch.softmax(logits / temperature, dim=-1)
+                next_id = int(torch.multinomial(probs, num_samples=1).item())
+            else:
+                next_id = int(torch.argmax(logits, dim=-1).item())
 
-        ids.append(next_id)
-        if len(ids) >= max_new_tokens:
-            return ids, hiddens, "length", True
+            if next_id == tokenizer.eos_token_id:
+                return ids, hiddens[:-1], "stop", False
 
-        next_tensor = torch.tensor([[next_id]], device=device, dtype=torch.long)
-        past_len = get_past_kv_sequence_length(kv)
-        mask = torch.ones((1, past_len + 1), dtype=torch.long, device=device)
-        outputs = model(
-            input_ids=next_tensor,
-            attention_mask=mask,
-            past_key_values=kv,
-            use_cache=True,
-            output_hidden_states=True,
-            return_dict=True,
-        )
-        kv = outputs.past_key_values
-        curr_hidden = outputs.hidden_states[-1][0, -1, :]
+            ids.append(next_id)
+            progress.update(1)
+            if len(ids) >= max_new_tokens:
+                return ids, hiddens, "length", True
 
-    return ids, hiddens, "length", True
+            next_tensor = torch.tensor([[next_id]], device=device, dtype=torch.long)
+            past_len = get_past_kv_sequence_length(kv)
+            mask = torch.ones((1, past_len + 1), dtype=torch.long, device=device)
+            outputs = model(
+                input_ids=next_tensor,
+                attention_mask=mask,
+                past_key_values=kv,
+                use_cache=True,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            kv = outputs.past_key_values
+            curr_hidden = outputs.hidden_states[-1][0, -1, :]
+
+        return ids, hiddens, "length", True
+    finally:
+        progress.close()
 
 
 def run_explicit_generation(
@@ -78,11 +95,13 @@ def run_explicit_generation(
     kv: Any,
     start_hidden: torch.Tensor,
     args: Any,
+    desc: str = "Generating",
 ) -> tuple[list[int], list[torch.Tensor], str, bool, str]:
     """Run explicit generation loop and decode tokens to string."""
     max_new = int(getattr(args, "max_new_tokens", 256))
     temp = float(getattr(args, "temperature", 0.0))
     top_p = float(getattr(args, "top_p", 1.0))
+    report_progress = not bool(getattr(args, "no_progress", False))
     ids, hiddens, reason, exhausted = decode_tokens_with_hiddens(
         model.model,
         model.device,
@@ -92,6 +111,8 @@ def run_explicit_generation(
         max_new,
         temperature=temp,
         top_p=top_p,
+        report_progress=report_progress,
+        desc=desc,
     )
     text = model.tokenizer.decode(ids, skip_special_tokens=True).strip()
     return ids, hiddens, reason, exhausted, text

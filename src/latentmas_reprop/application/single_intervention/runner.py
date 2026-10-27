@@ -3,6 +3,7 @@
 from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from ...domain.services.kv_cache import (
     clone_past_kv,
@@ -49,7 +50,15 @@ class SingleInterventionRunner:
 
         latent_steps = int(getattr(self.args, "latent_steps", 10))
         latent_hiddens: list[torch.Tensor] = []
-        for _ in range(latent_steps):
+        show_prog = not bool(getattr(self.args, "no_progress", False))
+        latent_iter = tqdm(
+            range(latent_steps),
+            desc="Common latent steps",
+            unit="step",
+            leave=False,
+            disable=not show_prog,
+        )
+        for _ in latent_iter:
             latent_vec = self.model._apply_latent_realignment(
                 last_hidden, self.model.model
             )
@@ -94,7 +103,7 @@ class SingleInterventionRunner:
         """UC-02 condition ple: P_1 -> L -> E (no additional intervention input)."""
         kv = move_past_kv(clone_past_kv(kv_snapshot), self.model.device)
         ids, hiddens, reason, exh, text = run_explicit_generation(
-            self.model, kv, last_hidden, self.args
+            self.model, kv, last_hidden, self.args, desc="Decoding · PLE"
         )
         pred, ok, err = self.evaluator.evaluate(
             getattr(self.args, "task", "gsm8k"), text, item.get("gold", "")
@@ -134,7 +143,7 @@ class SingleInterventionRunner:
             self.model, kv_snapshot, c_ids, c_mask
         )
         ids, hiddens, reason, exh, text = run_explicit_generation(
-            self.model, kv, c_hidden[-1], self.args
+            self.model, kv, c_hidden[-1], self.args, desc="Decoding · PLCE"
         )
         pred, ok, err = self.evaluator.evaluate(
             getattr(self.args, "task", "gsm8k"), text, item.get("gold", "")
@@ -197,7 +206,7 @@ class SingleInterventionRunner:
             self.model, kv_snapshot, p2_ids, p2_mask
         )
         ids, hiddens, reason, exh, text = run_explicit_generation(
-            self.model, kv, p2_hidden[-1], self.args
+            self.model, kv, p2_hidden[-1], self.args, desc="Decoding · PLPE"
         )
         pred, ok, err = self.evaluator.evaluate(
             getattr(self.args, "task", "gsm8k"), text, item.get("gold", "")
