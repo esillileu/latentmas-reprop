@@ -1,98 +1,208 @@
 """Tests for latent intervention use case and tracking metrics."""
 
 import contextlib
-import types
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
+from latentmas_reprop.application.intervention.runner import (
+    run_intervention_decoding,
+)
 from latentmas_reprop.application.intervention_use_case import InterventionUseCase
-from latentmas_reprop.domain.models import (
-    InterventionMetrics,
-    SampleInterventionRecord,
+from latentmas_reprop.domain.models import InterventionMetrics
+from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
+from latentmas_reprop.infrastructure.paths.resolver import (
+    PathResolver,
+    get_path_resolver,
+)
+from latentmas_reprop.infrastructure.storage import (
+    is_condition_complete,
+    load_json,
 )
 
 
-def test_intervention_metrics_all_conditions():
-    metrics = InterventionMetrics(
-        accuracy_own=0.8,
-        accuracy_cross=0.6,
-        accuracy_drop=0.7,
-        accuracy_zero=0.5,
-        answer_change_rate_cross=0.3,
-        answer_change_rate_drop=0.4,
-        answer_change_rate_zero=0.5,
-        answer_change_rate_by_condition={"cross": 0.3, "drop": 0.4, "zero": 0.5},
-        accuracy_delta_own_cross=0.2,
-        accuracy_delta_own_drop=0.1,
-        accuracy_delta_own_zero=0.3,
-        n_samples=10,
-        n_own_correct=8,
-        n_cross_correct=6,
-        n_drop_correct=7,
-        n_zero_correct=5,
-        runtime_total=10.0,
-        runtime_per_sample=1.0,
-        runtime_own=2.5,
-        runtime_cross=2.5,
-        runtime_drop=2.5,
-        runtime_zero=2.5,
-    )
+def test_intervention_interrupt_resume_reuse_cpu(tmp_path, monkeypatch):
+    monkeypatch.setenv("LATENTMAS_STORAGE_DIR", str(tmp_path / "storage"))
+    resolver = get_path_resolver()
+    run_id = "cpu_interrupt_resume_run"
 
-    mlf = metrics.to_mlflow_metrics()
-    assert mlf["accuracy/own"] == 0.8
-    assert mlf["accuracy/cross"] == 0.6
-    assert mlf["accuracy/drop"] == 0.7
-    assert mlf["accuracy/zero"] == 0.5
-    assert mlf["answer_change_rate/cross"] == 0.3
-    assert mlf["answer_change_rate/drop"] == 0.4
-    assert mlf["answer_change_rate/zero"] == 0.5
+    model_mock = MagicMock(device=torch.device("cpu"))
+    method_mock = MagicMock()
+    call_count = 0
 
+    def mock_decode(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("Interrupted during decoding!")
+        return [
+            {
+                "text": f"ans_{call_count}",
+                "tokens": [f"ans_{call_count}"],
+                "error_msg": None,
+                "token_usage": {"completion_tokens": 2},
+            }
+        ]
 
-def test_sample_intervention_record_schema():
-    record = SampleInterventionRecord(
-        sample_id="sample_0",
-        source_sample_id="sample_1",
-        condition="cross",
-        question="What is 2+2?",
-        gold="4",
-        prediction="4",
-        raw_prediction="The answer is 4.",
-        correct=True,
-        model="test-model",
+    method_mock.decode_with_context.side_effect = mock_decode
+    args = MagicMock(
+        eval_batch_size=1,
         task="gsm8k",
-        latent_steps=4,
+        model_name="m",
+        split="test",
         seed=42,
-        sample_index=0,
-        sample_key="abc123",
-        source_sample_index=1,
-        source_sample_key="def456",
-        target_cache_seq_len=20,
-        source_cache_seq_len=22,
-        cache_seq_len_delta=2,
-        cache_present=True,
-        num_layers=16,
-        cache_dtype="torch.bfloat16",
-        latency=0.12,
-        generated_tokens=10,
+        latent_steps=0,
+    )
+    dataset_iter = [{"question": "q0", "gold": "4"}, {"question": "q1", "gold": "10"}]
+    sample_keys = ["key_0", "key_1"]
+    conditions = ["own", "cross"]
+    cross_indices = [1, 0]
+
+    decode_kwargs = {
+        "model": model_mock,
+        "method": method_mock,
+        "args": args,
+        "conditions": conditions,
+        "cross_indices": cross_indices,
+        "dataset_iter": dataset_iter,
+        "sample_keys": sample_keys,
+        "contexts": [None, None],
+        "traces_list": [[], []],
+        "context_build_latencies": [0.1, 0.1],
+        "context_seq_lens": [10, 10],
+        "cache_bytes_list": [100, 100],
+        "tracker_port": None,
+        "git_hash": "fake",
+        "run_id": run_id,
+    }
+
+    with pytest.raises(RuntimeError, match="Interrupted during decoding!"):
+        run_intervention_decoding(**decode_kwargs)
+
+    c0_own = resolver.get_condition_dir(run_id, "key_0", "own")
+    assert is_condition_complete(c0_own)
+    res_0 = load_json(c0_own / "result.json")
+    assert res_0["sample_key"] == "key_0"
+    assert res_0["condition"] == "own"
+
+    method_mock.decode_with_context.reset_mock()
+    method_mock.decode_with_context.side_effect = None
+    method_mock.decode_with_context.return_value = [
+        {
+            "text": "resumed_ans",
+            "tokens": ["resumed_ans"],
+            "error_msg": None,
+            "token_usage": {"completion_tokens": 2},
+        }
+    ]
+
+    records, _, _ = run_intervention_decoding(**decode_kwargs)
+    assert method_mock.decode_with_context.call_count == 3
+    assert len(records) == 4
+
+
+def test_intervention_use_case_execute_all_conditions(tmp_path):
+    resolver = PathResolver(tmp_path)
+    cache = ExecutionCacheManager(resolver)
+
+    class _Dataset:
+        def __init__(self, samples):
+            self._samples = samples
+
+        def load(self, task, split="test", **kwargs):
+            return list(self._samples)
+
+    samples = [
+        {"question": "What is 2 + 2?", "solution": "4", "gold": "4"},
+        {"question": "What is 3 + 3?", "solution": "6", "gold": "6"},
+    ]
+
+    dataset_port = _Dataset(samples)
+    evaluator_port = MagicMock()
+    evaluator_port.evaluate.return_value = True
+
+    tracker = MagicMock()
+    tracker.active_run_id = None
+
+    uc = InterventionUseCase(
+        cache_port=cache,
+        tracker_port=tracker,
+        dataset_port=dataset_port,
+        evaluator_port=evaluator_port,
     )
 
-    d = record.to_dict()
-    assert d["sample_key"] == "abc123"
-    assert d["source_sample_key"] == "def456"
-    assert d["target_cache_seq_len"] == 20
-    assert d["source_cache_seq_len"] == 22
-    assert d["cache_seq_len_delta"] == 2
-    assert d["num_layers"] == 16
-    assert d["condition"] == "cross"
-    assert d["correct"] is True
+    args = _default_args(
+        latent_steps=5,
+        max_new_tokens=32,
+        temperature=0.6,
+        cross_pairing_policy="shift_1",
+        save_raw_cache=True,
+        run_id="integ_run_01",
+    )
+
+    model = MagicMock()
+    model.model_name = "test_model"
+    model.device = torch.device("cpu")
+    model.model = MagicMock()
+    model.model.dtype = "float32"
+
+    dummy_kv = ((torch.ones((1, 2, 4, 8)), torch.ones((1, 2, 4, 8))),)
+
+    with (
+        patch(
+            "latentmas_reprop.application.intervention_use_case.LatentMASMethod.build_latent_contexts",
+            return_value=(dummy_kv, [[{"trace": "planner"}]]),
+        ),
+        patch(
+            "latentmas_reprop.application.intervention_use_case.LatentMASMethod.decode_with_context",
+            return_value=[
+                {
+                    "prediction": "4",
+                    "raw_prediction": "The answer is 4",
+                    "error_msg": None,
+                    "generated_tokens": 5,
+                    "judger_trace": {"step": 1},
+                }
+            ],
+        ) as mock_decode,
+    ):
+        _metrics, records = uc.execute(model=model, args=args)
+        assert len(records) == 8
+        assert mock_decode.call_count == 8
+
+        mock_decode.reset_mock()
+        _metrics2, records2 = uc.execute(model=model, args=args)
+        assert len(records2) == 8
+        assert mock_decode.call_count == 0
+
+
+def _default_args(**kwargs):
+    defaults = {
+        "method": "latent_mas",
+        "task": "gsm8k",
+        "split": "test",
+        "max_samples": 2,
+        "latent_steps": 4,
+        "max_new_tokens": 256,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "seed": 42,
+        "model_name": "test-model",
+        "tracking_experiment_name": "test_exp",
+        "prompt": "sequential",
+        "use_vllm": False,
+        "save_raw_cache": False,
+        "cross_policy": "shift_1",
+        "intervention_conditions": "own,cross,drop,zero",
+    }
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
 
 
 def test_mlflow_run_created_before_execution():
-    """Tracker.start_run must be called before decode_with_context is called."""
     call_order: list[str] = []
-
     tracker = MagicMock()
     tracker.start_run.side_effect = lambda **_kw: call_order.append("start_run")
     tracker.log_params.return_value = None
@@ -102,36 +212,16 @@ def test_mlflow_run_created_before_execution():
     tracker.start_sample_trace.return_value.__exit__ = lambda s, *a: False
 
     uc = InterventionUseCase(tracker_port=tracker)
-
-    dataset_mock = MagicMock()
-    dataset_mock.load.return_value = [
-        {"question": "q0", "gold": "1"},
-        {"question": "q1", "gold": "2"},
-    ]
-
-    args = types.SimpleNamespace(
-        method="latent_mas",
-        task="gsm8k",
-        split="test",
-        max_samples=2,
-        latent_steps=4,
-        max_new_tokens=256,
-        temperature=0.7,
-        top_p=0.95,
-        seed=42,
-        model_name="test-model",
-        tracking_experiment_name="test_exp",
-        prompt="sequential",
-        use_vllm=False,
-        save_raw_cache=False,
-        cross_policy="shift_1",
-        intervention_conditions="own,cross,drop,zero",
+    dataset_mock = MagicMock(
+        load=lambda **kw: [
+            {"question": "q0", "gold": "1"},
+            {"question": "q1", "gold": "2"},
+        ]
     )
-
-    model_mock = MagicMock()
-    model_mock.device = torch.device("cpu")
-    model_mock.model = MagicMock()
-    model_mock.model.dtype = "bfloat16"
+    args = _default_args()
+    model_mock = MagicMock(
+        device=torch.device("cpu"), model=MagicMock(dtype="bfloat16")
+    )
 
     def fake_run_experiment(**_kw):
         call_order.append("run_experiment")
@@ -144,49 +234,19 @@ def test_mlflow_run_created_before_execution():
     ):
         uc.execute(model=model_mock, args=args)
 
-    assert "start_run" in call_order
-    sr_idx = call_order.index("start_run")
-    re_idx = call_order.index("run_experiment")
-    assert sr_idx < re_idx, "start_run must be called before run_experiment"
+    assert call_order.index("start_run") < call_order.index("run_experiment")
 
 
 def test_failed_experiment_calls_end_run_failed():
-    """If _run_experiment raises, end_run('FAILED') must be called."""
-    tracker = MagicMock()
-    tracker.start_run.return_value = None
-    tracker.log_params.return_value = None
-
+    tracker = MagicMock(start_run=lambda *a, **kw: None, log_params=lambda *a, **kw: None)
     uc = InterventionUseCase(tracker_port=tracker)
-
-    dataset_mock = MagicMock()
-    dataset_mock.load.return_value = [
-        {"question": "q0", "gold": "1"},
-        {"question": "q1", "gold": "2"},
-    ]
-
-    args = types.SimpleNamespace(
-        method="latent_mas",
-        task="gsm8k",
-        split="test",
-        max_samples=2,
-        latent_steps=4,
-        max_new_tokens=256,
-        temperature=0.7,
-        top_p=0.95,
-        seed=42,
-        model_name="test-model",
-        tracking_experiment_name="test_exp",
-        prompt="sequential",
-        use_vllm=False,
-        save_raw_cache=False,
-        cross_policy="shift_1",
-        intervention_conditions="own,cross,drop,zero",
+    dataset_mock = MagicMock(
+        load=lambda **kw: [{"question": "q0", "gold": "1"}, {"question": "q1", "gold": "2"}]
     )
-
-    model_mock = MagicMock()
-    model_mock.device = torch.device("cpu")
-    model_mock.model = MagicMock()
-    model_mock.model.dtype = "bfloat16"
+    args = _default_args()
+    model_mock = MagicMock(
+        device=torch.device("cpu"), model=MagicMock(dtype="bfloat16")
+    )
 
     def boom(**_kw):
         raise RuntimeError("Simulated OOM")
@@ -202,32 +262,24 @@ def test_failed_experiment_calls_end_run_failed():
 
 
 def test_intervention_context_builder_saves_shared_kv(tmp_path):
-    """Test that build_intervention_contexts saves shared kv to experiment directory."""
     from latentmas_reprop.application.intervention.context_builder import (
         build_intervention_contexts,
     )
-    from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
-    from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 
     resolver = PathResolver(tmp_path)
     cache = ExecutionCacheManager(resolver)
-
-    method_mock = MagicMock()
-    # Dummy past_kv (tuple of tensors)
-    method_mock.build_latent_contexts.return_value = (
-        ((torch.zeros((1, 2, 4, 8)), torch.zeros((1, 2, 4, 8))),),
-        [[{"trace": "dummy"}]],
+    method_mock = MagicMock(
+        latent_steps=5,
+        model=MagicMock(model_name="test_model"),
+        build_latent_contexts=lambda *a, **k: (
+            ((torch.zeros((1, 2, 4, 8)), torch.zeros((1, 2, 4, 8))),),
+            [[{"trace": "d"}]],
+        ),
     )
-    method_mock.model = MagicMock()
-    method_mock.model.model_name = "test_model"
-    method_mock.latent_steps = 5
-
-    item = {"question": "What is 2 + 2?"}
     run_id = "test_intervention_run"
-
     build_intervention_contexts(
         method=method_mock,
-        dataset_iter=[item],
+        dataset_iter=[{"question": "2+2?"}],
         task="gsm8k",
         seed=42,
         save_raw_cache=False,
@@ -235,7 +287,6 @@ def test_intervention_context_builder_saves_shared_kv(tmp_path):
         split="test",
         run_id=run_id,
     )
-
     shared_dir = resolver.get_condition_dir(run_id, 0, "shared")
     assert (shared_dir / "kv.pt").is_file()
     assert (shared_dir / "result.json").is_file()

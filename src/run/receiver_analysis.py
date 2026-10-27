@@ -1,6 +1,7 @@
 """Reanalyze saved Receiver MLflow artifacts without loading a model."""
 
 import argparse
+import contextlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -66,12 +67,20 @@ def main() -> None:
         raise ValueError("Expected one latentmas_receiver_acquisition experiment")
     if args.experiment_dir:
         for ed in args.experiment_dir:
-            edir_path = paths.get_experiment_dir(ed)
+            edir_path = paths.get_experiment_dir(ed, create=False)
             found = client.search_runs(
                 [experiments[0].experiment_id],
                 filter_string=f"tags.data_dir = '{edir_path.resolve()!s}'",
                 max_results=1,
             )
+            if not found:
+                with contextlib.suppress(ValueError):
+                    rel_dir = str(edir_path.relative_to(paths.experiments_dir))
+                    found = client.search_runs(
+                        [experiments[0].experiment_id],
+                        filter_string=f"tags.rel_dir = '{rel_dir}'",
+                        max_results=1,
+                    )
             if not found:
                 found = client.search_runs(
                     [experiments[0].experiment_id],
@@ -80,6 +89,10 @@ def main() -> None:
                 )
             for r in found:
                 args.canonical_run_id.append(r.info.run_id)
+        if not args.canonical_run_id:
+            raise FileNotFoundError(
+                f"No receiver acquisition runs found matching experiment directory: {args.experiment_dir}"
+            )
     candidates = []
     records_by_id = {}
     probes_by_id = {}

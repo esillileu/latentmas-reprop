@@ -1,6 +1,7 @@
 """Analysis-only entry point for saved sender latent states."""
 
 import argparse
+import contextlib
 import json
 import os
 import tempfile
@@ -100,7 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.experiment_dir:
             from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
 
-            edir = get_path_resolver().get_experiment_dir(args.experiment_dir)
+            paths = get_path_resolver()
+            edir = paths.get_experiment_dir(args.experiment_dir, create=False)
             st_path = edir / "probe" / "sender_latent_states.pt"
             if not st_path.is_file():
                 st_path = edir / "sender_latent_states.pt"
@@ -108,15 +110,26 @@ def main(argv: list[str] | None = None) -> int:
                 states_path = st_path
             else:
                 client = mlflow.MlflowClient()
-                runs = client.search_runs(
-                    [],
-                    filter_string=f"tags.rel_dir = '{args.experiment_dir}'",
-                    max_results=1,
-                )
+                rel_dir = None
+                with contextlib.suppress(ValueError):
+                    rel_dir = str(edir.relative_to(paths.experiments_dir))
+                runs = []
+                if rel_dir:
+                    runs = client.search_runs(
+                        [],
+                        filter_string=f"tags.rel_dir = '{rel_dir}'",
+                        max_results=1,
+                    )
                 if not runs:
                     runs = client.search_runs(
                         [],
                         filter_string=f"tags.data_dir = '{edir.resolve()}'",
+                        max_results=1,
+                    )
+                if not runs:
+                    runs = client.search_runs(
+                        [],
+                        filter_string=f"tags.rel_dir = '{args.experiment_dir}'",
                         max_results=1,
                     )
                 if runs:

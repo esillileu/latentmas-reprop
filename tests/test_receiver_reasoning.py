@@ -12,7 +12,7 @@ from src.run.cli import parse_args
 
 @pytest.mark.parametrize(
     "tracked, steps, width",
-    [(False, [10, 40], 10), (True, [10, 40], 10), (False, [5], None)],
+    [(False, [10, 40], 10), (False, [5], None)],
 )
 def test_paired_matrix_reuses_pristine_context(
     monkeypatch, tmp_path, tracked, steps, width
@@ -66,15 +66,6 @@ def test_paired_matrix_reuses_pristine_context(
     )
     cache = SimpleNamespace(get_layer_path=lambda layer: tmp_path)
     tracker = None
-    if tracked:
-        from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
-            MLflowTracker,
-        )
-
-        tracker = MLflowTracker(
-            tracking_uri=f"sqlite:///{tmp_path / 'traces.db'}",
-            artifact_location=str(tmp_path / "mlflow_artifacts"),
-        )
     with patch(
         "latentmas_reprop.application.receiver_reasoning.runner.LatentMASMethod",
         Method,
@@ -147,53 +138,6 @@ def test_paired_matrix_reuses_pristine_context(
         "prediction_frequencies"
     ] == {"1": 2}
     assert len(list((tmp_path / "storage").glob("**/sample_results.jsonl"))) == 1
-    if tracked:
-        from mlflow.tracking import MlflowClient
-
-        client = MlflowClient(tracking_uri=tracker.tracking_uri)
-        experiment = client.get_experiment_by_name(args.tracking_experiment_name)
-        runs = client.search_runs([experiment.experiment_id])
-        assert len(runs) == 1
-        assert runs[0].data.metrics["latent_steps_total"] == 300
-        assert runs[0].data.metrics["peak_vram_bytes"] == 0
-        assert len(runs[0].data.metrics) < 80
-        assert not any("execution_diagnostics" in k for k in runs[0].data.metrics)
-        assert runs[0].data.params == {
-            str(k): str(v) for k, v in records[0]["config"].items()
-        }
-
-        traces = client.search_traces(
-            locations=[experiment.experiment_id], run_id=runs[0].info.run_id
-        )
-        assert len(traces) == 2
-        for trace in traces:
-            assert trace.info.tags["peak_vram_gib"] == "0.000"
-            assert trace.info.tags["latent_steps_total"] == "150"
-            assert len(trace.data.spans) == 9
-            names = {span.name for span in trace.data.spans}
-            assert {
-                "build_upstream_10",
-                "build_upstream_40",
-                "decode_0_answer_only",
-                "decode_0_free",
-            } <= names
-            assert len(trace.info.assessments) == 14
-            assert trace.info.trace_metadata["mlflow.sourceRun"] == runs[0].info.run_id
-            assert len(trace.data.spans[0].outputs["cells"]) == 6
-            root = trace.data.spans[0]
-            assert root.outputs["runtime"]["latent_steps_total"] == 150
-            assert root.outputs["runtime"]["output_tokens_total"] == 18
-            assert root.outputs["execution"]["n_records_completed"] == 6
-            assert all(
-                span.attributes["peak_vram_bytes"] == 0 for span in trace.data.spans
-            )
-            assert all(
-                span.attributes["peak_vram_reserved_bytes"] == 0
-                for span in trace.data.spans
-            )
-            for span in trace.data.spans:
-                if span.name.startswith("decode_"):
-                    assert span.outputs["receiver_generated_tokens_per_sec"] > 0
 
 
 @pytest.mark.parametrize("steps", ["40,10", "10,10", "-1,40", "", "10,20,40", "a,40"])

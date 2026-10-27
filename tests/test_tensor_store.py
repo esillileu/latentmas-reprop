@@ -70,9 +70,10 @@ def test_6_atomic_save_failure_leaves_no_completion_file(tmp_path, monkeypatch):
     assert is_condition_complete(cond_dir) is False
 
 
-def test_8_mlflow_run_finds_local_data_dir(tmp_path):
+def test_8_mlflow_run_finds_local_data_dir(tmp_path, make_mlflow_db):
     """8. MLflow Run에서 해당 데이터 디렉터리를 찾아갈 수 있는가?"""
     resolver = PathResolver(tmp_path)
+    make_mlflow_db(resolver.mlflow_db_path)
     tracker = MLflowTracker(path_resolver=resolver)
 
     run = tracker.start_run("test_exp", run_name="exp_1")

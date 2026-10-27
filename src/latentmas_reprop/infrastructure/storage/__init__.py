@@ -1,5 +1,6 @@
 """Storage infrastructure adapters and implementations."""
 
+from .in_memory_storage import InMemoryStorage
 from .reader import ResearchDataReader
 from .tensor_store import (
     DEFAULT_FILE_STORAGE,
@@ -17,6 +18,7 @@ from .tensor_store import (
 __all__ = [
     "DEFAULT_FILE_STORAGE",
     "FileStorage",
+    "InMemoryStorage",
     "ResearchDataReader",
     "get_file_storage",
     "is_condition_complete",

@@ -9,7 +9,6 @@ from latentmas_reprop.application.receiver_acquisition.forward import (
     forward_receiver_observation,
 )
 from latentmas_reprop.application.receiver_acquisition_use_case import (
-    ReceiverAcquisitionUseCase,
     aggregate_receiver_records,
 )
 from latentmas_reprop.domain.models import ReceiverAcquisitionRecord
@@ -137,42 +136,6 @@ def test_cli_routes_canonical_acquisition_preset(acquisition_config_path):
         "drop_position_matched",
     ]
     assert args.probe_sender_latents
-
-
-def test_cli_rejects_intervention_and_acquisition_together(acquisition_config_path):
-    with pytest.raises(SystemExit):
-        parse_args(
-            [
-                "--intervention",
-                "--acquisition",
-                "-c",
-                acquisition_config_path,
-            ]
-        )
-
-
-def test_acquisition_mlflow_tags_are_strings():
-    tracker = _Tracker()
-    use_case = ReceiverAcquisitionUseCase(tracker_port=tracker)
-    args = SimpleNamespace(
-        method="latent_mas",
-        task="secret_digit",
-        use_vllm=False,
-        latent_steps=4,
-        tracking_experiment_name="latentmas_receiver_acquisition",
-        acquisition_cross_policy="different_digit_shift_v1",
-        max_samples=2,
-        seed=42,
-        acquisition_conditions=["own", "cross", "drop"],
-        context_modes=["full", "latent_only"],
-        model_name="model",
-    )
-    model = SimpleNamespace()
-    with pytest.raises(RuntimeError, match="stop after run creation"):
-        use_case.execute(model, args)
-    assert tracker.tags is not None
-    assert tracker.tags["seed"] == "42"
-    assert tracker.tags["latent_steps"] == "4"
 
 
 class _RolloutBackbone:

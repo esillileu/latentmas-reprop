@@ -1,6 +1,7 @@
 """Validate and plot saved sender/receiver metrics only; never run inference."""
 
 import argparse
+import contextlib
 import csv
 import json
 import math
@@ -244,15 +245,18 @@ def main(argv=None):
 
     if args.experiment_dir:
         exp = client.get_experiment_by_name("latentmas_receiver_trajectory")
+        matched_any = False
         if exp:
             for ed in args.experiment_dir:
-                edir = str(paths.get_experiment_dir(ed).resolve())
-                runs = client.search_runs(
-                    [exp.experiment_id], filter_string=f"tags.data_dir = '{edir}'", max_results=10
-                ) or client.search_runs(
-                    [exp.experiment_id], filter_string=f"tags.rel_dir = '{ed}'", max_results=10
-                )
+                edir_path = paths.get_experiment_dir(ed, create=False)
+                edir = str(edir_path.resolve())
+                rel_dir = ed
+                with contextlib.suppress(ValueError):
+                    rel_dir = str(edir_path.relative_to(paths.experiments_dir))
+                filt = f"tags.data_dir = '{edir}' or tags.rel_dir = '{rel_dir}' or tags.rel_dir = '{ed}'"
+                runs = client.search_runs([exp.experiment_id], filter_string=filt, max_results=10)
                 for r in runs:
+                    matched_any = True
                     phase = r.data.tags.get("phase")
                     if phase == "sweep":
                         sweep_ids.append(r.info.run_id)
@@ -260,6 +264,8 @@ def main(argv=None):
                         probe_ids.append(r.info.run_id)
                     elif phase == "independent":
                         independent_ids.append(r.info.run_id)
+        if not matched_any:
+            raise FileNotFoundError(f"No trajectory runs found matching experiment directory: {args.experiment_dir}")
 
     probes, sweep, independent, provenance = load_inputs(
         client, probe_ids, sweep_ids, independent_ids

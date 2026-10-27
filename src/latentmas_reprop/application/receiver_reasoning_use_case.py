@@ -123,7 +123,7 @@ class ReceiverReasoningUseCase:
 
         tracker = self.tracker_port
         if tracker:
-            run_name = f"{exp_relpath}_n{len(items)}"
+            run_name = exp_relpath
             tags = {
                 "experiment_type": "receiver_reasoning",
                 "git_commit": config["git_commit"],

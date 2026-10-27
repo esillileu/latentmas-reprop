@@ -1,6 +1,7 @@
 """Analyze saved Latent Handoff Pilot MLflow artifacts without inference."""
 
 import argparse
+import contextlib
 from pathlib import Path
 
 from mlflow.tracking import MlflowClient
@@ -47,12 +48,21 @@ def main(argv=None):
         exp = client.get_experiment_by_name(args.experiment_name)
         if exp:
             for ed in args.experiment_dir:
-                edir = str(paths.get_experiment_dir(ed).resolve())
+                edir_path = paths.get_experiment_dir(ed, create=False)
+                edir = str(edir_path.resolve())
                 runs = client.search_runs(
                     [exp.experiment_id],
                     filter_string=f"tags.data_dir = '{edir}'",
                     max_results=1,
                 )
+                if not runs:
+                    with contextlib.suppress(ValueError):
+                        rel_dir = str(edir_path.relative_to(paths.experiments_dir))
+                        runs = client.search_runs(
+                            [exp.experiment_id],
+                            filter_string=f"tags.rel_dir = '{rel_dir}'",
+                            max_results=1,
+                        )
                 if not runs:
                     runs = client.search_runs(
                         [exp.experiment_id],
@@ -61,6 +71,10 @@ def main(argv=None):
                     )
                 for r in runs:
                     run_ids.append(r.info.run_id)
+        if not run_ids:
+            raise FileNotFoundError(
+                f"No runs found matching experiment directory: {args.experiment_dir}"
+            )
     elif args.version_tag:
         run_ids = select_runs(
             client,
