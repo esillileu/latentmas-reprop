@@ -1,6 +1,7 @@
 """Execution runner for receiver acquisition experiments."""
 
 import contextlib
+import dataclasses
 from typing import Any
 
 import torch
@@ -9,9 +10,25 @@ from tqdm import tqdm
 from ...domain.models import ReceiverAcquisitionRecord
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.models.model_wrapper import ModelWrapper
+from ...infrastructure.paths.resolver import get_path_resolver
+from ...infrastructure.storage import (
+    is_condition_complete,
+    load_json,
+    load_tensor,
+    save_condition_result,
+)
 from .forward import forward_receiver_observation
 from .sampling import SecretDigitSample, SenderCacheBundle
 from .sender import build_sender_cache
+
+
+def _resolve_acquisition_cond_name(
+    mode: str, condition: str, target_digit: int, source_digit: int | None = None
+) -> str:
+    base = f"{mode}_{condition}" if mode != "none" else str(condition)
+    if condition == "cross" and source_digit is not None:
+        return f"{base}_d{target_digit}_src{source_digit}"
+    return f"{base}_d{target_digit}"
 
 
 def _resolve_condition_cache(
@@ -45,18 +62,101 @@ def run_acquisition_loop(
     receiver_mask: torch.Tensor,
     mapping: dict[str, Any],
     tracker_port: ExperimentTrackerPort | None,
+    run_id: str | None = None,
 ) -> tuple[list[ReceiverAcquisitionRecord], dict[str, Any], float]:
     """Execute sender caching and receiver evaluation loop across all samples and conditions."""
     records: list[ReceiverAcquisitionRecord] = []
     hidden: dict[str, torch.Tensor] = {}
-    bundles = [build_sender_cache(model, args, sample) for sample in samples]
-    context_runtime = sum(bundle.build_latency_sec for bundle in bundles)
+    resolver = get_path_resolver()
+    sender_bundles: dict[int, Any] = {}
+
+    def get_bundle(idx: int):
+        if idx not in sender_bundles:
+            sender_bundles[idx] = build_sender_cache(model, args, samples[idx])
+        return sender_bundles[idx]
 
     for index, target in enumerate(tqdm(samples, desc="Receiver evaluation")):
         cross = samples[cross_indices[index]] if cross_indices else None
-        target_bundle = bundles[index]
-        source_bundle = bundles[cross_indices[index]] if cross_indices else None
-        full_len = target_bundle.full_len
+
+        # Check conditions
+        pending_conditions = []
+        for condition in args.acquisition_conditions:
+            if condition == "cross" and cross is None:
+                continue
+            modes = (
+                ["none"]
+                if condition in {"drop", "drop_position_matched"}
+                else args.context_modes
+            )
+            for mode in modes:
+                base_name = f"{mode}_{condition}" if mode != "none" else str(condition)
+                cond_name = _resolve_acquisition_cond_name(
+                    mode, condition, target.digit, cross.digit if cross is not None else None
+                )
+                if run_id and not getattr(args, "overwrite", False):
+                    cond_dir = resolver.get_condition_dir(run_id, index, cond_name)
+                    fallback_dir = resolver.get_condition_dir(run_id, index, base_name)
+                    target_dir = (
+                        cond_dir
+                        if is_condition_complete(cond_dir)
+                        else (
+                            fallback_dir
+                            if is_condition_complete(fallback_dir)
+                            else None
+                        )
+                    )
+                    if target_dir:
+                        try:
+                            d = load_json(target_dir / "result.json")
+                            if d.get("target_digit") not in (None, target.digit):
+                                target_dir = None
+                            if (
+                                condition == "cross"
+                                and cross is not None
+                                and d.get("source_digit") not in (None, cross.digit)
+                            ):
+                                target_dir = None
+                        except Exception:
+                            target_dir = None
+
+                    if target_dir:
+                        try:
+                            d = load_json(target_dir / "result.json")
+                            rec_kwargs = {
+                                f.name: d.get(
+                                    f.name,
+                                    (
+                                        f.default
+                                        if f.default is not dataclasses.MISSING
+                                        else None
+                                    ),
+                                )
+                                for f in dataclasses.fields(ReceiverAcquisitionRecord)
+                            }
+                            rec = ReceiverAcquisitionRecord(**rec_kwargs)
+                            records.append(rec)
+                            if rec.hidden_state_artifact_key and "hidden.pt" in d.get(
+                                "files", []
+                            ):
+                                hidden[rec.hidden_state_artifact_key] = load_tensor(
+                                    target_dir / "hidden.pt"
+                                )
+                            continue
+                        except Exception:
+                            pass
+
+                pending_conditions.append((condition, mode, cond_name))
+
+        if not pending_conditions:
+            continue
+
+        needs_target = any(c != "drop" for c, _, _ in pending_conditions)
+        needs_cross = any(c == "cross" for c, _, _ in pending_conditions)
+        target_bundle = get_bundle(index) if needs_target else None
+        source_bundle = (
+            get_bundle(cross_indices[index]) if needs_cross and cross_indices else None
+        )
+        full_len = target_bundle.full_len if target_bundle else 0
 
         trace_ctx = (
             tracker_port.start_sample_trace(
@@ -87,10 +187,10 @@ def run_acquisition_loop(
                         "sample_id": target.sample_id,
                         "digit": target.digit,
                         "latent_steps": args.latent_steps,
-                        **target_bundle.prompt_input,
+                        **(target_bundle.prompt_input if target_bundle else {}),
                     },
                 ) as span:
-                    if span is not None:
+                    if span is not None and target_bundle is not None:
                         span.set_outputs(
                             {
                                 "cache_present": True,
@@ -99,38 +199,41 @@ def run_acquisition_loop(
                             }
                         )
 
-            for condition in args.acquisition_conditions:
-                if condition == "cross" and cross is None:
-                    continue
+            for condition, mode, cond_name in pending_conditions:
                 source = cross if condition == "cross" else target
-                modes = (
-                    ["none"]
-                    if condition in {"drop", "drop_position_matched"}
-                    else args.context_modes
+                cache = _resolve_condition_cache(
+                    mode, condition, target_bundle, source_bundle
                 )
-                for mode in modes:
-                    cache = _resolve_condition_cache(
-                        mode, condition, target_bundle, source_bundle
+                record, state_hidden = forward_receiver_observation(
+                    model=model,
+                    args=args,
+                    target=target,
+                    source=source,
+                    mode=mode,
+                    condition=condition,
+                    cache=cache,
+                    receiver_ids=receiver_ids,
+                    receiver_mask=receiver_mask,
+                    mapping=mapping,
+                    original_full_seq_len=full_len,
+                    tracker_port=tracker_port,
+                )
+                records.append(record)
+
+                tensors = None
+                if record.hidden_state_artifact_key and state_hidden is not None:
+                    st_hidden = torch.stack([t.cpu() for t in state_hidden])
+                    hidden[record.hidden_state_artifact_key] = st_hidden
+                    tensors = {"hidden": st_hidden}
+
+                if run_id:
+                    cond_dir = resolver.get_condition_dir(run_id, index, cond_name)
+                    save_condition_result(
+                        cond_dir,
+                        record.to_dict(),
+                        tensors=tensors,
+                        overwrite=True,
                     )
-                    record, state_hidden = forward_receiver_observation(
-                        model=model,
-                        args=args,
-                        target=target,
-                        source=source,
-                        mode=mode,
-                        condition=condition,
-                        cache=cache,
-                        receiver_ids=receiver_ids,
-                        receiver_mask=receiver_mask,
-                        mapping=mapping,
-                        original_full_seq_len=full_len,
-                        tracker_port=tracker_port,
-                    )
-                    records.append(record)
-                    if record.hidden_state_artifact_key and state_hidden is not None:
-                        hidden[record.hidden_state_artifact_key] = torch.stack(
-                            [t.cpu() for t in state_hidden]
-                        )
 
             sample_records = [r for r in records if r.sample_index == index]
             if root is not None:
@@ -169,4 +272,5 @@ def run_acquisition_loop(
                         rationale="; ".join(errors) if errors else None,
                     )
 
+    context_runtime = sum(b.build_latency_sec for b in sender_bundles.values())
     return records, hidden, context_runtime

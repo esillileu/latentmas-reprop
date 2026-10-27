@@ -44,3 +44,36 @@ def test_cache_manager_torch_io():
 
     # Cleanup
     saved_path.unlink(missing_ok=True)
+
+
+def test_clean_volatile_cache(tmp_path):
+    from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
+    from latentmas_reprop.infrastructure.paths.resolver import PathResolver
+
+    resolver = PathResolver(tmp_path)
+    manager = ExecutionCacheManager(resolver)
+
+    # Persistent files must be preserved
+    persistent_db = resolver.mlflow_db_path
+    persistent_db.parent.mkdir(parents=True, exist_ok=True)
+    persistent_db.write_text("dummy db")
+
+    tensor_file = resolver.experiments_dir / "test_run" / "kv.pt"
+    tensor_file.parent.mkdir(parents=True, exist_ok=True)
+    tensor_file.write_text("dummy tensor")
+
+    exp_file = resolver.experiments_dir / "test_run" / "config.json"
+    exp_file.parent.mkdir(parents=True, exist_ok=True)
+    exp_file.write_text('{"run_id": "test_run"}')
+
+    # Volatile cache files must be cleaned
+    runtime_file = manager.get_layer_path(CacheLayer.RUNTIME) / "scratch.json"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("scratch")
+
+    cleaned = manager.clean_volatile_cache()
+    assert not runtime_file.exists()
+    assert persistent_db.is_file()
+    assert tensor_file.is_file()
+    assert exp_file.is_file()
+    assert isinstance(cleaned, list)

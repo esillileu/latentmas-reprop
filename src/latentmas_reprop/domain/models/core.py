@@ -133,6 +133,10 @@ class BenchmarkMetrics:
     prompt: str = ""
     latent_steps: int = 0
     run_id: str = ""
+    requested_trajectories: int = 0
+    reused_trajectories: int = 0
+    fresh_trajectories: int = 0
+    failed_trajectories: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

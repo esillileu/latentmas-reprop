@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,38 @@ class ExecutionCacheManager(CachePort):
     ) -> Any:
         path = self._get_file_path(layer, filename)
         return torch.load(path, map_location=map_location)
+
+    def clean_volatile_cache(
+        self,
+        include_resumable_runs: bool = False,
+        purge_incomplete_runs: bool = False,
+    ) -> list[Path]:
+        """Safely clean volatile execution caches without touching MLflow or storage.
+
+        Wipes volatile scratch and reconstruction directories in .cache/ (runtime scratch,
+        realigned weights, etc.) while ensuring protected directories (storage/,
+        data/, artifacts/, configs/) are never affected.
+        """
+        cleaned = []
+        volatile_layers = [
+            CacheLayer.MODELS_REALIGN,
+            CacheLayer.EVALUATION_RUNS,
+            CacheLayer.EVALUATION_INTERVENTIONS,
+            CacheLayer.EVALUATION_RECEIVER_ACQUISITION,
+            CacheLayer.LATENT_RECEIVER_ACQUISITION,
+            CacheLayer.RUNTIME,
+        ]
+        for layer in volatile_layers:
+            layer_dir = self.get_layer_path(layer)
+            if layer_dir.exists() and self._resolver.is_safe_cache_path(layer_dir):
+                for item in list(layer_dir.iterdir()):
+                    if item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                    else:
+                        item.unlink(missing_ok=True)
+                    cleaned.append(item)
+
+        return cleaned
 
 
 DEFAULT_CACHE_MANAGER = ExecutionCacheManager()

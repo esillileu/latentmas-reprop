@@ -14,6 +14,13 @@ from ...domain.services.kv_cache import (
 )
 from ...domain.services.latent_mas import LatentMASMethod
 from ...infrastructure.models.model_wrapper import ModelWrapper
+from ...infrastructure.paths.naming import is_overwrite_requested
+from ...infrastructure.paths.resolver import get_path_resolver
+from ...infrastructure.storage import (
+    is_condition_complete,
+    load_json,
+    save_condition_result,
+)
 from .artifacts import log_sample_assessments
 from .decoder import (
     build_sample_root_context,
@@ -71,6 +78,7 @@ def run_intervention_decoding(
     cache_bytes_list: list[int],
     tracker_port: ExperimentTrackerPort | None,
     git_hash: str,
+    run_id: str | None = None,
 ) -> tuple[
     list[SampleInterventionRecord], dict[str, list[float]], dict[str, list[int]]
 ]:
@@ -81,10 +89,62 @@ def run_intervention_decoding(
 
     num_layers = get_past_kv_num_layers(contexts[0]) if contexts else 0
     cache_dtype = get_past_kv_dtype(contexts[0]) if contexts else None
+    resolver = get_path_resolver()
 
     for i, item in enumerate(tqdm(dataset_iter, desc="Intervention decoding")):
         sample_id = f"sample_{i}"
-        s_key = sample_keys[i]
+        s_key = sample_keys[i] if sample_keys and i < len(sample_keys) else f"{i:06d}"
+        cross_j = cross_indices[i] if "cross" in conditions and cross_indices else None
+        expected_cross_key = (
+            sample_keys[cross_j]
+            if cross_j is not None and sample_keys and cross_j < len(sample_keys)
+            else (f"{cross_j:06d}" if cross_j is not None else None)
+        )
+
+        # Check condition-level completion from storage/experiments/<run_id>/samples/<s_key>/<cond>
+        completed_conditions: dict[str, SampleInterventionRecord] = {}
+        overwrite = is_overwrite_requested(args)
+
+        if run_id and not overwrite:
+            for cond in conditions:
+                cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
+                src_dir = (
+                    resolver.get_condition_dir(run_id, s_key, f"cross_src_{cross_j}")
+                    if cond == "cross" and cross_j is not None
+                    else None
+                )
+                target_dir = None
+                if src_dir and is_condition_complete(src_dir):
+                    target_dir = src_dir
+                elif is_condition_complete(cond_dir):
+                    target_dir = cond_dir
+
+                if target_dir:
+                    try:
+                        d = load_json(target_dir / "result.json")
+                        if (
+                            cond == "cross"
+                            and expected_cross_key is not None
+                            and d.get("source_sample_key") != expected_cross_key
+                        ):
+                            continue
+                        fields = SampleInterventionRecord.__dataclass_fields__.keys()
+                        rec = SampleInterventionRecord(
+                            **{f: d[f] for f in fields if f in d}
+                        )
+                        completed_conditions[cond] = rec
+                    except Exception:
+                        pass
+
+        # If all conditions were already completed, skip sample evaluation entirely
+        if all(cond in completed_conditions for cond in conditions):
+            for cond in conditions:
+                rec = completed_conditions[cond]
+                sample_records.append(rec)
+                condition_latencies[cond].append(rec.latency or 0.0)
+                condition_tokens[cond].append(rec.generated_tokens or 0)
+            continue
+
         gold = str(item.get("gold", ""))
         question = item.get("question", "")
         cross_j = cross_indices[i] if "cross" in conditions else None
@@ -115,6 +175,20 @@ def run_intervention_decoding(
             for cond in conditions:
                 if cond not in VALID_CONDITIONS:
                     continue
+
+                if cond in completed_conditions:
+                    rec = completed_conditions[cond]
+                    sample_records.append(rec)
+                    sample_results[cond] = rec
+                    condition_latencies[cond].append(rec.latency or 0.0)
+                    condition_tokens[cond].append(rec.generated_tokens or 0)
+                    cond_preds[cond] = (
+                        rec.prediction,
+                        bool(rec.correct),
+                        rec.raw_prediction,
+                    )
+                    continue
+
                 sample_seed = args.seed + i
                 random.seed(sample_seed)
                 torch.manual_seed(sample_seed)
@@ -166,6 +240,13 @@ def run_intervention_decoding(
                 condition_latencies[cond].append(latency)
                 condition_tokens[cond].append(gen_tok)
                 cond_preds[cond] = c_pred
+
+                if run_id:
+                    cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
+                    save_condition_result(cond_dir, rec.to_dict(), overwrite=True)
+                    if cond == "cross" and cross_j is not None:
+                        src_dir = resolver.get_condition_dir(run_id, s_key, f"cross_src_{cross_j}")
+                        save_condition_result(src_dir, rec.to_dict(), overwrite=True)
 
             del own_context_gpu
             if torch.cuda.is_available():

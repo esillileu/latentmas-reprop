@@ -84,13 +84,13 @@ lint *args:
 format *args:
     uv run ruff format {{args}}
 
-# Clean execution cache
+# Clean volatile execution cache (safely preserving MLflow DB and persistent storage)
 clean-cache:
-    rm -rf .cache/
+    uv run python -c "from latentmas_reprop.infrastructure.cache.manager import get_cache_manager; get_cache_manager().clean_volatile_cache()"
 
-# Launch local MLflow UI pointing to SQLite backend
+# Launch local MLflow UI pointing to persistent SQLite backend
 mlflow-ui *args:
-    uv run mlflow ui --backend-store-uri sqlite:///.cache/mlflow.db --default-artifact-root .cache/mlflow_artifacts {{args}}
+    uv run mlflow ui --backend-store-uri sqlite:///storage/mlflow/mlflow.db --default-artifact-root storage/mlflow/mlflow_artifacts {{args}}
 
 run-receiver-compute-preflight *args:
     uv run python -m src.run --receiver_compute_preflight {{args}}

@@ -1,10 +1,18 @@
 """Collect sample/condition traces while reusing paired KV and baseline inference."""
 
+import contextlib
+
 from tqdm import tqdm
 from transformers import set_seed
 
 from ...domain.services.kv_cache import move_past_kv
 from ...domain.services.latent_mas import LatentMASMethod
+from ...infrastructure.paths.resolver import get_path_resolver
+from ...infrastructure.storage import (
+    is_condition_complete,
+    load_json,
+    save_condition_result,
+)
 from ..common.reporter import write_jsonl
 from ..receiver_reasoning.inference import build_upstream
 from .inference import length_matched_donors
@@ -164,89 +172,73 @@ def collect_samples(
         top_p=1.0,
         generate_bs=1,
     )
+    resolver = get_path_resolver()
+    exp_dir = records_path.parent
+    overwrite = getattr(args, "overwrite", False)
+
     for index, item in enumerate(tqdm(items, desc="No handoff · U=0", unit="sample")):
-        _, rows = collect_condition(
-            method,
-            args,
-            item,
-            index,
-            ids[index],
-            0,
-            "no_handoff",
-            config,
-            tracker,
-            evaluator,
-            runtime,
-            manifest,
-        )
-        for step in args.upstream_steps:
-            records.extend(
-                row | {"upstream_steps": step, "baseline_reused": True} for row in rows
+        cond_dir = resolver.get_condition_dir(exp_dir, index, "no_handoff")
+        rows = None
+        if not overwrite and is_condition_complete(cond_dir):
+            with contextlib.suppress(Exception):
+                res = load_json(cond_dir / "result.json")
+                rows = res.get("rows", [res])
+        if rows is None:
+            _, rows = collect_condition(
+                method, args, item, index, ids[index], 0, "no_handoff",
+                config, tracker, evaluator, runtime, manifest,
             )
+            save_condition_result(cond_dir, {"rows": rows}, overwrite=overwrite)
+        for step in args.upstream_steps:
+            records.extend(row | {"upstream_steps": step, "baseline_reused": True} for row in rows)
         write_jsonl(records_path, records)
     for step in args.upstream_steps:
         method = LatentMASMethod(
-            model,
-            latent_steps=step,
-            args=args,
-            evaluator=evaluator,
-            temperature=0.0,
-            top_p=1.0,
-            generate_bs=1,
+            model, latent_steps=step, args=args, evaluator=evaluator,
+            temperature=0.0, top_p=1.0, generate_bs=1,
         )
         donors = []
-        for index, item in enumerate(
-            tqdm(items, desc=f"Matched · U={step}", unit="sample")
-        ):
-            donor, rows = collect_condition(
-                method,
-                args,
-                item,
-                index,
-                ids[index],
-                step,
-                "matched",
-                config,
-                tracker,
-                evaluator,
-                runtime,
-                manifest,
-            )
+        for index, item in enumerate(tqdm(items, desc=f"Matched · U={step}", unit="sample")):
+            cond_dir = resolver.get_condition_dir(exp_dir, index, f"u{step}_matched")
+            rows, donor = None, None
+            if not overwrite and is_condition_complete(cond_dir):
+                with contextlib.suppress(Exception):
+                    res = load_json(cond_dir / "result.json")
+                    if res.get("donor_meta"):
+                        rows = res.get("rows", [res])
+                        donor = (ids[index], None, [], res["donor_meta"], None)
+            if rows is None or donor is None:
+                donor, rows = collect_condition(
+                    method, args, item, index, ids[index], step, "matched",
+                    config, tracker, evaluator, runtime, manifest,
+                )
+                save_condition_result(cond_dir, {"rows": rows, "donor_meta": donor[3]}, overwrite=overwrite)
             donors.append(donor)
             records.extend(rows)
-            # U-independent baseline inference and evaluations keep their original trace.
             for row in records:
-                if (
-                    row["sample_id"] == ids[index]
-                    and row["upstream_steps"] == step
-                    and row["handoff_condition"] == "no_handoff"
-                ):
-                    row.update(
-                        recipient_sequence_length=donor[3]["handoff_positions"],
-                        recipient_upstream_metadata=donor[3],
-                    )
+                if row["sample_id"] == ids[index] and row["upstream_steps"] == step and row["handoff_condition"] == "no_handoff":
+                    row.update(recipient_sequence_length=donor[3]["handoff_positions"], recipient_upstream_metadata=donor[3])
             write_jsonl(records_path, records)
-        sources = length_matched_donors(
-            [donor[3]["handoff_positions"] for donor in donors]
-        )
-        for index, item in enumerate(
-            tqdm(items, desc=f"Mismatched · U={step}", unit="sample")
-        ):
-            _, rows = collect_condition(
-                method,
-                args,
-                item,
-                index,
-                ids[index],
-                step,
-                "mismatched",
-                config,
-                tracker,
-                evaluator,
-                runtime,
-                manifest,
-                donor=donors[sources[index]],
-                recipient_meta=donors[index][3],
-            )
+        sources = length_matched_donors([donor[3]["handoff_positions"] for donor in donors])
+        for index, item in enumerate(tqdm(items, desc=f"Mismatched · U={step}", unit="sample")):
+            donor_idx = sources[index]
+            cond_dir = resolver.get_condition_dir(exp_dir, index, f"u{step}_mismatched_src{donor_idx}")
+            fb_dir = resolver.get_condition_dir(exp_dir, index, f"u{step}_mismatched")
+            rows = None
+            if not overwrite:
+                for d_cand in (cond_dir, fb_dir):
+                    if is_condition_complete(d_cand):
+                        with contextlib.suppress(Exception):
+                            res = load_json(d_cand / "result.json")
+                            if res.get("donor_index") in (None, donor_idx):
+                                rows = res.get("rows", [res])
+                                break
+            if rows is None:
+                _, rows = collect_condition(
+                    method, args, item, index, ids[index], step, "mismatched",
+                    config, tracker, evaluator, runtime, manifest,
+                    donor=donors[donor_idx], recipient_meta=donors[index][3],
+                )
+                save_condition_result(cond_dir, {"rows": rows, "donor_index": donor_idx}, overwrite=True)
             records.extend(rows)
             write_jsonl(records_path, records)

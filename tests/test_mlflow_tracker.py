@@ -15,10 +15,26 @@ def test_mlflow_tracker_local_default(tmp_path: Path, monkeypatch):
     assert not tracker.is_remote
     assert tracker.tracking_uri.startswith("sqlite:///")
 
-    assert str(resolver.cache_dir / "mlflow.db") in tracker.tracking_uri
+    # New storage architecture: MLflow lives in persistent storage/mlflow/, outside volatile .cache/
+    assert str(resolver.mlflow_db_path) in tracker.tracking_uri
     assert tracker.artifact_location is not None
-    assert str(resolver.cache_dir / "mlflow_artifacts") in tracker.artifact_location
+    assert str(resolver.mlflow_artifacts_dir) in tracker.artifact_location
     assert Path(tracker.artifact_location).is_dir()
+
+
+def test_mlflow_tracker_ignores_legacy_cache_db(tmp_path: Path, monkeypatch):
+    """Runtime must strictly ignore any legacy .cache/mlflow.db and use persistent storage."""
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    resolver = PathResolver(tmp_path)
+    legacy_db = resolver.cache_dir / "mlflow.db"
+    legacy_db.parent.mkdir(parents=True, exist_ok=True)
+    legacy_db.touch()
+
+    tracker = MLflowTracker(path_resolver=resolver)
+    # Must use new storage/mlflow/mlflow.db, NOT legacy_db
+    assert str(resolver.mlflow_db_path) in tracker.tracking_uri
+    assert str(legacy_db) not in tracker.tracking_uri
+    assert str(resolver.mlflow_artifacts_dir) in tracker.artifact_location
 
 
 def test_mlflow_tracker_remote_env_override(tmp_path: Path, monkeypatch):

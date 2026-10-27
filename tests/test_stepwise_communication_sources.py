@@ -207,41 +207,6 @@ def test_missing_artifact_has_no_local_fallback():
         )
 
 
-def test_cli_uploads_derived_artifacts_to_mlflow(tmp_path, monkeypatch):
-    import mlflow.tracking
-
-    client = SavedClient()
-    uploads, terminated = [], []
-    client.get_experiment_by_name = lambda name: SimpleNamespace(experiment_id="sweep")
-    client.create_run = lambda *args, **kwargs: SimpleNamespace(
-        info=SimpleNamespace(run_id="analysis")
-    )
-    client.log_artifact = lambda run_id, path, directory: uploads.append(
-        (run_id, path, directory)
-    )
-    client.set_terminated = lambda run_id, status: terminated.append((run_id, status))
-    monkeypatch.setattr(mlflow.tracking, "MlflowClient", lambda **kwargs: client)
-    monkeypatch.setattr(analysis, "plot_metrics", lambda *args: None)
-    analysis.main(
-        [
-            "--tracking-uri",
-            "https://tracking.example",
-            "--probe-run-ids",
-            *client.probe_ids,
-            "--sweep-run-ids",
-            *client.sweep_ids,
-            "--independent-run-ids",
-            *client.independent_ids,
-        ]
-    )
-    assert len(uploads) == 3
-    assert all(
-        run_id == "analysis" and directory == "communication"
-        for run_id, _, directory in uploads
-    )
-    assert terminated == [("analysis", "FINISHED")]
-
-
 @pytest.mark.parametrize(
     "corruption", ("acquisition", "other_sweep", "wrong_artifact", "duplicate_source")
 )

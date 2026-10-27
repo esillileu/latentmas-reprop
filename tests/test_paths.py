@@ -13,8 +13,25 @@ def test_path_resolver_directories():
     resolver = get_path_resolver()
     assert resolver.cache_dir.name == ".cache"
     assert resolver.data_dir.name == "data"
+    assert resolver.storage_dir.name == "storage"
+    assert resolver.experiments_dir.name == "experiments"
+    assert resolver.mlflow_dir.name == "mlflow"
+    assert resolver.artifacts_dir.name == "artifacts"
     assert resolver.medqa_json_path.name == "medqa.json"
     assert resolver.medqa_json_path.is_file()
+
+
+def test_path_resolver_safe_cache_path(tmp_path):
+    resolver = PathResolver(tmp_path)
+    safe_runtime = resolver.get_cache_layer_dir("runtime")
+    assert resolver.is_safe_cache_path(safe_runtime)
+
+    # Protected paths must NOT be safe cache paths
+    assert not resolver.is_safe_cache_path(resolver.storage_dir)
+    assert not resolver.is_safe_cache_path(resolver.experiments_dir)
+    assert not resolver.is_safe_cache_path(resolver.mlflow_dir)
+    assert not resolver.is_safe_cache_path(resolver.data_dir)
+    assert not resolver.is_safe_cache_path(resolver.root)
 
 
 def test_path_resolver_cache_layers():

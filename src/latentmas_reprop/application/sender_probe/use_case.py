@@ -44,15 +44,18 @@ class SenderProbeAnalysisUseCase:
                         "Trajectory sender states must contain 200 examples and 20 steps"
                     )
         tracker = self.tracker_port
+        clean_source = str(source_run_id or (states_path.parent.name if states_path else "local")).replace("/", "_")
+        probe_run_name = f"sender_probe_{clean_source}_s{config.seed}_f{config.folds}"
         if tracker:
             tracker.start_run(
                 experiment_name=experiment_name,
-                run_name="sender_probe_analysis",
+                run_name=probe_run_name,
                 tags={
                     "experiment_type": "sender_probe",
                     "phase": "sender_probe",
                     "source_run_id": source_run_id or "local_file",
                     "git_commit": get_git_commit_hash(),
+                    "run_name": probe_run_name,
                 },
             )
         try:

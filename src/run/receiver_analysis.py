@@ -20,6 +20,10 @@ from latentmas_reprop.application.receiver_acquisition.report import (
 )
 from latentmas_reprop.application.sender_probe.diagnostics import analyze_saved_features
 from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
+from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
+    MLflowTracker,
+    log_analysis_results_to_mlflow,
+)
 
 
 def main() -> None:
@@ -29,6 +33,13 @@ def main() -> None:
         "--output-dir",
         type=Path,
         default=paths.root / "artifacts" / "receiver_acquisition",
+    )
+    parser.add_argument(
+        "--experiment-dir",
+        "--input-dir",
+        action="append",
+        default=[],
+        help="Specify experiment directories to analyze.",
     )
     parser.add_argument(
         "--canonical-run-id",
@@ -53,6 +64,22 @@ def main() -> None:
     )
     if len(experiments) != 1:
         raise ValueError("Expected one latentmas_receiver_acquisition experiment")
+    if args.experiment_dir:
+        for ed in args.experiment_dir:
+            edir_path = paths.get_experiment_dir(ed)
+            found = client.search_runs(
+                [experiments[0].experiment_id],
+                filter_string=f"tags.data_dir = '{edir_path.resolve()!s}'",
+                max_results=1,
+            )
+            if not found:
+                found = client.search_runs(
+                    [experiments[0].experiment_id],
+                    filter_string=f"tags.rel_dir = '{ed}'",
+                    max_results=1,
+                )
+            for r in found:
+                args.canonical_run_id.append(r.info.run_id)
     candidates = []
     records_by_id = {}
     probes_by_id = {}
@@ -243,6 +270,12 @@ def main() -> None:
             ):
                 if not any(parent.iterdir()):
                     parent.rmdir()
+    log_analysis_results_to_mlflow(
+        MLflowTracker(),
+        "receiver_acquisition",
+        args.output_dir,
+        params={"permutations": args.permutations, "seed": args.seed},
+    )
     print(f"Analyzed {len(runs)} Receiver runs: {summary_path}")
 
 

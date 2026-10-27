@@ -14,19 +14,6 @@ from latentmas_reprop.domain.models import (
 )
 
 
-def test_evaluator_error_propagation_in_decode_with_context():
-    """decode_with_context result dict must contain 'error_msg' key."""
-    import inspect
-    import textwrap
-
-    from latentmas_reprop.domain.services.latent_mas import LatentMASMethod
-
-    src = textwrap.dedent(inspect.getsource(LatentMASMethod.decode_with_context))
-    assert '"error_msg"' in src or "'error_msg'" in src, (
-        "decode_with_context must include 'error_msg' in result dict"
-    )
-
-
 def test_intervention_metrics_all_conditions():
     metrics = InterventionMetrics(
         accuracy_own=0.8,
@@ -212,3 +199,43 @@ def test_failed_experiment_calls_end_run_failed():
         uc.execute(model=model_mock, args=args)
 
     tracker.end_run.assert_called_once_with(status="FAILED")
+
+
+def test_intervention_context_builder_saves_shared_kv(tmp_path):
+    """Test that build_intervention_contexts saves shared kv to experiment directory."""
+    from latentmas_reprop.application.intervention.context_builder import (
+        build_intervention_contexts,
+    )
+    from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
+    from latentmas_reprop.infrastructure.paths.resolver import PathResolver
+
+    resolver = PathResolver(tmp_path)
+    cache = ExecutionCacheManager(resolver)
+
+    method_mock = MagicMock()
+    # Dummy past_kv (tuple of tensors)
+    method_mock.build_latent_contexts.return_value = (
+        ((torch.zeros((1, 2, 4, 8)), torch.zeros((1, 2, 4, 8))),),
+        [[{"trace": "dummy"}]],
+    )
+    method_mock.model = MagicMock()
+    method_mock.model.model_name = "test_model"
+    method_mock.latent_steps = 5
+
+    item = {"question": "What is 2 + 2?"}
+    run_id = "test_intervention_run"
+
+    build_intervention_contexts(
+        method=method_mock,
+        dataset_iter=[item],
+        task="gsm8k",
+        seed=42,
+        save_raw_cache=False,
+        cache_port=cache,
+        split="test",
+        run_id=run_id,
+    )
+
+    shared_dir = resolver.get_condition_dir(run_id, 0, "shared")
+    assert (shared_dir / "kv.pt").is_file()
+    assert (shared_dir / "result.json").is_file()

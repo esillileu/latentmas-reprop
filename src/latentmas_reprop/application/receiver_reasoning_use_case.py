@@ -1,18 +1,19 @@
 """Paired receiver decoding across upstream latent compute levels."""
 
+import contextlib
 import traceback
 from copy import copy
-from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from ..domain.ports.cache_port import CacheLayer
 from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
+from ..infrastructure.paths.naming import build_experiment_relpath
+from ..infrastructure.paths.resolver import get_path_resolver
+from ..infrastructure.storage import is_condition_complete
 from ..infrastructure.tracking.mlflow_tracker import get_git_commit_hash
 from .common.reporter import (
-    build_run_stem,
     clean_config_args,
     write_json,
     write_yaml,
@@ -60,27 +61,81 @@ class ReceiverReasoningUseCase:
         config = clean_config_args(args)
         config["model_dtype"] = getattr(model, "dtype_name", None)
         config["git_commit"] = get_git_commit_hash()
-        stem = build_run_stem(
-            "receiver_reasoning", args.task, args.model_name, len(items)
+        args.receiver_reasoning = True
+        exp_relpath = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+            args, dtype_name=str(config.get("model_dtype", ""))
         )
-        directory = (
-            Path(self.cache_port.get_layer_path(CacheLayer.EVALUATION_RUNS)) / stem
-        )
+        directory = get_path_resolver().get_experiment_dir(exp_relpath)
         records_path = directory / "sample_results.jsonl"
         summary_path = directory / "summary.json"
         config_path = directory / "resolved_config.yaml"
         write_yaml(config_path, config)
+
+        resolver = get_path_resolver()
+        required_conditions = [
+            f"u{s}_{m}" for s in [0, *steps] for m in ("answer_only", "free")
+        ]
+        all_complete = (
+            not getattr(args, "overwrite", False)
+            and summary_path.is_file()
+            and len(items) > 0
+        )
+        if all_complete:
+            for idx in range(len(items)):
+                for cond in required_conditions:
+                    if not is_condition_complete(
+                        resolver.get_condition_dir(directory, idx, cond)
+                    ):
+                        all_complete = False
+                        break
+                if not all_complete:
+                    break
+
+        if all_complete:
+            import json
+
+            with contextlib.suppress(Exception):
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                records = []
+                for idx in range(len(items)):
+                    for cond in required_conditions:
+                        rf = (
+                            resolver.get_condition_dir(directory, idx, cond)
+                            / "result.json"
+                        )
+                        if rf.is_file():
+                            records.append(json.loads(rf.read_text(encoding="utf-8")))
+                if not records and records_path.is_file():
+                    records = [
+                        json.loads(line)
+                        for line in records_path.read_text(
+                            encoding="utf-8"
+                        ).splitlines()
+                        if line.strip()
+                    ]
+                if summary.get("sample_count") != len(items):
+                    summary = summarize_receiver_records(records, steps) | {
+                        "config": config,
+                        "sample_count": len(items),
+                    }
+                print(f"Reusing completed receiver reasoning at {exp_relpath}")
+                return summary, records
+
         tracker = self.tracker_port
         if tracker:
+            run_name = f"{exp_relpath}_n{len(items)}"
             tags = {
                 "experiment_type": "receiver_reasoning",
                 "git_commit": config["git_commit"],
+                "data_dir": str(directory.resolve()),
+                "rel_dir": exp_relpath,
+                "run_name": run_name,
             }
             if getattr(args, "version_tag", None):
                 tags["version_tag"] = args.version_tag
             tracker.start_run(
                 experiment_name=args.tracking_experiment_name,
-                run_name=stem,
+                run_name=run_name,
                 tags=tags,
             )
             tracker.log_params(config)

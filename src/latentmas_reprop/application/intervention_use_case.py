@@ -16,7 +16,6 @@ from typing import Any
 from ..domain.models import (
     InterventionMetrics,
     SampleInterventionRecord,
-    compute_sample_key,
 )
 from ..domain.ports.cache_port import CachePort
 from ..domain.ports.dataset_port import DatasetPort
@@ -27,7 +26,9 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.datasets.registry import DEFAULT_DATASET_REGISTRY
 from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
-from ..infrastructure.tracking.mlflow_tracker import get_git_commit_hash
+from ..infrastructure.paths.naming import build_experiment_relpath
+from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
+from ..infrastructure.storage import save_json_atomic
 from .common.reporter import build_run_stem
 from .intervention.algo import generate_cross_indices
 from .intervention.artifacts import (
@@ -91,12 +92,12 @@ class InterventionUseCase:
                 f"Intervention condition 'cross' requires at least 2 samples, got {n_samples}."
             )
 
-        split_str = getattr(args, "split", "test")
-        task_str = getattr(args, "task", "gsm8k")
-        sample_keys = [
-            compute_sample_key(task_str, split_str, item.get("question", ""))
-            for item in dataset_iter
-        ]
+        args.intervention = True
+        sample_keys = [f"{i:06d}" for i in range(n_samples)]
+        dtype_name = str(getattr(model, "dtype_name", ""))
+        exp_relpath = build_experiment_relpath(args, dtype_name=dtype_name)
+        args.run_id = getattr(args, "run_id", None) or exp_relpath
+        args.exp_relpath = exp_relpath
 
         method = LatentMASMethod(
             model,
@@ -113,6 +114,16 @@ class InterventionUseCase:
             self.tracker_port, args, model, n_samples, conditions, git_hash
         )
 
+        exp_dir = get_path_resolver().get_experiment_dir(args.run_id)
+        cfg_dict = vars(args) if hasattr(args, "__dict__") else dict(args)
+        save_json_atomic(
+            exp_dir / "config.json",
+            {
+                k: str(v) if not isinstance(v, (int, float, bool, list, dict, type(None))) else v
+                for k, v in cfg_dict.items()
+            },
+        )
+
         try:
             return self._run_experiment(
                 model=model,
@@ -126,6 +137,7 @@ class InterventionUseCase:
                 method=method,
                 start_total_time=start_total_time,
                 git_hash=git_hash,
+                run_id=args.run_id,
             )
         except Exception:
             exc_text = traceback.format_exc()
@@ -151,6 +163,8 @@ class InterventionUseCase:
         method: LatentMASMethod,
         start_total_time: float,
         git_hash: str,
+        run_id: str | None = None,
+        **kwargs: Any,
     ) -> tuple[InterventionMetrics, list[SampleInterventionRecord]]:
         contexts, traces, latencies, seq_lens, cache_bytes = (
             build_intervention_contexts(
@@ -160,6 +174,9 @@ class InterventionUseCase:
                 seed=args.seed,
                 save_raw_cache=save_raw_cache,
                 cache_port=self.cache_port,
+                sample_keys=sample_keys,
+                split=getattr(args, "split", "test"),
+                run_id=run_id,
             )
         )
         cross_indices = (
@@ -167,7 +184,6 @@ class InterventionUseCase:
                 n_samples,
                 policy=cross_policy,
                 seed=args.seed,
-                cache_seq_lens=seq_lens if cross_policy == "length_matched" else None,
             )
             if "cross" in conditions
             else []
@@ -187,6 +203,7 @@ class InterventionUseCase:
             cache_bytes_list=cache_bytes,
             tracker_port=self.tracker_port,
             git_hash=git_hash,
+            run_id=run_id,
         )
         total_time = time.time() - start_total_time
         ram_stats, cache_stats = compute_cache_and_ram_stats(

@@ -1,13 +1,24 @@
 """Artifact persistence and MLflow artifact logging for intervention experiments."""
 
-import contextlib
-from pathlib import Path
 from typing import Any
 
 from ...domain.models import InterventionMetrics, SampleInterventionRecord
-from ...domain.ports.cache_port import CacheLayer, CachePort
+from ...domain.ports.cache_port import CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
+from ...infrastructure.paths.naming import build_experiment_relpath
+from ...infrastructure.paths.resolver import get_path_resolver
 from ..common.reporter import clean_config_args, write_json, write_jsonl, write_yaml
+
+
+def build_intervention_config_id(
+    args: Any, model_dtype: str = "unknown"
+) -> tuple[str, str]:
+    """Return canonical relative experiment path."""
+    backend = "vllm" if getattr(args, "use_vllm", False) else "transformers"
+    rel_path = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+        args, dtype_name=model_dtype, backend=backend
+    )
+    return rel_path, ""
 
 
 def start_intervention_tracker(
@@ -17,27 +28,37 @@ def start_intervention_tracker(
     n_samples: int,
     conditions: list[str],
     git_hash: str,
-) -> None:
+) -> tuple[str, str]:
     """Start tracking run and log run parameters if tracker_port is available."""
-    if not tracker_port:
-        return
-    exp_name = getattr(args, "tracking_experiment_name", "latentmas_intervention")
-    run_name = f"{args.model_name}_{args.task}_intervention"
     backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
     model_dtype = (
         str(getattr(model.model, "dtype", "unknown"))
         if hasattr(model, "model")
         else "unknown"
     )
+    run_name = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+        args, dtype_name=model_dtype, backend=backend_name
+    )
+
+    if not tracker_port:
+        return run_name, ""
+
+    exp_name = getattr(args, "tracking_experiment_name", "latentmas_intervention")
+    exp_dir = get_path_resolver().get_experiment_dir(run_name)
+    scoped_run_name = f"{run_name}_n{n_samples}"
+
     tracker_port.start_run(
         experiment_name=exp_name,
-        run_name=run_name,
+        run_name=scoped_run_name,
         tags={
             "model": args.model_name,
             "task": args.task,
             "method": args.method,
             "experiment_type": "intervention",
             "git_commit": git_hash,
+            "data_dir": str(exp_dir.resolve()),
+            "rel_dir": run_name,
+            "run_name": scoped_run_name,
         },
     )
     tracker_port.log_params(
@@ -61,6 +82,7 @@ def start_intervention_tracker(
             "device": str(model.device),
         }
     )
+    return run_name, ""
 
 
 def log_sample_assessments(
@@ -136,23 +158,19 @@ def save_intervention_artifacts(
     cache_seq_stats: dict[str, Any],
     ram_stats: dict[str, Any],
 ) -> None:
-    """Save all evaluation artifacts to disk and log to MLflow tracker."""
-    local_cache_file = f"{run_stem}.json"
-    with contextlib.suppress(Exception):
-        cache_port.save_json(
-            CacheLayer.EVALUATION_INTERVENTIONS,
-            local_cache_file,
-            {
-                "metrics": metrics.to_dict(),
-                "records": [r.to_dict() for r in sample_records],
-            },
-        )
+    """Save all evaluation artifacts directly in the experiment directory and log to MLflow tracker."""
+    backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
+    model_dtype = getattr(args, "model_dtype", "") or getattr(args, "dtype", "")
+    run_name = getattr(args, "exp_relpath", None) or build_experiment_relpath(
+        args, dtype_name=model_dtype, backend=backend_name
+    )
+    exp_dir = get_path_resolver().get_experiment_dir(run_name)
+    exp_dir.mkdir(parents=True, exist_ok=True)
 
-    runtime_dir = Path(cache_port.get_layer_path(CacheLayer.RUNTIME))
-    sample_results_path = runtime_dir / f"{run_stem}_sample_results.jsonl"
-    summary_path = runtime_dir / f"{run_stem}_summary.json"
-    resolved_config_path = runtime_dir / f"{run_stem}_resolved_config.yaml"
-    patterns_path = runtime_dir / f"{run_stem}_correctness_patterns.json"
+    sample_results_path = exp_dir / "samples.jsonl"
+    summary_path = exp_dir / "summary.json"
+    resolved_config_path = exp_dir / "resolved_config.yaml"
+    patterns_path = exp_dir / "correctness_patterns.json"
 
     write_jsonl(sample_results_path, [r.to_dict() for r in sample_records])
 
@@ -178,6 +196,7 @@ def save_intervention_artifacts(
         tracker_port.log_metrics(metrics.to_mlflow_metrics())
         tracker_port.log_artifact(sample_results_path, artifact_path="results")
         tracker_port.log_artifact(summary_path, artifact_path="results")
+        tracker_port.log_artifact(summary_path, artifact_path=None)
         tracker_port.log_artifact(patterns_path, artifact_path="results")
         tracker_port.log_artifact(resolved_config_path, artifact_path="config")
         tracker_port.flush_traces()

@@ -172,3 +172,9 @@ class ExperimentTrackerPort(ABC):
     def flush_traces(self) -> None:
         """Flush any pending async traces."""
         return None  # Default no-op for non-tracing trackers
+
+    def set_data_dir(
+        self, storage_run_id: str, data_dir: Path | str | None = None
+    ) -> None:
+        """Associate the tracking run with a local storage directory."""
+        return None

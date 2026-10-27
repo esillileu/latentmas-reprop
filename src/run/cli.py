@@ -33,7 +33,6 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         "--config",
         "--template",
         dest="config_path",
-        type=str,
         default=None,
         metavar="CONFIG",
         help="Path or name of a YAML config file in configs/",
@@ -42,6 +41,11 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
         "--dry-run",
         action="store_true",
         help="Print the expanded run matrix without loading models or running experiments.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Force recalculation and overwrite existing completed results.",
     )
 
     # Core args for experiments
@@ -141,7 +145,9 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
     )
     parser.add_argument("--seed", type=int, default=defaults.get("seed", 42))
     parser.add_argument(
-        "--print_summary", action="store_true", default=defaults.get("print_summary", False)
+        "--print_summary",
+        action="store_true",
+        default=defaults.get("print_summary", False),
     )
     parser.add_argument(
         "--no_progress", action="store_true", default=defaults.get("no_progress", False)
@@ -247,10 +253,8 @@ def _parse_args(args: list[str] | None, defaults: dict[str, Any]) -> argparse.Na
         parsed.enable_prefix_caching = True
 
     validate_intervention_and_acquisition_args(parser, parsed)
-
     validate_receiver_reasoning_args(parser, parsed)
     validate_compute_preflight_args(parser, parsed)
-
     return parsed
 
 
@@ -258,29 +262,23 @@ def parse_run_matrix(args=None) -> list[argparse.Namespace]:
     """Expand top-level YAML lists into a Cartesian product of parsed runs."""
     argv = list(args) if args is not None else None
     defaults = _load_defaults(argv)
-    dimensions = {
-        key: value for key, value in defaults.items() if isinstance(value, list)
-    }
-    empty = [key for key, values in dimensions.items() if not values]
+    dimensions = {k: v for k, v in defaults.items() if isinstance(v, list)}
+    empty = [k for k, v in dimensions.items() if not v]
     if empty:
         raise ValueError(f"sweep dimensions cannot be empty: {', '.join(empty)}")
     if not dimensions:
         return [_parse_args(argv, defaults)]
 
-    scalar_defaults = {
-        key: value for key, value in defaults.items() if key not in dimensions
-    }
-    parsed_runs = []
-    seen = set()
+    scalar_defaults = {k: v for k, v in defaults.items() if k not in dimensions}
+    parsed_runs, seen = [], set()
     for values in itertools.product(*dimensions.values()):
         run_defaults = scalar_defaults | dict(zip(dimensions, values, strict=True))
         parsed = _parse_args(argv, run_defaults)
-        signature = tuple(
-            sorted((key, repr(value)) for key, value in vars(parsed).items())
-        )
-        if signature not in seen:
-            seen.add(signature)
+        sig = tuple(sorted((k, repr(v)) for k, v in vars(parsed).items()))
+        if sig not in seen:
+            seen.add(sig)
             parsed_runs.append(parsed)
+
     return parsed_runs
 
 

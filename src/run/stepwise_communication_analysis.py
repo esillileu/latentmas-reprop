@@ -4,9 +4,6 @@ import argparse
 import csv
 import json
 import math
-import os
-import shutil
-import tempfile
 from pathlib import Path
 
 from .presentation_plots import STYLE, plt, save
@@ -14,15 +11,8 @@ from .presentation_plots import STYLE, plt, save
 MODELS = ("Qwen/Qwen3-0.6B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B", "Qwen/Qwen3-14B")
 COLORS = ("#7B3294", "#0072B2", "#D55E00", "#009E73")
 COLUMNS = (
-    "model",
-    "latent_step",
-    "probe_accuracy",
-    "probe_null_mean",
-    "probe_effect_pp",
-    "probe_fwer_p",
-    "probe_significant",
-    "receiver_changed_fraction",
-    "receiver_changed_pct",
+    "model", "latent_step", "probe_accuracy", "probe_null_mean", "probe_effect_pp",
+    "probe_fwer_p", "probe_significant", "receiver_changed_fraction", "receiver_changed_pct",
 )
 
 
@@ -82,19 +72,12 @@ def communication_metrics(probes, sweep):
         null = number(probe, "null_mean_accuracy")
         p_value = number(probe, "fwer_p_value")
         changed = number(sweep_grid[key], "receiver_changed_fraction")
-        rows.append(
-            {
-                "model": key[0],
-                "latent_step": key[1],
-                "probe_accuracy": accuracy,
-                "probe_null_mean": null,
-                "probe_effect_pp": 100 * (accuracy - null),
-                "probe_fwer_p": p_value,
-                "probe_significant": p_value < 0.05,
-                "receiver_changed_fraction": changed,
-                "receiver_changed_pct": 100 * changed,
-            }
-        )
+        rows.append({
+            "model": key[0], "latent_step": key[1], "probe_accuracy": accuracy,
+            "probe_null_mean": null, "probe_effect_pp": 100 * (accuracy - null),
+            "probe_fwer_p": p_value, "probe_significant": p_value < 0.05,
+            "receiver_changed_fraction": changed, "receiver_changed_pct": 100 * changed,
+        })
     return sorted(
         rows, key=lambda row: (MODELS.index(row["model"]), row["latent_step"])
     )
@@ -113,20 +96,15 @@ def receiver_parity(metrics, independent):
             number(cells[key], "argmax_changed_fraction") if key in cells else None
         )
         sweep = row["receiver_changed_fraction"]
-        result.append(
-            {
-                "model": key[0],
-                "latent_step": key[1],
-                "independent_run_id": cells[key].get("run_id", "")
-                if key in cells
-                else "",
-                "independent_receiver_changed_fraction": original,
-                "sweep_receiver_changed_fraction": sweep,
-                "difference": sweep - original if original is not None else None,
-                "matches": sweep == original if original is not None else None,
-                "status": "checked" if original is not None else "not_available",
-            }
-        )
+        result.append({
+            "model": key[0], "latent_step": key[1],
+            "independent_run_id": cells[key].get("run_id", "") if key in cells else "",
+            "independent_receiver_changed_fraction": original,
+            "sweep_receiver_changed_fraction": sweep,
+            "difference": sweep - original if original is not None else None,
+            "matches": sweep == original if original is not None else None,
+            "status": "checked" if original is not None else "not_available",
+        })
     return result
 
 
@@ -235,64 +213,74 @@ def main(argv=None):
     from dotenv import load_dotenv
     from mlflow.tracking import MlflowClient
 
+    from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
+    from latentmas_reprop.infrastructure.tracking.analysis_tracking import (
+        log_analysis_results_to_mlflow,
+    )
+    from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
+
     from .stepwise_communication_sources import load_inputs
 
     load_dotenv()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tracking-uri")
-    parser.add_argument("--probe-run-ids", nargs="+", required=True)
-    parser.add_argument("--sweep-run-ids", nargs="+", required=True)
-    parser.add_argument("--independent-run-ids", nargs="+", required=True)
+    parser.add_argument("--experiment-dir", "--input-dir", action="append", default=[])
+    for flag in ("--probe-run-ids", "--sweep-run-ids", "--independent-run-ids"):
+        parser.add_argument(flag, nargs="+", default=[])
     parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Optional local export of derived artifacts; never an input",
+        "--output-dir", type=Path, default=Path("artifacts/stepwise_communication"),
+        help="Local export directory for derived artifacts",
     )
     parser.add_argument("--annotate-steps", action="store_true")
     args = parser.parse_args(argv)
-    uri = args.tracking_uri or os.environ.get("MLFLOW_TRACKING_URI")
-    if not uri or not uri.strip():
-        parser.error("Set MLFLOW_TRACKING_URI or --tracking-uri; no local fallback")
-    client = MlflowClient(tracking_uri=uri)
+
+    tracker = MLflowTracker(tracking_uri=args.tracking_uri)
+    client = MlflowClient(tracking_uri=tracker.tracking_uri)
+
+    paths = get_path_resolver()
+    probe_ids = list(args.probe_run_ids)
+    sweep_ids = list(args.sweep_run_ids)
+    independent_ids = list(args.independent_run_ids)
+
+    if args.experiment_dir:
+        exp = client.get_experiment_by_name("latentmas_receiver_trajectory")
+        if exp:
+            for ed in args.experiment_dir:
+                edir = str(paths.get_experiment_dir(ed).resolve())
+                runs = client.search_runs(
+                    [exp.experiment_id], filter_string=f"tags.data_dir = '{edir}'", max_results=10
+                ) or client.search_runs(
+                    [exp.experiment_id], filter_string=f"tags.rel_dir = '{ed}'", max_results=10
+                )
+                for r in runs:
+                    phase = r.data.tags.get("phase")
+                    if phase == "sweep":
+                        sweep_ids.append(r.info.run_id)
+                    elif phase == "sender_probe":
+                        probe_ids.append(r.info.run_id)
+                    elif phase == "independent":
+                        independent_ids.append(r.info.run_id)
+
     probes, sweep, independent, provenance = load_inputs(
-        client, args.probe_run_ids, args.sweep_run_ids, args.independent_run_ids
+        client, probe_ids, sweep_ids, independent_ids
     )
-    experiment = client.get_experiment_by_name("latentmas_receiver_trajectory")
-    run = client.create_run(
-        experiment.experiment_id,
-        tags={
-            "mlflow.runName": "stepwise-communication-analysis",
-            "phase": "analysis",
-            "analysis_type": "stepwise_communication",
-        },
+
+    output = paths.resolve(args.output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    sources = {
+        "probe_run_ids": probe_ids, "sweep_run_ids": sweep_ids,
+        "independent_run_ids": independent_ids, "inputs": provenance,
+    }
+    (output / "source_runs.json").write_text(json.dumps(sources, indent=2) + "\n")
+    analyze(probes, sweep, independent, output, args.annotate_steps)
+    analysis_name = "stepwise_communication"
+    log_analysis_results_to_mlflow(
+        tracker,
+        analysis_name,
+        output,
+        params={"annotate_steps": args.annotate_steps},
     )
-    run_id = run.info.run_id
-    with tempfile.TemporaryDirectory(prefix="communication-output-") as temporary:
-        output = Path(temporary)
-        sources = {
-            "probe_run_ids": args.probe_run_ids,
-            "sweep_run_ids": args.sweep_run_ids,
-            "independent_run_ids": args.independent_run_ids,
-            "inputs": provenance,
-        }
-        (output / "source_runs.json").write_text(json.dumps(sources, indent=2) + "\n")
-        status = "FAILED"
-        try:
-            analyze(probes, sweep, independent, output, args.annotate_steps)
-            status = "FINISHED"
-        finally:
-            try:
-                for path in sorted(output.iterdir()):
-                    client.log_artifact(run_id, str(path), "communication")
-                    if args.output_dir:
-                        args.output_dir.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(path, args.output_dir / path.name)
-            except Exception:
-                status = "FAILED"
-                raise
-            finally:
-                client.set_terminated(run_id, status)
-                print(f"MLflow analysis run: {run_id} ({status})")
+    print(f"MLflow analysis recorded under latentmas-analysis for: {output}")
 
 
 if __name__ == "__main__":

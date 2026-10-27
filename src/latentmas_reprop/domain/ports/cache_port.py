@@ -53,3 +53,7 @@ class CachePort(ABC):
     def exists(self, layer: CacheLayer | str, filename: str) -> bool:
         """Check if an item exists in the specified cache layer."""
         raise NotImplementedError
+
+    def clean_volatile_cache(self) -> list[Path]:
+        """Safely clean volatile execution caches without touching persistent storage."""
+        return []

@@ -21,7 +21,8 @@ from ..domain.services.prompts.acquisition import (
 )
 from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.models.model_wrapper import ModelWrapper
-from ..infrastructure.paths.resolver import get_git_commit_hash
+from ..infrastructure.paths.naming import build_experiment_relpath
+from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
 from .receiver_acquisition.aggregation import aggregate_receiver_records
 from .receiver_acquisition.artifacts import log_receiver_artifacts
 from .receiver_acquisition.runner import run_acquisition_loop
@@ -87,21 +88,35 @@ class ReceiverAcquisitionUseCase:
             if "cross" in conditions
             else [0] * len(samples)
         )
+        args.acquisition = True
         git_hash = get_git_commit_hash()
+        dtype_name = str(
+            getattr(getattr(model, "model", None), "dtype", "bfloat16")
+        ).replace("torch.", "")
+        exp_relpath = build_experiment_relpath(args, dtype_name=dtype_name)
+        exp_dir = get_path_resolver().get_experiment_dir(exp_relpath)
+        args.run_id = exp_relpath
+        args.exp_relpath = exp_relpath
+
         if self.tracker_port:
+            tags = {
+                "experiment_type": "receiver_acquisition",
+                "model": args.model_name,
+                "task": args.task,
+                "method": args.method,
+                "git_commit": git_hash,
+                "seed": str(args.seed),
+                "latent_steps": str(args.latent_steps),
+                "data_dir": str(exp_dir.resolve()),
+                "rel_dir": exp_relpath,
+                "run_name": f"{exp_relpath}_n{len(samples)}",
+            }
             self.tracker_port.start_run(
                 experiment_name="latentmas_receiver_acquisition",
-                run_name=f"{args.model_name}_{args.task}_receiver_acquisition",
-                tags={
-                    "experiment_type": "receiver_acquisition",
-                    "model": args.model_name,
-                    "task": args.task,
-                    "method": args.method,
-                    "git_commit": git_hash,
-                    "seed": str(args.seed),
-                    "latent_steps": str(args.latent_steps),
-                },
+                run_name=f"{exp_relpath}_n{len(samples)}",
+                tags=tags,
             )
+
         try:
             receiver_ids, receiver_mask, mapping = prepare_receiver_scoring(model)
             if self.tracker_port:
@@ -149,6 +164,7 @@ class ReceiverAcquisitionUseCase:
                 receiver_mask,
                 mapping,
                 self.tracker_port,
+                run_id=exp_relpath,
             )
             sender_states = None
             if args.probe_sender_latents:

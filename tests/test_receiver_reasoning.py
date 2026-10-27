@@ -14,7 +14,10 @@ from src.run.cli import parse_args
     "tracked, steps, width",
     [(False, [10, 40], 10), (True, [10, 40], 10), (False, [5], None)],
 )
-def test_paired_matrix_reuses_pristine_context(tmp_path, tracked, steps, width):
+def test_paired_matrix_reuses_pristine_context(
+    monkeypatch, tmp_path, tracked, steps, width
+):
+    monkeypatch.setenv("LATENTMAS_STORAGE_DIR", str(tmp_path / "storage"))
     args = parse_args(["-c", "lmas/receiver_reasoning/gsm8k"])
     args.max_samples = 2
     args.upstream_steps = steps
@@ -143,7 +146,7 @@ def test_paired_matrix_reuses_pristine_context(tmp_path, tracked, steps, width):
     assert summary["upstream_levels"]["40"]["cells"]["answer_only"][
         "prediction_frequencies"
     ] == {"1": 2}
-    assert len(list(tmp_path.glob("*/sample_results.jsonl"))) == 1
+    assert len(list((tmp_path / "storage").glob("**/sample_results.jsonl"))) == 1
     if tracked:
         from mlflow.tracking import MlflowClient
 
