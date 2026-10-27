@@ -28,6 +28,12 @@ def main(argv: list[str] | None = None) -> None:
                     f"M=matched/mismatched/no_handoff, R={run.receiver_budgets}, "
                     f"free_cap={run.max_new_tokens}, samples={run.max_samples}"
                 )
+            if getattr(run, "single_intervention", False):
+                details = (
+                    f"model={run.model_name}, task={run.task}, "
+                    f"latent_steps={run.latent_steps}, conditions=ple/plce/plpe, "
+                    f"samples={run.max_samples}"
+                )
             print(f"[{index}/{len(runs)}] {details or 'single configuration'}")
         return
 

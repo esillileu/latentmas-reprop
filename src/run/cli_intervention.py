@@ -41,6 +41,30 @@ def add_intervention_args(
         help="Persist raw latent KV cache tensors to .cache/latent_interventions/ locally.",
     )
     parser.add_argument(
+        "--single_intervention",
+        action="store_true",
+        default=defaults.get("single_intervention", False),
+        help="Run LMAS Single Intervention Analysis (PLE, PLCE, PLPE).",
+    )
+    parser.add_argument(
+        "--control_signal",
+        type=str,
+        default=defaults.get("control_signal", "\nSolution:"),
+        help="Control signal for PLCE condition.",
+    )
+    parser.add_argument(
+        "--receiver_role",
+        type=str,
+        default=defaults.get("receiver_role", "judger"),
+        help="Agent role prompt used for PLPE condition (default: judger).",
+    )
+    parser.add_argument(
+        "--plpe_prompt",
+        type=str,
+        default=defaults.get("plpe_prompt"),
+        help="Custom prompt template for PLPE intervention (can contain {question}).",
+    )
+    parser.add_argument(
         "--tracking_experiment_name",
         type=str,
         default=defaults.get("tracking_experiment_name"),
@@ -162,6 +186,13 @@ def validate_intervention_and_acquisition_args(
     )
     if parsed.intervention and parsed.acquisition:
         parser.error("--intervention and --acquisition are mutually exclusive")
+    if getattr(parsed, "single_intervention", False):
+        if parsed.acquisition or parsed.intervention:
+            parser.error("--single_intervention is mutually exclusive with other harnesses")
+        if not getattr(parsed, "tracking_experiment_name", None):
+            parsed.tracking_experiment_name = "latentmas_single_intervention"
+        if not getattr(parsed, "intervention_conditions", None) or parsed.intervention_conditions == ["own", "cross", "zero"]:
+            parsed.intervention_conditions = ["ple", "plce", "plpe"]
     if parsed.acquisition:
         if parsed.method != "latent_mas" or parsed.task != "secret_digit":
             parser.error(

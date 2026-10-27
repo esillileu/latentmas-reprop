@@ -19,6 +19,9 @@ from latentmas_reprop.application.receiver_compute_preflight_use_case import (
 from latentmas_reprop.application.receiver_reasoning_use_case import (
     ReceiverReasoningUseCase,
 )
+from latentmas_reprop.application.single_intervention_use_case import (
+    SingleInterventionUseCase,
+)
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
 from latentmas_reprop.infrastructure.paths.naming import (
     build_experiment_relpath,
@@ -89,6 +92,9 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
         modes = list(getattr(args, "context_modes", ["full", "latent_only", "prompt_only"]))
         conds = list(getattr(args, "acquisition_conditions", ["own", "cross", "drop"]))
         conditions = [c if c in {"drop", "drop_position_matched"} else f"{m}_{c}" for c in conds for m in ([""] if c in {"drop", "drop_position_matched"} else modes)]
+    elif getattr(args, "single_intervention", False):
+        max_s = int(getattr(args, "max_samples", 0))
+        conditions = ["ple", "plce", "plpe"]
     elif getattr(args, "intervention", False):
         max_s = int(getattr(args, "max_samples", 0))
         raw_c = getattr(args, "intervention_conditions", ["own", "cross", "drop", "zero"])
@@ -180,19 +186,9 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
         else:
             correct = sum(1 for r in records if r.get("correct", False))
             acc = correct / max(1, len(records))
-            metrics_dict = dict(summary_data.get("metrics", {}))
-            metrics_dict.update({
-                "accuracy": acc, "correct": correct, "total": len(records), "max_samples": len(records),
-                "sample_count": len(records),
-                "requested_trajectories": target_count, "reused_trajectories": len(records),
-                "fresh_trajectories": 0, "failed_trajectories": 0,
-            })
-            summary_data = {
-                "status": "complete", "sample_count": len(records),
-                "requested_trajectories": target_count, "reused_trajectories": len(records),
-                "fresh_trajectories": 0, "failed_trajectories": 0,
-                "metrics": metrics_dict, "config": summary_data.get("config", {}),
-            }
+            m = dict(summary_data.get("metrics", {}))
+            m.update({"accuracy": acc, "correct": correct, "total": len(records), "sample_count": len(records), "reused_trajectories": len(records), "fresh_trajectories": 0})
+            summary_data = {"status": "complete", "sample_count": len(records), "metrics": m, "config": summary_data.get("config", {})}
         if not summary_path.is_file():
             with contextlib.suppress(Exception):
                 summary_path.write_text(json.dumps(summary_data, indent=2) + "\n", encoding="utf-8")
@@ -263,21 +259,21 @@ def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
         return summary, records
 
     if getattr(args, "acquisition", False):
-        tracker = MLflowTracker()
-        use_case = ReceiverAcquisitionUseCase(tracker_port=tracker)
-        metrics, records = use_case.execute(model, args)
+        metrics, records = ReceiverAcquisitionUseCase(tracker_port=MLflowTracker()).execute(model, args)
         metrics_dict = metrics.to_dict()
-        print("\n================ Receiver Acquisition Summary ================")
-        print(json.dumps(metrics_dict, ensure_ascii=False, indent=2))
+        print("\n================ Receiver Acquisition Summary ================\n" + json.dumps(metrics_dict, ensure_ascii=False, indent=2))
         return metrics_dict, [record.to_dict() for record in records]
 
+    if getattr(args, "single_intervention", False):
+        summary, recs = SingleInterventionUseCase(tracker_port=MLflowTracker()).execute(model, args)
+        if getattr(args, "print_summary", False):
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return summary, recs
+
     if getattr(args, "intervention", False):
-        tracker = MLflowTracker()
-        intervention_use_case = InterventionUseCase(tracker_port=tracker)
-        metrics, records = intervention_use_case.execute(model, args)
+        metrics, records = InterventionUseCase(tracker_port=MLflowTracker()).execute(model, args)
         metrics_dict = metrics.to_dict()
-        print("\n==================== Intervention Summary ====================")
-        print(json.dumps(metrics_dict, ensure_ascii=False, indent=2))
+        print("\n==================== Intervention Summary ====================\n" + json.dumps(metrics_dict, ensure_ascii=False, indent=2))
         return metrics_dict, [r.to_dict() for r in records]
 
     tracker = MLflowTracker()
