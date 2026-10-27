@@ -9,6 +9,7 @@ from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
 from latentmas_reprop.application.receiver_compute_preflight.collection import (
     collect_samples,
 )
+from latentmas_reprop.application.receiver_reasoning.runner import collect_sample
 from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
 from latentmas_reprop.infrastructure.paths.naming import build_experiment_relpath
 from latentmas_reprop.infrastructure.paths.resolver import (
@@ -225,3 +226,68 @@ def test_scenario_07_preflight_partial_resumption(tmp_path):
         called_conditions = [call.args[6] for call in mock_collect.call_args_list]
         assert "no_handoff" not in called_conditions
         assert "matched" in called_conditions
+
+
+def test_scenario_08_reasoning_upstream_skip(tmp_path):
+    """Scenario 8: If receiver conditions are complete, upstream inference is skipped."""
+    resolver = PathResolver(tmp_path)
+    rel_path = "reasoning_test"
+    args = make_args(
+        tmp_path,
+        upstream_steps=[5],
+        run_id=rel_path,
+        handoff_mode="latent_only",
+        split="test",
+    )
+
+    for s in [0, 5]:
+        for mode in ["answer_only", "free"]:
+            c = resolver.get_condition_dir(tmp_path, 0, f"u{s}_{mode}")
+            save_condition_result(
+                c,
+                {
+                    "prediction": "1",
+                    "gold": "1",
+                    "correct": True,
+                    "empty_output": False,
+                    "context_id": f"ctx_{s}_{mode}",
+                    "upstream_latent_steps": s,
+                    "receiver_mode": mode,
+                    "receiver_token_limit_reached": False,
+                    "parse_failure": False,
+                    "execution_success": True,
+                    "receiver_latency_sec": 0.01,
+                    "upstream_build_latency_sec": 0.01,
+                    "receiver_generated_tokens": 1,
+                    "receiver_prompt_tokens": 1,
+                    "upstream_prompt_tokens": 1,
+                    "upstream_latent_steps_executed": 0,
+                },
+            )
+
+    model = MagicMock()
+    records = []
+
+    with (
+        patch(
+            "latentmas_reprop.application.receiver_reasoning.runner.get_path_resolver",
+            return_value=resolver,
+        ),
+        patch(
+            "latentmas_reprop.application.receiver_reasoning.runner.build_upstream",
+        ) as mock_build,
+    ):
+        collect_sample(
+            model=model,
+            args=args,
+            item={"question": "Q", "gold": "1"},
+            index=0,
+            config={},
+            records=records,
+            records_path=tmp_path / "records.jsonl",
+            evaluator_port=MagicMock(),
+            tracker_port=None,
+            runtime=MagicMock(),
+        )
+        assert len(records) == 4
+        assert mock_build.call_count == 0
