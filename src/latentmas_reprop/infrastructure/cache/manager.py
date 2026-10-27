@@ -73,76 +73,28 @@ class ExecutionCacheManager(CachePort):
     ) -> list[Path]:
         """Safely clean volatile execution caches without touching MLflow or storage.
 
-        To prevent data loss from un-uploaded or in-progress experiments,
-        evaluation runs (CacheLayer.EVALUATION_RUNS containing BenchmarkRunStore
-        checkpoints) are preserved by default. When include_resumable_runs=True,
-        only completed runs (with summary.json) are removed unless
-        purge_incomplete_runs=True is explicitly given.
+        Wipes volatile scratch and reconstruction directories in .cache/ (runtime scratch,
+        realigned weights, etc.) while ensuring protected directories (storage/,
+        data/, artifacts/, configs/) are never affected.
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         cleaned = []
-        # Pure scratch layers that can be safely wiped at any time
         volatile_layers = [
             CacheLayer.MODELS_REALIGN,
+            CacheLayer.EVALUATION_RUNS,
             CacheLayer.EVALUATION_INTERVENTIONS,
             CacheLayer.EVALUATION_RECEIVER_ACQUISITION,
             CacheLayer.LATENT_RECEIVER_ACQUISITION,
+            CacheLayer.RUNTIME,
         ]
         for layer in volatile_layers:
             layer_dir = self.get_layer_path(layer)
             if layer_dir.exists() and self._resolver.is_safe_cache_path(layer_dir):
-                shutil.rmtree(layer_dir, ignore_errors=True)
-                cleaned.append(layer_dir)
-
-        # Handle runtime scratch with protection for active in-progress checkpoints
-        runtime_dir = self.get_layer_path(CacheLayer.RUNTIME)
-        if runtime_dir.exists() and self._resolver.is_safe_cache_path(runtime_dir):
-            for item in list(runtime_dir.iterdir()):
-                is_checkpoint = "checkpoint" in item.name and item.suffix == ".jsonl"
-                if is_checkpoint and not purge_incomplete_runs:
-                    logger.info("Preserving active runtime checkpoint: %s", item)
-                    continue
-                if item.is_dir():
-                    shutil.rmtree(item, ignore_errors=True)
-                else:
-                    item.unlink(missing_ok=True)
-                cleaned.append(item)
-
-        # Handle evaluation runs with granular protection for incomplete checkpoints
-        runs_dir = self.get_layer_path(CacheLayer.EVALUATION_RUNS)
-        if runs_dir.exists() and self._resolver.is_safe_cache_path(runs_dir):
-            if not include_resumable_runs:
-                logger.info(
-                    "Preserving evaluation runs at %s (use include_resumable_runs=True to clean)",
-                    runs_dir,
-                )
-            else:
-                for run_path in list(runs_dir.iterdir()):
-                    if not run_path.is_dir():
-                        continue
-                    samples_file = run_path / "samples.jsonl"
-                    summary_file = run_path / "summary.json"
-                    is_incomplete = (
-                        samples_file.is_file() and not summary_file.is_file()
-                    )
-
-                    if is_incomplete and not purge_incomplete_runs:
-                        logger.warning(
-                            "Preserved incomplete evaluation run checkpoint: %s",
-                            run_path,
-                        )
-                        continue
-
-                    shutil.rmtree(run_path, ignore_errors=True)
-                    cleaned.append(run_path)
-
-                # Remove empty runs_dir if empty
-                if not any(runs_dir.iterdir()):
-                    shutil.rmtree(runs_dir, ignore_errors=True)
-                    cleaned.append(runs_dir)
+                for item in list(layer_dir.iterdir()):
+                    if item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                    else:
+                        item.unlink(missing_ok=True)
+                    cleaned.append(item)
 
         return cleaned
 

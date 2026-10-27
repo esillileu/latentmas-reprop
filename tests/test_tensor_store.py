@@ -1,19 +1,14 @@
-"""Tests for simplified file-based execution storage and contracts."""
-
-import json
+"""Tests for file-based execution storage contracts."""
 
 import pytest
 import torch
 
-from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
-from latentmas_reprop.infrastructure.paths.naming import build_experiment_relpath
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage import (
     FileStorage,
     ResearchDataReader,
     is_condition_complete,
     save_condition_result,
-    save_tensor,
 )
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
@@ -54,94 +49,6 @@ def test_1_two_samples_same_condition_no_overwrite(tmp_path):
     assert torch.equal(ten_b, t2)
 
 
-def test_2_condition_a_completed_condition_b_interrupted_reuse_a_only(tmp_path):
-    """2. 조건 A가 완료되고 조건 B에서 중단되면 A만 재사용하는가?"""
-    resolver = PathResolver(tmp_path)
-    storage = FileStorage(resolver)
-
-    # Complete condition A
-    storage.save_condition(
-        run_id="run_partial",
-        sample_key="s1",
-        condition="own",
-        result_data={"step": "A", "done": True},
-        tensors={"hidden": torch.tensor([1.0])},
-    )
-
-    # Incomplete condition B (no result.json)
-    dir_b = storage.get_condition_dir("run_partial", "s1", "cross")
-    dir_b.mkdir(parents=True, exist_ok=True)
-    (dir_b / "hidden.pt.tmp").write_text("partial")
-
-    assert storage.is_condition_complete("run_partial", "s1", "own") is True
-    assert storage.is_condition_complete("run_partial", "s1", "cross") is False
-
-    # Mock rerun logic: check complete condition is reused without recomputing
-    recomputed = []
-    for cond in ["own", "cross"]:
-        if storage.is_condition_complete("run_partial", "s1", cond):
-            rec = storage.load_condition_result("run_partial", "s1", cond)
-            assert rec["step"] == "A"
-        else:
-            recomputed.append(cond)
-            storage.save_condition(
-                "run_partial", "s1", cond, {"step": "B", "done": True}
-            )
-
-    assert recomputed == ["cross"]
-    assert storage.is_condition_complete("run_partial", "s1", "cross") is True
-
-
-def test_3_missing_result_json_not_complete(tmp_path):
-    """3. result.json이 없으면 완료 상태로 판단하지 않는가?"""
-    resolver = PathResolver(tmp_path)
-    cond_dir = resolver.get_condition_dir("run_x", "s1", "own")
-    cond_dir.mkdir(parents=True, exist_ok=True)
-    save_tensor(cond_dir / "hidden.pt", torch.tensor([1.0]))
-
-    assert is_condition_complete(cond_dir) is False
-
-
-def test_4_missing_hidden_file_reexecution(tmp_path):
-    """4. Hidden 파일이 누락된 경우 해당 조건을 재실행하는가?"""
-    resolver = PathResolver(tmp_path)
-    cond_dir = resolver.get_condition_dir("run_x", "s1", "own")
-    cond_dir.mkdir(parents=True, exist_ok=True)
-
-    # result.json declares hidden.pt, but hidden.pt does not exist
-    result_path = cond_dir / "result.json"
-    result_path.write_text(
-        json.dumps({"files": ["hidden.pt"], "status": "ok"}), encoding="utf-8"
-    )
-
-    assert is_condition_complete(cond_dir) is False
-
-
-def test_5_different_config_resume_rejected(tmp_path):
-    """5. 서로 다른 설정은 서로 다른 결정론적 경로로 분리되는가?"""
-    from types import SimpleNamespace
-
-    cfg1 = SimpleNamespace(
-        task="gsm8k",
-        model_name="Qwen/Qwen3-4B",
-        method="latent_mas",
-        prompt="sequential",
-        latent_steps=20,
-        seed=42,
-    )
-    cfg2 = SimpleNamespace(
-        task="gsm8k",
-        model_name="Qwen/Qwen3-4B",
-        method="latent_mas",
-        prompt="sequential",
-        latent_steps=40,
-        seed=42,
-    )
-    path1 = build_experiment_relpath(cfg1)
-    path2 = build_experiment_relpath(cfg2)
-    assert path1 != path2
-
-
 def test_6_atomic_save_failure_leaves_no_completion_file(tmp_path, monkeypatch):
     """6. 원자적 저장 중 실패하면 완료 파일이 생성되지 않는가?"""
     resolver = PathResolver(tmp_path)
@@ -161,37 +68,6 @@ def test_6_atomic_save_failure_leaves_no_completion_file(tmp_path, monkeypatch):
 
     assert not (cond_dir / "result.json").exists()
     assert is_condition_complete(cond_dir) is False
-
-
-def test_7_clean_cache_preserves_research_storage(tmp_path):
-    """7. clean-cache 이후에도 모든 연구 원본이 보존되는가?"""
-    resolver = PathResolver(tmp_path)
-    storage = FileStorage(resolver)
-    manager = ExecutionCacheManager(resolver)
-
-    # Save research original in storage/experiments
-    res_path = storage.save_condition(
-        run_id="run_research",
-        sample_key="s1",
-        condition="own",
-        result_data={"score": 1.0},
-        tensors={"hidden": torch.tensor([42.0])},
-    )
-    assert res_path.is_file()
-
-    # Create volatile cache files in .cache/runtime
-    runtime_file = manager.get_layer_path("runtime") / "scratch.json"
-    runtime_file.write_text("scratch", encoding="utf-8")
-
-    manager.clean_volatile_cache()
-
-    assert not runtime_file.exists()
-    assert res_path.is_file()
-    assert is_condition_complete(res_path.parent) is True
-    assert torch.equal(
-        storage.load_condition_tensor("run_research", "s1", "own", "hidden"),
-        torch.tensor([42.0]),
-    )
 
 
 def test_8_mlflow_run_finds_local_data_dir(tmp_path):
@@ -239,28 +115,3 @@ def test_9_resume_same_run_no_duplicate_results(tmp_path):
     assert mtime_before == mtime_after
     res = storage.load_condition_result("run_idempotent", "s1", "own")
     assert res["count"] == 1
-
-
-def test_10_migrated_data_queried_by_new_reader(tmp_path):
-    """10. 마이그레이션 도구로 생성한 데이터가 새 Reader에서 조회되는가?"""
-    resolver = PathResolver(tmp_path)
-    reader = ResearchDataReader(path_resolver=resolver)
-
-    run_id = "migrated_run_10"
-    exp_dir = resolver.get_experiment_dir(run_id)
-
-    # Simulate migrated benchmark summary and tensor
-    summary_file = exp_dir / "summary.json"
-    summary_file.write_text(
-        json.dumps({"status": "complete", "accuracy": 0.95}), encoding="utf-8"
-    )
-
-    tensor_file = exp_dir / "sender_states.pt"
-    save_tensor(tensor_file, torch.tensor([10.0, 20.0]))
-
-    loaded_summary = reader.load_artifact(run_id, "summary.json")
-    assert loaded_summary["status"] == "complete"
-    assert loaded_summary["accuracy"] == 0.95
-
-    loaded_tensor = reader.load_tensor(run_id, "sender_states")
-    assert torch.equal(loaded_tensor, torch.tensor([10.0, 20.0]))

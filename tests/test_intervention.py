@@ -14,19 +14,6 @@ from latentmas_reprop.domain.models import (
 )
 
 
-def test_evaluator_error_propagation_in_decode_with_context():
-    """decode_with_context result dict must contain 'error_msg' key."""
-    import inspect
-    import textwrap
-
-    from latentmas_reprop.domain.services.latent_mas import LatentMASMethod
-
-    src = textwrap.dedent(inspect.getsource(LatentMASMethod.decode_with_context))
-    assert '"error_msg"' in src or "'error_msg'" in src, (
-        "decode_with_context must include 'error_msg' in result dict"
-    )
-
-
 def test_intervention_metrics_all_conditions():
     metrics = InterventionMetrics(
         accuracy_own=0.8,

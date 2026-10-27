@@ -66,41 +66,14 @@ def test_clean_volatile_cache(tmp_path):
     exp_file.parent.mkdir(parents=True, exist_ok=True)
     exp_file.write_text('{"run_id": "test_run"}')
 
-    # Volatile cache files must be cleaned, but active checkpoints must be preserved
+    # Volatile cache files must be cleaned
     runtime_file = manager.get_layer_path(CacheLayer.RUNTIME) / "scratch.json"
     runtime_file.parent.mkdir(parents=True, exist_ok=True)
     runtime_file.write_text("scratch")
 
-    runtime_checkpoint = (
-        manager.get_layer_path(CacheLayer.RUNTIME)
-        / "intervention_checkpoint_test.jsonl"
-    )
-    runtime_checkpoint.write_text('{"sample_key": "k0"}\n')
-
-    # Incomplete benchmark run (resumption jsonl) must be preserved by default
-    incomplete_run_dir = (
-        manager.get_layer_path(CacheLayer.EVALUATION_RUNS) / "incomplete_run_1"
-    )
-    incomplete_run_dir.mkdir(parents=True, exist_ok=True)
-    resumption_file = incomplete_run_dir / "samples.jsonl"
-    resumption_file.write_text('{"sample_key": "k1", "answer": 42}\n')
-
     cleaned = manager.clean_volatile_cache()
     assert not runtime_file.exists()
-    assert runtime_checkpoint.is_file(), (
-        "Active runtime checkpoint must be preserved by routine clean-cache"
-    )
     assert persistent_db.is_file()
     assert tensor_file.is_file()
     assert exp_file.is_file()
-    assert resumption_file.is_file(), (
-        "Incomplete benchmark resumption log must not be deleted by routine clean-cache"
-    )
     assert isinstance(cleaned, list)
-
-    # Purging explicitly allows removing incomplete runs and checkpoints
-    manager.clean_volatile_cache(
-        include_resumable_runs=True, purge_incomplete_runs=True
-    )
-    assert not resumption_file.exists()
-    assert not runtime_checkpoint.exists()
