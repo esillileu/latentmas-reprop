@@ -165,6 +165,6 @@ def _is_valid_record(record: Any) -> bool:
         return False
     if "sample_key" not in record and "sample_index" not in record:
         return False
-    if record.get("prediction") is None:
+    if "prediction" not in record:
         return False
     return "correct" in record

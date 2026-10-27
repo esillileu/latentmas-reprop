@@ -225,20 +225,26 @@ def test_corrupted_and_incomplete_samples_are_dropped_and_rewritten(tmp_path):
     (s1 / "result.json").write_text(
         '{"sample_index": 1, broken json...', encoding="utf-8"
     )
-    # Sample 2: incomplete record (missing prediction)
+    # Sample 2: incomplete record (missing 'prediction' key)
     s2 = store.resolver.get_condition_dir(store.root, 2, "benchmark")
     (s2 / "result.json").write_text(
-        '{"sample_index": 2, "prediction": null, "correct": false}',
+        '{"sample_index": 2, "correct": false}',
         encoding="utf-8",
     )
-    # Sample 3: valid
+    # Sample 3: valid record with failed prediction (prediction is null)
     s3 = store.resolver.get_condition_dir(store.root, 3, "benchmark")
     (s3 / "result.json").write_text(
-        '{"sample_index": 3, "prediction": "ans4", "correct": true}',
+        '{"sample_index": 3, "prediction": null, "correct": false}',
+        encoding="utf-8",
+    )
+    # Sample 4: valid
+    s4 = store.resolver.get_condition_dir(store.root, 4, "benchmark")
+    (s4 / "result.json").write_text(
+        '{"sample_index": 4, "prediction": "ans4", "correct": true}',
         encoding="utf-8",
     )
 
-    # read_records should ignore broken and incomplete records
+    # read_records should ignore broken and incomplete records, but keep valid records with null prediction
     records = store.read_records()
-    assert len(records) == 2
-    assert [r["sample_index"] for r in records] == [0, 3]
+    assert len(records) == 3
+    assert [r["sample_index"] for r in records] == [0, 3, 4]
