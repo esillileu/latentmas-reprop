@@ -20,6 +20,7 @@ def get_lm_head(model_module: torch.nn.Module) -> Any:
     raise AttributeError("Cannot find lm_head or output embeddings on model.")
 
 
+@torch.no_grad()
 def decode_tokens_with_hiddens(
     model: torch.nn.Module,
     device: torch.device,
@@ -96,6 +97,7 @@ def run_explicit_generation(
     return ids, hiddens, reason, exhausted, text
 
 
+@torch.no_grad()
 def forward_intervention_prefix(
     model: Any,
     kv_snapshot: Any,

@@ -24,6 +24,7 @@ class SingleInterventionRunner:
         self.args = args
         self.evaluator = evaluator
 
+    @torch.no_grad()
     def compute_common_latent(
         self, item: dict[str, Any]
     ) -> tuple[Any, torch.Tensor, dict[str, Any]]:
@@ -86,6 +87,7 @@ class SingleInterventionRunner:
         }
         return kv_snapshot, common_hidden, meta
 
+    @torch.no_grad()
     def execute_ple(
         self, item: dict[str, Any], kv_snapshot: Any, last_hidden: torch.Tensor
     ) -> tuple[torch.Tensor, dict[str, Any]]:
@@ -120,6 +122,7 @@ class SingleInterventionRunner:
             "error_msg": err,
         }
 
+    @torch.no_grad()
     def execute_plce(
         self, item: dict[str, Any], kv_snapshot: Any
     ) -> tuple[torch.Tensor, dict[str, Any]]:
@@ -167,6 +170,7 @@ class SingleInterventionRunner:
             "error_msg": err,
         }
 
+    @torch.no_grad()
     def execute_plpe(
         self, item: dict[str, Any], kv_snapshot: Any
     ) -> tuple[torch.Tensor, dict[str, Any]]:

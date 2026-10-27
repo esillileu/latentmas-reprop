@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import torch
+
 from ..domain.ports.cache_port import CachePort
 from ..domain.ports.dataset_port import DatasetPort
 from ..domain.ports.evaluator_port import EvaluatorPort
@@ -48,6 +50,7 @@ class SingleInterventionUseCase:
         self.tracker_port = tracker_port
         self.storage = storage or get_file_storage()
 
+    @torch.no_grad()
     def execute(
         self,
         model: ModelWrapper,
