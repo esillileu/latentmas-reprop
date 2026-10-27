@@ -8,7 +8,7 @@
 ## 1. Prerequisites and Readiness Gate
 
 Before initiating migration, the following pre-flight checks must pass:
-1. **Live Experiment Verification**: Ensure PID `631844` (`lm_q314_gsm8k` on GPU) and any other active runs in `/home/user3/projects/latentmas-prop` have finished with `status=FINISHED`.
+1. **Live Experiment Verification**: Ensure PID `631844` (`lm_q314_gsm8k` on GPU) and any other active runs in `/home/user3/projects/latentmas-reprop` have finished with `status=FINISHED`.
 2. **Read-Only Lock**: No new runs or commands may be executed on the production worktree during migration.
 3. **Disk Space Verification**: Ensure at least 50 GB free space is available on the target storage volume for backups and deduplicated copies.
 
@@ -30,10 +30,10 @@ flowchart TD
 ```
 
 ### Step 1: 원본 실험 종료 및 MLflow 기록 완료 확인
-- Verify all Python processes in `/home/user3/projects/latentmas-prop` have exited cleanly (`code 0`).
+- Verify all Python processes in `/home/user3/projects/latentmas-reprop` have exited cleanly (`code 0`).
 - Check MLflow runs status in SQLite:
   ```bash
-  sqlite3 /home/user3/projects/latentmas-prop/.cache/mlflow.db "SELECT run_uuid, status FROM runs WHERE status != 'FINISHED';"
+  sqlite3 /home/user3/projects/latentmas-reprop/.cache/mlflow.db "SELECT run_uuid, status FROM runs WHERE status != 'FINISHED';"
   ```
 
 ### Step 2: 원본 SQLite DB의 일관된 백업 (Consistent SQLite Backup)
@@ -43,20 +43,20 @@ flowchart TD
   BACKUP_DIR="/home/user3/projects/backups/migration_${BACKUP_TIMESTAMP}"
   mkdir -p "${BACKUP_DIR}"
 
-  sqlite3 /home/user3/projects/latentmas-prop/.cache/mlflow.db ".backup '${BACKUP_DIR}/mlflow.db.bak'"
+  sqlite3 /home/user3/projects/latentmas-reprop/.cache/mlflow.db ".backup '${BACKUP_DIR}/mlflow.db.bak'"
   ```
 
 ### Step 3: 기존 MLflow Artifact 전체 백업
 - Create an immutable compressed archive of the legacy artifact root:
   ```bash
-  tar -cvzf "${BACKUP_DIR}/mlflow_artifacts.tar.gz" -C /home/user3/projects/latentmas-prop/.cache mlflow_artifacts
+  tar -cvzf "${BACKUP_DIR}/mlflow_artifacts.tar.gz" -C /home/user3/projects/latentmas-reprop/.cache mlflow_artifacts
   ```
 
 ### Step 4: 레거시 Run 및 파일 목록 확보 (Manifest of Record)
 - Generate a manifest of all existing runs, traces, and artifacts with SHA-256 hashes:
   ```bash
   sqlite3 "${BACKUP_DIR}/mlflow.db.bak" "SELECT count(*) FROM runs;" > "${BACKUP_DIR}/expected_runs.txt"
-  find /home/user3/projects/latentmas-prop/.cache/mlflow_artifacts -type f -exec sha256sum {} + > "${BACKUP_DIR}/legacy_artifact_checksums.txt"
+  find /home/user3/projects/latentmas-reprop/.cache/mlflow_artifacts -type f -exec sha256sum {} + > "${BACKUP_DIR}/legacy_artifact_checksums.txt"
   ```
 
 ### Step 5: 신규 저장소로의 데이터 복제 (Copy to New Persistent Tier)
@@ -67,7 +67,7 @@ flowchart TD
   ```
 - Copy legacy artifacts into `storage/mlflow/mlflow_artifacts/`:
   ```bash
-  rsync -av /home/user3/projects/latentmas-prop/.cache/mlflow_artifacts/ storage/mlflow/mlflow_artifacts/
+  rsync -av /home/user3/projects/latentmas-reprop/.cache/mlflow_artifacts/ storage/mlflow/mlflow_artifacts/
   ```
 
 ### Step 6: 기존 Artifact URI 및 Run 연결 검증
