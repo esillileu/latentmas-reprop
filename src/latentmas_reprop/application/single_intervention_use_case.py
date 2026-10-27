@@ -3,6 +3,7 @@
 from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from ..domain.ports.cache_port import CachePort
 from ..domain.ports.dataset_port import DatasetPort
@@ -102,7 +103,14 @@ class SingleInterventionUseCase:
         runner = SingleInterventionRunner(model, args, self.evaluator_port)
         all_records: list[dict[str, Any]] = []
 
-        for idx, item in enumerate(dataset):
+        show_progress = not bool(getattr(args, "no_progress", False))
+        dataset_iter = tqdm(
+            dataset,
+            desc="Single Intervention",
+            disable=not show_progress,
+            unit="sample",
+        )
+        for idx, item in enumerate(dataset_iter):
             skey = f"{idx:06d}"
             # UC-01: Shared common latent calculation
             if not overwrite and self.storage.is_condition_complete(
