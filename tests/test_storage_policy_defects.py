@@ -156,11 +156,11 @@ def test_run_summary_scope_aggregation_10_100_10(tmp_path):
     assert metrics["correct"] == 5
     assert metrics["accuracy"] == 0.5
 
-    # MLflow run must be scoped to n10
+    # MLflow run must reference canonical exp_rel
     exp = tracker.client.get_experiment_by_name("test_exp")
     runs = tracker.client.search_runs(experiment_ids=[exp.experiment_id])
     assert len(runs) == 1
-    assert runs[0].data.tags.get("mlflow.runName") == f"{exp_rel}_n10"
+    assert runs[0].data.tags.get("mlflow.runName") == exp_rel
 
     # On-disk summary.json must remain 100 samples intact
     on_disk_summary = json.loads((exp_dir / "summary.json").read_text())

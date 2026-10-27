@@ -30,9 +30,7 @@ def start_benchmark_tracker(
     exp_rel = getattr(args, "exp_relpath", None) or build_experiment_relpath(
         args, dtype_name=dtype_name, backend=backend_name
     )
-    max_s = getattr(args, "max_samples", None)
-    scope_str = f"n{max_s}" if max_s is not None and int(max_s) > 0 else "all"
-    run_name = f"{exp_rel}_{scope_str}"
+    run_name = exp_rel
     exp_dir = get_path_resolver().get_experiment_dir(exp_rel)
     tags = {
         "model": args.model_name,

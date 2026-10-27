@@ -1,6 +1,7 @@
 """Reanalyze an MLflow preflight run without model inference or local cache inputs."""
 
 import argparse
+import contextlib
 import json
 import re
 import tempfile
@@ -139,8 +140,13 @@ def analyze_run(
         or run.data.params.get("model_name")
         or run_id
     )
+    from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
+
     model_dir = sanitize_model_name(model_name)
-    output = output_dir or (Path("artifacts/receiver_compute_preflight") / model_dir)
+    if output_dir:
+        output = get_path_resolver().resolve(output_dir)
+    else:
+        output = get_path_resolver().artifacts_dir / "receiver_compute_preflight" / model_dir
     output.mkdir(parents=True, exist_ok=True)
 
     targets = target_accuracies or [0.5, 0.7, 0.9]
@@ -151,21 +157,15 @@ def analyze_run(
         generate_all_plots(output, metrics, model_name=model_name)
         summary_path = output / "summary.md"
         if summary_path.exists():
-            plot_section = [
-                "",
-                "## plots",
-                "",
-                "- ![Budget Accuracy Curve](budget_accuracy_curve.png)",
-                "- ![Pairing Gain Curve](pairing_gain_curve.png)",
-                "- ![Latency Accuracy Tradeoff](latency_accuracy_tradeoff.png)",
-                "- ![Tokens Cost Curve](tokens_cost_curve.png)",
-                "",
-            ]
+            plots_md = (
+                "\n## plots\n\n- ![Budget Accuracy Curve](budget_accuracy_curve.png)\n"
+                "- ![Pairing Gain Curve](pairing_gain_curve.png)\n"
+                "- ![Latency Accuracy Tradeoff](latency_accuracy_tradeoff.png)\n"
+                "- ![Tokens Cost Curve](tokens_cost_curve.png)\n\n"
+            )
             content = summary_path.read_text(encoding="utf-8")
             if "## plots" not in content:
-                summary_path.write_text(
-                    content + "\n".join(plot_section), encoding="utf-8"
-                )
+                summary_path.write_text(content + plots_md, encoding="utf-8")
 
     (output / "analysis_config.yaml").write_text(
         yaml.safe_dump(config, sort_keys=False)
@@ -241,20 +241,22 @@ def main(argv=None):
     if not target_rid and args.experiment_dir:
         from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
 
-        edir = str(
-            get_path_resolver().get_experiment_dir(args.experiment_dir).resolve()
-        )
+        paths = get_path_resolver()
+        edir_path = paths.get_experiment_dir(args.experiment_dir, create=False)
+        edir = str(edir_path.resolve())
         exp = client.get_experiment_by_name(args.experiment_name)
-        runs = (
-            client.search_runs(
-                [exp.experiment_id],
-                filter_string=f"tags.data_dir = '{edir}'",
-                max_results=1,
-            )
-            if exp
-            else []
-        )
+        runs = []
+        if exp:
+            rel_dir = args.experiment_dir
+            with contextlib.suppress(ValueError):
+                rel_dir = str(edir_path.relative_to(paths.experiments_dir))
+            filt = f"tags.data_dir = '{edir}' or tags.rel_dir = '{rel_dir}' or tags.rel_dir = '{args.experiment_dir}'"
+            runs = client.search_runs([exp.experiment_id], filter_string=filt, max_results=1)
         target_rid = runs[0].info.run_id if runs else None
+        if not target_rid:
+            raise FileNotFoundError(
+                f"No MLflow run or experiment data found for experiment_dir: {args.experiment_dir}"
+            )
 
     if target_rid:
         if len(target_rid) != 32 or "/" in target_rid:

@@ -12,15 +12,20 @@ The repository partitions data across four distinct lifecycle tiers:
 Repository Root
 ├── storage/                    # Tier 1: Persistent Research Data & Tracking (Permanent)
 │   ├── mlflow/                 # MLflow SQLite DB (mlflow.db) & Run Artifacts (mlflow_artifacts/)
-│   └── experiments/            # File-based execution runs (config.json, samples/<key>/<cond>/result.json)
-│       └── <run_id>/
+│   └── experiments/            # File-based execution runs (<task>/<model>/<method>/<prompt>/<params>/)
+│       └── <task>/<model>/<method>/<prompt>/<params>/
 │           ├── config.json
+│           ├── summary.json
+│           ├── samples.jsonl
 │           └── samples/
-│               └── <sample_key>/
-│                   ├── shared/
-│                   └── <condition>/
-│                       ├── hidden.pt
-│                       └── result.json
+│               ├── 000000/
+│               │   ├── shared/
+│               │   │   ├── kv.pt
+│               │   │   └── result.json
+│               │   └── <condition>/
+│               │       └── result.json
+│               └── 000001/
+│                   └── ...
 │
 ├── artifacts/                  # Tier 2: Publication & Presentation Artifacts (Permanent)
 │   ├── presentation/           # High-resolution publication plots (PNG/PDF)
@@ -40,7 +45,7 @@ Repository Root
 
 ## 2. Path Resolution (`PathResolver`)
 
-All relative and project-specific filesystem paths are resolved centrally through [`PathResolver`](file:///home/user3/projects/latentmas-storage/src/latentmas_reprop/infrastructure/paths/resolver.py).
+All relative and project-specific filesystem paths are resolved centrally through `PathResolver` (`src/latentmas_reprop/infrastructure/paths/resolver.py`).
 
 ### Key Managed Locations:
 - **`root`**: Root directory of the repository (anchored at `pyproject.toml`). Overridable via `LATENTMAS_PROJECT_ROOT`.
@@ -54,21 +59,22 @@ All relative and project-specific filesystem paths are resolved centrally throug
 
 ### Resolving Configs:
 When `-c <name>` is provided to the CLI, `PathResolver.resolve_config_path()` resolves the file in the following order:
-1. Exact file path or path relative to the current working directory.
-2. Inside `<repo_root>/configs/`.
-3. Inside `<repo_root>/configs/` with `.yaml` appended.
-4. Inside `<repo_root>/configs/` with `.yml` appended.
+1. Exact file path or path relative to the current working directory (`p.is_file()`).
+2. Relative to repository root (`<repo_root>/<config_path>`).
+3. Inside `<repo_root>/configs/<config_path>`.
+4. Inside `<repo_root>/configs/<config_path>.yaml`.
+5. Inside `<repo_root>/configs/<config_path>.yml`.
 
 ---
 
 ## 3. File-Based Execution Storage (`FileStorage`)
 
-Experiment states and tensors are stored directly on the filesystem organized by `run_id`, `sample_key`, and `condition`:
+Experiment states and tensors are stored directly on the filesystem organized by canonical 5-level relative path `<task>/<model>/<method>/<prompt>/<params>`, 6-digit sample index (`000000`, `000001`, ...), and `condition`:
 
-- **Storage Location**: `<storage_dir>/experiments/<run_id>/samples/<sample_key>/<condition>/`
-- **Completion Check**: `is_condition_complete(condition_dir)` verifies that `result.json` parses as valid JSON and all files listed in its `"files"` field exist on disk.
+- **Storage Location**: `<storage_dir>/experiments/<task>/<model>/<method>/<prompt>/<params>/samples/<index:06d>/<condition>/`
+- **Completion Check**: `is_condition_complete(condition_dir)` verifies that `result.json` parses as valid JSON, contains no error, and all files listed in its `"files"` field exist on disk.
 - **Atomic Writes**: Tensors and `result.json` are written to temporary files and atomically renamed to prevent corruption.
-- **Config Verification**: Resuming verifies that the requested configuration matches `<run_id>/config.json`.
+- **Resumption Contract**: Re-executing an experiment reuses completed conditions and samples on disk without re-inference.
 
 ---
 
@@ -94,4 +100,7 @@ This invokes `ExecutionCacheManager.clean_volatile_cache()`, which:
 MLflow tracks experiment metrics, parameters, and GenAI traces:
 - **Backend Store URI**: `sqlite:///<storage_dir>/mlflow/mlflow.db`
 - **Default Artifact Root**: `<storage_dir>/mlflow/mlflow_artifacts`
-- **Data Link**: Each MLflow run tags `data_dir` pointing to the run's directory in `storage/experiments/<run_id>`.
+- **Data Link**: Each MLflow run corresponds directly to one experiment directory, tagging:
+  - `data_dir`: Absolute path to `storage/experiments/<relpath>/`
+  - `rel_dir`: Canonical relative path `<task>/<model>/<method>/<prompt>/<params>`
+- **Run Idempotency**: Re-executing an experiment reuses the existing MLflow run matching `rel_dir` or `data_dir`. No duplicate runs are created.

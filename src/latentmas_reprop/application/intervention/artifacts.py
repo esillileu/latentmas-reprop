@@ -45,11 +45,10 @@ def start_intervention_tracker(
 
     exp_name = getattr(args, "tracking_experiment_name", "latentmas_intervention")
     exp_dir = get_path_resolver().get_experiment_dir(run_name)
-    scoped_run_name = f"{run_name}_n{n_samples}"
 
     tracker_port.start_run(
         experiment_name=exp_name,
-        run_name=scoped_run_name,
+        run_name=run_name,
         tags={
             "model": args.model_name,
             "task": args.task,
@@ -58,7 +57,7 @@ def start_intervention_tracker(
             "git_commit": git_hash,
             "data_dir": str(exp_dir.resolve()),
             "rel_dir": run_name,
-            "run_name": scoped_run_name,
+            "run_name": run_name,
         },
     )
     tracker_port.log_params(

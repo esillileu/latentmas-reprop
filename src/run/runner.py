@@ -202,8 +202,7 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
     if exp_name:
         with contextlib.suppress(Exception):
             tracker = MLflowTracker()
-            scope_str = f"n{target_count}"
-            run_name = f"{exp_rel}_{scope_str}"
+            run_name = exp_rel
             tracker.start_run(
                 experiment_name=exp_name,
                 run_name=run_name,

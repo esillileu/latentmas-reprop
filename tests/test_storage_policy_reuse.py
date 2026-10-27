@@ -104,14 +104,14 @@ def test_scenario_02_and_03_scope_expansion_and_sharing(tmp_path):
     assert metrics_b.fresh_trajectories == 2  # 2~3 fresh!
     assert model.generate_text_batch.call_count == 4
 
-    # Both run summaries preserved under distinct run names in MLflow
+    # Existing MLflow run is reused for the same experiment path
     exp_rel = build_experiment_relpath(args_a, dtype_name="bfloat16")
     runs = tracker.client.search_runs(
         experiment_ids=[tracker.client.get_experiment_by_name("test_exp").experiment_id]
     )
-    run_names = {r.data.tags.get("mlflow.runName") for r in runs}
-    assert f"{exp_rel}_n2" in run_names
-    assert f"{exp_rel}_n4" in run_names
+    assert len(runs) == 1
+    assert runs[0].data.tags.get("rel_dir") == exp_rel
+    assert runs[0].data.tags.get("mlflow.runName") == exp_rel
 
 
 def test_scenario_07_preflight_partial_resumption(tmp_path):

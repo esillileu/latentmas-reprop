@@ -45,6 +45,7 @@ class MLflowTracker(ExperimentTrackerPort):
         else:
             # Standard persistent storage MLflow (storage/mlflow/mlflow.db)
             db_path = self.resolver.mlflow_db_path
+            db_path.parent.mkdir(parents=True, exist_ok=True)
             self.tracking_uri = f"sqlite:///{db_path.resolve()}"
         self.is_remote = not self.tracking_uri.startswith(("sqlite", "file"))
 
@@ -74,41 +75,42 @@ class MLflowTracker(ExperimentTrackerPort):
 
         # Check existing experiment
         experiment = mlflow.get_experiment_by_name(experiment_name)
-        if (
-            experiment is not None
-            and getattr(experiment, "lifecycle_stage", "") == "deleted"
-        ):
+        if experiment is not None and getattr(experiment, "lifecycle_stage", "") == "deleted":
             with suppress(Exception):
-                mlflow.tracking.MlflowClient().restore_experiment(
-                    experiment.experiment_id
-                )
+                mlflow.tracking.MlflowClient().restore_experiment(experiment.experiment_id)
             experiment = mlflow.get_experiment_by_name(experiment_name)
 
         if experiment is None:
-            if not self.is_remote and self.artifact_location:
-                experiment_id = mlflow.create_experiment(
-                    experiment_name,
-                    artifact_location=self.artifact_location,
-                )
-            else:
-                experiment_id = mlflow.create_experiment(experiment_name)
+            loc = self.artifact_location if not self.is_remote else None
+            experiment_id = mlflow.create_experiment(experiment_name, artifact_location=loc) if loc else mlflow.create_experiment(experiment_name)
         else:
             experiment_id = experiment.experiment_id
 
-        # Search existing run by run_name tag or run_name attribute to prevent duplicates of same scope
+        # Canonical experiment path and directory tags
+        rel_dir = run_tags.get("rel_dir") or (str(run_name) if run_name and ("/" in str(run_name) or run_tags.get("task")) else None)
+        data_dir = run_tags.get("data_dir") or (str(self.resolver.get_experiment_dir(rel_dir).resolve()) if rel_dir else None)
         if run_name and "run_name" not in run_tags:
             run_tags["run_name"] = str(run_name)
+        if rel_dir and "rel_dir" not in run_tags:
+            run_tags["rel_dir"] = str(rel_dir)
+        if data_dir and "data_dir" not in run_tags:
+            run_tags["data_dir"] = str(data_dir)
+
+        # Search existing run by rel_dir or data_dir, falling back to run_name
         existing_rid = None
+        client = mlflow.tracking.MlflowClient()
+        filters = [f"tags.rel_dir = '{rel_dir}'"] if rel_dir else []
+        if data_dir:
+            filters.append(f"tags.data_dir = '{data_dir}'")
         if run_name:
-            filt = f"tags.run_name = '{run_name}'"
+            filters.extend([f"tags.run_name = '{run_name}'", f"attributes.run_name = '{run_name}'"])
+
+        for filt in filters:
             with suppress(Exception):
-                runs = mlflow.tracking.MlflowClient().search_runs(
-                    experiment_ids=[experiment_id],
-                    filter_string=filt,
-                    max_results=1,
-                )
+                runs = client.search_runs(experiment_ids=[experiment_id], filter_string=filt, max_results=1)
                 if runs:
                     existing_rid = runs[0].info.run_id
+                    break
 
         if mlflow.active_run() is not None:
             with suppress(Exception):
@@ -117,36 +119,20 @@ class MLflowTracker(ExperimentTrackerPort):
         if existing_rid:
             self._active_run = mlflow.start_run(run_id=existing_rid, tags=run_tags)
         else:
-            self._active_run = mlflow.start_run(
-                experiment_id=experiment_id, run_name=run_name, tags=run_tags
-            )
+            self._active_run = mlflow.start_run(experiment_id=experiment_id, run_name=run_name, tags=run_tags)
 
-        rel_dir = run_tags.get("rel_dir") or run_name
-        if rel_dir and "data_dir" not in run_tags:
-            p = str(self.resolver.get_experiment_dir(rel_dir).resolve())
-            tags = {
-                "data_dir": p,
-                "rel_dir": str(rel_dir),
-            }
+        target_rel = run_tags.get("rel_dir") or run_name
+        if target_rel and "data_dir" not in run_tags:
+            p = str(self.resolver.get_experiment_dir(target_rel, create=True).resolve())
             with suppress(Exception):
-                mlflow.set_tags(tags)
+                mlflow.set_tags({"data_dir": p, "rel_dir": str(target_rel)})
         return self._active_run
 
     def set_data_dir(self, rel_or_id: str, data_dir: Path | str | None = None) -> None:
         """Explicitly set or update the storage directory tags for the active run."""
-        p = str(
-            (
-                Path(data_dir)
-                if data_dir
-                else self.resolver.get_experiment_dir(rel_or_id)
-            ).resolve()
-        )
-        tags = {
-            "data_dir": p,
-            "rel_dir": str(rel_or_id),
-        }
+        p = str((Path(data_dir) if data_dir else self.resolver.get_experiment_dir(rel_or_id, create=True)).resolve())
         with suppress(Exception):
-            mlflow.set_tags(tags)
+            mlflow.set_tags({"data_dir": p, "rel_dir": str(rel_or_id)})
 
     @property
     def client(self) -> Any:
@@ -170,7 +156,23 @@ class MLflowTracker(ExperimentTrackerPort):
             )
             for k, v in params.items()
         }
-        mlflow.log_params(safe)
+        active = self._active_run or mlflow.active_run()
+        if active is not None:
+            with suppress(Exception):
+                run = self.client.get_run(active.info.run_id)
+                existing = run.data.params
+                new_params = {k: v for k, v in safe.items() if k not in existing}
+                changed = {
+                    k: str(v)
+                    for k, v in safe.items()
+                    if k in existing and str(existing[k]) != str(v)
+                }
+                if changed:
+                    mlflow.set_tags(changed)
+                safe = new_params
+        if safe:
+            with suppress(Exception):
+                mlflow.log_params(safe)
 
     def log_metrics(
         self, metrics: dict[str, float | int], step: int | None = None
