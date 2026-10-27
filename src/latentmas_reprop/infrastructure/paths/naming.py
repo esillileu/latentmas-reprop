@@ -65,7 +65,24 @@ def build_params_stem(
         parts.append("realign")
 
     # Differentiating experiment types and calculation options
-    if getattr(args, "intervention", False):
+    if getattr(args, "single_intervention", False):
+        parts.append("single_intervention")
+        sig = getattr(args, "control_signal", None)
+        if sig and sig != "\nSolution:":
+            clean_sig = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in sig.strip())
+            clean_sig = "_".join(filter(None, clean_sig.split("_")))
+            if clean_sig:
+                parts.append(f"sig_{clean_sig}")
+        role = getattr(args, "receiver_role", None)
+        if role and role != "judger":
+            parts.append(f"role_{role}")
+        plpe_p = getattr(args, "plpe_prompt", None)
+        if plpe_p:
+            clean_p = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in str(plpe_p).strip())
+            clean_p = "_".join(filter(None, clean_p.split("_")))[:20]
+            if clean_p:
+                parts.append(f"plpe_{clean_p}")
+    elif getattr(args, "intervention", False):
         parts.append("intervention")
         cross_policy = getattr(args, "cross_policy", None)
         if cross_policy:
