@@ -58,3 +58,42 @@ def test_path_resolver_nested_config_without_extension(tmp_path):
     resolved = resolver.resolve_config_path("secret_digit/lm_q3-0.6_l0")
 
     assert resolved == config.resolve()
+
+
+def test_path_resolver_read_only_querying_does_not_create_dirs(tmp_path):
+    """Reading or querying paths must never create directories on disk."""
+    resolver = PathResolver(tmp_path)
+    exp_dir = resolver.get_experiment_dir(
+        "gsm8k/Qwen3-0.6B/latent_mas/sequential/params"
+    )
+    assert not exp_dir.exists()
+    assert not (tmp_path / "storage").exists()
+
+    cond_dir = resolver.get_condition_dir(
+        "gsm8k/Qwen3-0.6B/latent_mas/sequential/params", 0, "benchmark"
+    )
+    assert not cond_dir.exists()
+    assert not (tmp_path / "storage").exists()
+
+
+def test_path_resolver_strips_nested_storage_experiments_prefix(tmp_path):
+    """Passing storage/experiments/... must not cause duplicate path nesting."""
+    resolver = PathResolver(tmp_path)
+    rel = "gsm8k/Qwen3-0.6B/latent_mas/sequential/params"
+    nested_input = f"storage/experiments/{rel}"
+
+    exp_dir = resolver.get_experiment_dir(nested_input)
+    expected = resolver.experiments_dir / rel
+    assert exp_dir == expected
+    assert "storage/experiments/storage/experiments" not in str(exp_dir)
+
+
+def test_completion_check_does_not_create_directory(tmp_path):
+    """Checking condition completion on non-existent path must not mutate disk."""
+    from latentmas_reprop.infrastructure.storage import is_condition_complete
+
+    resolver = PathResolver(tmp_path)
+    cond_dir = resolver.get_condition_dir("task/model/method/prompt/params", 0, "cond")
+    assert not is_condition_complete(cond_dir)
+    assert not cond_dir.exists()
+    assert not (tmp_path / "storage").exists()

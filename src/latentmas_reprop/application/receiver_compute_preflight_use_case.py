@@ -106,7 +106,7 @@ class ReceiverComputePreflightUseCase:
 
         tracker = self.tracker
         _name, kind, label = run_identity(args, len(items))
-        run_name = f"{exp_relpath}_n{len(items)}"
+        run_name = exp_relpath
         config.update(
             run_name=run_name,
             run_kind=kind,

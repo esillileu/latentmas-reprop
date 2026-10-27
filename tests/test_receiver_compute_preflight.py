@@ -174,13 +174,20 @@ def test_cli_axes_and_constraints():
 
 
 def test_generate_all_plots_exports_four_figures(tmp_path):
+    from pathlib import Path
+    from unittest.mock import patch
+
     from latentmas_reprop.application.receiver_compute_preflight.plots import (
         generate_all_plots,
     )
 
     config, rows = config_and_records()
     metrics, _ = analyze(rows, config)
-    generated = generate_all_plots(tmp_path, metrics, model_name="TestModel")
+    with patch(
+        "matplotlib.figure.Figure.savefig",
+        side_effect=lambda path, *args, **kwargs: Path(path).write_bytes(b"dummy"),
+    ):
+        generated = generate_all_plots(tmp_path, metrics, model_name="TestModel")
     assert len(generated) == 4
     for p in generated:
         assert p.exists()

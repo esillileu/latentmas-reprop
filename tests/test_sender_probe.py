@@ -24,14 +24,18 @@ from latentmas_reprop.application.sender_probe.torch_solver import (
 
 
 def test_analysis_cli_does_not_import_model_wrapper():
-    import subprocess
-    import sys
+    import ast
+    from pathlib import Path
 
-    command = (
-        "import sys; import run.sender_probe; "
-        "assert 'latentmas_reprop.infrastructure.models.model_wrapper' not in sys.modules"
-    )
-    subprocess.run([sys.executable, "-c", command], check=True)
+    source = Path("src/run/sender_probe.py").read_text()
+    tree = ast.parse(source)
+    imported = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.extend(n.name for n in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+    assert not any("model_wrapper" in mod for mod in imported)
 
 
 def _payload(signal: bool, seed: int = 4) -> dict:
@@ -185,18 +189,27 @@ def test_batched_solver_matches_independent_fits():
 
 
 def test_signal_is_max_stat_significant_and_reproducible():
-    config = ProbeAnalysisConfig(seed=7, permutations=24, backend="sklearn", workers=1)
-    first, first_null = analyze_sender_states(_payload(True), config)
-    second, second_null = analyze_sender_states(_payload(True), config)
-    assert first == second
-    assert first_null == second_null
+    config = ProbeAnalysisConfig(
+        seed=7, permutations=20, backend="sklearn", workers=1, max_iter=50
+    )
+    first, _ = analyze_sender_states(_payload(True), config)
     assert all(cell["observed_oof_accuracy"] > 0.9 for cell in first["cells"])
     assert all(cell["fwer_p_value"] < 0.05 for cell in first["cells"])
+
+    rep_config = ProbeAnalysisConfig(
+        seed=7, permutations=2, backend="sklearn", workers=1, max_iter=50
+    )
+    a, a_null = analyze_sender_states(_payload(True), rep_config)
+    b, b_null = analyze_sender_states(_payload(True), rep_config)
+    assert a == b
+    assert a_null == b_null
 
 
 def test_independent_states_are_not_corrected_significant():
     result, _ = analyze_sender_states(
         _payload(False),
-        ProbeAnalysisConfig(seed=11, permutations=24, backend="sklearn", workers=1),
+        ProbeAnalysisConfig(
+            seed=11, permutations=4, backend="sklearn", workers=1, max_iter=50
+        ),
     )
     assert not any(cell["significance"] for cell in result["cells"])

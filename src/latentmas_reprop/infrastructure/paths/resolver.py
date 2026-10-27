@@ -65,9 +65,7 @@ class PathResolver:
         Defaults to <root>/.cache, overridable by LATENTMAS_CACHE_DIR.
         """
         env_dir = os.environ.get("LATENTMAS_CACHE_DIR")
-        path = Path(env_dir).resolve() if env_dir else self._root / ".cache"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return Path(env_dir).resolve() if env_dir else self._root / ".cache"
 
     @property
     def storage_dir(self) -> Path:
@@ -76,47 +74,69 @@ class PathResolver:
         Defaults to <root>/storage, overridable by LATENTMAS_STORAGE_DIR.
         """
         env_dir = os.environ.get("LATENTMAS_STORAGE_DIR")
-        path = Path(env_dir).resolve() if env_dir else self._root / "storage"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return Path(env_dir).resolve() if env_dir else self._root / "storage"
 
     @property
     def experiments_dir(self) -> Path:
         """Root directory for persistent experiment runs."""
-        path = self.storage_dir / "experiments"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.storage_dir / "experiments"
 
-    def get_experiment_dir(self, run_id: str | Path) -> Path:
-        """Get or create directory for a specific experiment run."""
-        if isinstance(run_id, Path) and run_id.is_absolute():
-            path = run_id
+    def get_experiment_dir(self, run_id: str | Path, create: bool = False) -> Path:
+        """Get directory for a specific experiment run without mutating disk unless create=True."""
+        p = Path(run_id)
+        if p.is_absolute():
+            path = p.resolve()
         else:
             clean_rel = str(run_id).strip("/\\")
-            path = self.experiments_dir / clean_rel
-        path.mkdir(parents=True, exist_ok=True)
+            cwd_cand = (Path.cwd() / p).resolve()
+            root_cand = (self._root / p).resolve()
+            exp_dir_resolved = self.experiments_dir.resolve()
+            storage_dir_resolved = self.storage_dir.resolve()
+            if cwd_cand.is_dir() and (
+                exp_dir_resolved in cwd_cand.parents
+                or cwd_cand == exp_dir_resolved
+                or storage_dir_resolved in cwd_cand.parents
+            ):
+                path = cwd_cand
+            elif root_cand.is_dir() and (
+                exp_dir_resolved in root_cand.parents
+                or root_cand == exp_dir_resolved
+                or storage_dir_resolved in root_cand.parents
+            ):
+                path = root_cand
+            else:
+                if clean_rel.startswith("storage/experiments/"):
+                    clean_rel = clean_rel[len("storage/experiments/"):]
+                elif clean_rel.startswith("experiments/"):
+                    clean_rel = clean_rel[len("experiments/"):]
+                path = (self.experiments_dir / clean_rel).resolve()
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def get_sample_dir(self, run_id: str | Path, sample_key: int | str) -> Path:
-        """Get or create directory for a specific sample within an experiment run."""
+    def get_sample_dir(
+        self, run_id: str | Path, sample_key: int | str, create: bool = False
+    ) -> Path:
+        """Get directory for a specific sample within an experiment run."""
         key_str = str(sample_key)
         idx_str = (
             f"{int(key_str):06d}" if key_str.isdigit() else key_str.replace("/", "_")
         )
-        if isinstance(run_id, Path) and run_id.is_absolute():
-            path = run_id / "samples" / idx_str
-        else:
-            path = self.get_experiment_dir(run_id) / "samples" / idx_str
-        path.mkdir(parents=True, exist_ok=True)
+        base = self.get_experiment_dir(run_id, create=create)
+        path = base / "samples" / idx_str
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
         return path
 
     def get_condition_dir(
-        self, run_id: str | Path, sample_key: int | str, condition: str
+        self, run_id: str | Path, sample_key: int | str, condition: str, create: bool = False
     ) -> Path:
-        """Get or create directory for a specific condition within a sample."""
+        """Get directory for a specific condition within a sample."""
         clean_condition = str(condition).replace("/", "_").replace("\\", "_")
-        path = self.get_sample_dir(run_id, sample_key) / clean_condition
-        path.mkdir(parents=True, exist_ok=True)
+        base = self.get_sample_dir(run_id, sample_key, create=create)
+        path = base / clean_condition
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
         return path
 
     @property
@@ -126,9 +146,7 @@ class PathResolver:
         Defaults to <storage_dir>/mlflow, overridable by LATENTMAS_MLFLOW_DIR.
         """
         env_dir = os.environ.get("LATENTMAS_MLFLOW_DIR")
-        path = Path(env_dir).resolve() if env_dir else self.storage_dir / "mlflow"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return Path(env_dir).resolve() if env_dir else self.storage_dir / "mlflow"
 
     @property
     def mlflow_db_path(self) -> Path:
@@ -138,9 +156,7 @@ class PathResolver:
     @property
     def mlflow_artifacts_dir(self) -> Path:
         """Path to persistent MLflow artifacts storage."""
-        path = self.mlflow_dir / "mlflow_artifacts"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self.mlflow_dir / "mlflow_artifacts"
 
     @property
     def artifacts_dir(self) -> Path:
@@ -149,9 +165,7 @@ class PathResolver:
         Defaults to <root>/artifacts, overridable by LATENTMAS_ARTIFACTS_DIR.
         """
         env_dir = os.environ.get("LATENTMAS_ARTIFACTS_DIR")
-        path = Path(env_dir).resolve() if env_dir else self._root / "artifacts"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return Path(env_dir).resolve() if env_dir else self._root / "artifacts"
 
     def is_safe_cache_path(self, target_path: Path | str) -> bool:
         """Verify that a path is strictly inside cache_dir and does not touch protected storage."""
@@ -196,9 +210,7 @@ class PathResolver:
     @property
     def logs_dir(self) -> Path:
         """Example logs directory."""
-        path = self._root / "example_logs"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self._root / "example_logs"
 
     @property
     def assets_dir(self) -> Path:
@@ -208,9 +220,7 @@ class PathResolver:
     @property
     def configs_dir(self) -> Path:
         """YAML configuration directory."""
-        path = self._root / "configs"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self._root / "configs"
 
     @property
     def templates_dir(self) -> Path:

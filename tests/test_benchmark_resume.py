@@ -215,30 +215,30 @@ def test_corrupted_and_incomplete_samples_are_dropped_and_rewritten(tmp_path):
     store.root.mkdir(parents=True, exist_ok=True)
 
     # Sample 0: valid
-    s0 = store.resolver.get_condition_dir(store.root, 0, "benchmark")
+    s0 = store.resolver.get_condition_dir(store.root, 0, "benchmark", create=True)
     (s0 / "result.json").write_text(
         '{"sample_index": 0, "prediction": "ans1", "correct": true}',
         encoding="utf-8",
     )
     # Sample 1: broken json
-    s1 = store.resolver.get_condition_dir(store.root, 1, "benchmark")
+    s1 = store.resolver.get_condition_dir(store.root, 1, "benchmark", create=True)
     (s1 / "result.json").write_text(
         '{"sample_index": 1, broken json...', encoding="utf-8"
     )
     # Sample 2: incomplete record (missing 'prediction' key)
-    s2 = store.resolver.get_condition_dir(store.root, 2, "benchmark")
+    s2 = store.resolver.get_condition_dir(store.root, 2, "benchmark", create=True)
     (s2 / "result.json").write_text(
         '{"sample_index": 2, "correct": false}',
         encoding="utf-8",
     )
     # Sample 3: valid record with failed prediction (prediction is null)
-    s3 = store.resolver.get_condition_dir(store.root, 3, "benchmark")
+    s3 = store.resolver.get_condition_dir(store.root, 3, "benchmark", create=True)
     (s3 / "result.json").write_text(
         '{"sample_index": 3, "prediction": null, "correct": false}',
         encoding="utf-8",
     )
     # Sample 4: valid
-    s4 = store.resolver.get_condition_dir(store.root, 4, "benchmark")
+    s4 = store.resolver.get_condition_dir(store.root, 4, "benchmark", create=True)
     (s4 / "result.json").write_text(
         '{"sample_index": 4, "prediction": "ans4", "correct": true}',
         encoding="utf-8",

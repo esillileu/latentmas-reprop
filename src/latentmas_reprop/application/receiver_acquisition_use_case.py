@@ -109,11 +109,11 @@ class ReceiverAcquisitionUseCase:
                 "latent_steps": str(args.latent_steps),
                 "data_dir": str(exp_dir.resolve()),
                 "rel_dir": exp_relpath,
-                "run_name": f"{exp_relpath}_n{len(samples)}",
+                "run_name": exp_relpath,
             }
             self.tracker_port.start_run(
                 experiment_name="latentmas_receiver_acquisition",
-                run_name=f"{exp_relpath}_n{len(samples)}",
+                run_name=exp_relpath,
                 tags=tags,
             )
 
