@@ -6,8 +6,8 @@ max_samples: -1
 generate_bs: 1
 latent_steps:
   - 20
-  - 10
   - 40
+  - 10
 max_new_tokens: 2048
 temperature: 0.6
 top_p: 0.95

@@ -61,10 +61,10 @@ def test_table1_presets_expand_without_mixing_diagnostic_or_14b():
         ("Qwen/Qwen3-8B", 40),
         ("Qwen/Qwen3-14B", 20),
         ("Qwen/Qwen3-14B", 20),
-        ("Qwen/Qwen3-14B", 10),
-        ("Qwen/Qwen3-14B", 10),
         ("Qwen/Qwen3-14B", 40),
         ("Qwen/Qwen3-14B", 40),
+        ("Qwen/Qwen3-14B", 10),
+        ("Qwen/Qwen3-14B", 10),
     ]
     assert [run.latent_space_realign for run in latent_14b] == [
         False,
