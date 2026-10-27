@@ -63,7 +63,9 @@ def test_path_resolver_nested_config_without_extension(tmp_path):
 def test_path_resolver_read_only_querying_does_not_create_dirs(tmp_path):
     """Reading or querying paths must never create directories on disk."""
     resolver = PathResolver(tmp_path)
-    exp_dir = resolver.get_experiment_dir("gsm8k/Qwen3-0.6B/latent_mas/sequential/params")
+    exp_dir = resolver.get_experiment_dir(
+        "gsm8k/Qwen3-0.6B/latent_mas/sequential/params"
+    )
     assert not exp_dir.exists()
     assert not (tmp_path / "storage").exists()
 

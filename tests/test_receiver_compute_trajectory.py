@@ -225,7 +225,7 @@ def test_collection_compares_strict_capped_scoring(monkeypatch):
 
 
 def test_prefix_failure_marks_mlflow_run_failed_and_uploads_evidence(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, make_mlflow_db
 ):
     import json
 
@@ -257,7 +257,7 @@ def test_prefix_failure_marks_mlflow_run_failed_and_uploads_evidence(
 
     monkeypatch.setattr(module, "collect_samples", collect)
     tracker = MLflowTracker(
-        tracking_uri=f"sqlite:///{tmp_path / 'runs.db'}",
+        tracking_uri=make_mlflow_db(tmp_path / "runs.db"),
         artifact_location=str(tmp_path / "artifacts"),
     )
     args = parse_run_matrix(["--receiver_compute_preflight", "--max_samples", "2"])[0]

@@ -48,12 +48,12 @@ def test_mlflow_tracker_remote_env_override(tmp_path: Path, monkeypatch):
     assert tracker.artifact_location is None
 
 
-def test_mlflow_tracker_end_to_end_local(tmp_path: Path):
+def test_mlflow_tracker_end_to_end_local(tmp_path: Path, make_mlflow_db):
     resolver = PathResolver(tmp_path)
     test_db = tmp_path / "test_run.db"
     test_artifacts = tmp_path / "artifacts"
     tracker = MLflowTracker(
-        tracking_uri=f"sqlite:///{test_db}",
+        tracking_uri=make_mlflow_db(test_db),
         artifact_location=str(test_artifacts),
         path_resolver=resolver,
     )
@@ -71,14 +71,14 @@ def test_mlflow_tracker_end_to_end_local(tmp_path: Path):
     assert os.path.exists(test_db)
 
 
-def test_mlflow_tracker_tracing_and_assessments(tmp_path: Path):
+def test_mlflow_tracker_tracing_and_assessments(tmp_path: Path, make_mlflow_db):
     import mlflow
 
     resolver = PathResolver(tmp_path)
     test_db = tmp_path / "test_traces.db"
     test_artifacts = tmp_path / "trace_artifacts"
     tracker = MLflowTracker(
-        tracking_uri=f"sqlite:///{test_db}",
+        tracking_uri=make_mlflow_db(test_db),
         artifact_location=str(test_artifacts),
         path_resolver=resolver,
     )
@@ -136,13 +136,13 @@ def test_mlflow_tracker_tracing_and_assessments(tmp_path: Path):
     assert "own_correct" in assessment_names
 
 
-def test_mlflow_tracker_truncates_long_previews(tmp_path: Path, monkeypatch):
+def test_mlflow_tracker_truncates_long_previews(tmp_path: Path, monkeypatch, make_mlflow_db):
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
     resolver = PathResolver(tmp_path)
     test_db = tmp_path / "test_preview.db"
     test_artifacts = tmp_path / "test_preview_artifacts"
     tracker = MLflowTracker(
-        tracking_uri=f"sqlite:///{test_db}",
+        tracking_uri=make_mlflow_db(test_db),
         artifact_location=str(test_artifacts),
         path_resolver=resolver,
     )
@@ -170,11 +170,11 @@ def test_mlflow_tracker_truncates_long_previews(tmp_path: Path, monkeypatch):
     assert trace.info.response_preview.endswith("...")
 
 
-def test_run_tags_are_serializable_for_remote_tracking(tmp_path, monkeypatch):
+def test_run_tags_are_serializable_for_remote_tracking(tmp_path, monkeypatch, make_mlflow_db):
     from mlflow.entities import RunTag
 
     tracker = MLflowTracker(
-        tracking_uri=f"sqlite:///{tmp_path / 'tags.db'}",
+        tracking_uri=make_mlflow_db(tmp_path / "tags.db"),
         artifact_location=str(tmp_path / "artifacts"),
     )
     captured = {}
@@ -191,9 +191,9 @@ def test_run_tags_are_serializable_for_remote_tracking(tmp_path, monkeypatch):
     assert captured["tags"]["smoke"] == "True"
 
 
-def test_span_error_status_preserves_message(tmp_path):
+def test_span_error_status_preserves_message(tmp_path, make_mlflow_db):
     tracker = MLflowTracker(
-        tracking_uri=f"sqlite:///{tmp_path / 'failure.db'}",
+        tracking_uri=make_mlflow_db(tmp_path / "failure.db"),
         artifact_location=str(tmp_path / "artifacts"),
     )
     tracker.start_run("failed-inference")

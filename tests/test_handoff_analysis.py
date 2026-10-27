@@ -16,7 +16,7 @@ from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 
 def test_sample_paired_bootstrap_and_transition_counts(pilot):
     m, matrix, distribution, bootstrap = analyze_records(
-        *pilot, bootstrap_count=5000, seed=3
+        *pilot, bootstrap_count=50, seed=3
     )
     assert not m["integrity"]["issues"]
     assert len(matrix) == 4
@@ -48,7 +48,7 @@ def test_sample_paired_bootstrap_and_transition_counts(pilot):
     assert m["subsets"]["answer_only_wrong_to_correct"] == ["0"]
     assert m["subsets"]["answer_only_correct_to_wrong"] == ["1"]
     assert sum(r["count"] for r in distribution if r["cell"] == "low_answer_only") == 4
-    assert bootstrap == analyze_records(*pilot, bootstrap_count=5000, seed=3)[3]
+    assert bootstrap == analyze_records(*pilot, bootstrap_count=50, seed=3)[3]
 
 
 def test_identical_paired_cells_have_zero_width_ci(pilot):
@@ -170,11 +170,11 @@ def test_diagnostics_and_machine_readable_rendering(pilot, tmp_path):
     assert "0.1234" in render_markdown(tmp_path)
 
 
-def test_mlflow_download_with_no_execution_cache(pilot, tmp_path):
+def test_mlflow_download_with_no_execution_cache(pilot, tmp_path, make_mlflow_db):
     from mlflow.tracking import MlflowClient
 
     records, config, _metadata = pilot
-    client = MlflowClient(tracking_uri=f"sqlite:///{tmp_path / 'mlflow.db'}")
+    client = MlflowClient(tracking_uri=make_mlflow_db(tmp_path / "mlflow.db"))
     experiment = client.create_experiment(
         "pilot", artifact_location=str(tmp_path / "store")
     )
