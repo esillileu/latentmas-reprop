@@ -13,6 +13,8 @@ from ...domain.services.kv_cache import (
 from ...domain.services.prompts import (
     build_agent_message_hierarchical_latent_mas,
     build_agent_message_sequential_latent_mas,
+    build_intervention_p1_messages,
+    resolve_p1_variant_id,
 )
 from .decoder import forward_intervention_prefix, run_explicit_generation
 
@@ -50,15 +52,15 @@ class InterventionContinuationRunner:
                 initial_hiddens[i] for i in range(prompt_len, initial_hiddens.shape[0])
             ]
             meta = {
+                "p1_variant": item.get("p1_variant", resolve_p1_variant_id(self.args)),
                 "prompt": item.get("prompt", ""),
                 "prompt_token_ids": item.get("prompt_token_ids", []),
                 "prompt_tokens": item.get("prompt_tokens", []),
                 "prompt_length": prompt_len,
             }
         else:
-            role = getattr(self.args, "sender_role", "planner")
-            messages = build_agent_message_sequential_latent_mas(
-                role=role, question=item["question"], method="latent_mas", args=self.args
+            messages = build_intervention_p1_messages(
+                question=item["question"], args=self.args
             )
             prompts, ids, mask, tokens = self.model.prepare_chat_batch(
                 [messages], add_generation_prompt=True
@@ -76,6 +78,7 @@ class InterventionContinuationRunner:
             latent_hiddens = []
             initial_step = 0
             meta = {
+                "p1_variant": resolve_p1_variant_id(self.args),
                 "prompt": prompts[0],
                 "prompt_token_ids": ids[0].cpu().tolist(),
                 "prompt_tokens": tokens[0],

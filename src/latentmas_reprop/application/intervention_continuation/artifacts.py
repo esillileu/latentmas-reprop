@@ -9,6 +9,7 @@ from ...domain.models.use_cases import (
     INTERVENTION_CONTINUATION,
     mlflow_experiment_name,
 )
+from ...domain.services.prompts import resolve_p1_variant_id
 from ...infrastructure.storage import save_json_atomic
 
 
@@ -81,6 +82,7 @@ def start_intervention_continuation_tracker(
     if not tracker:
         return False
     exp_name = mlflow_experiment_name(INTERVENTION_CONTINUATION)
+    p1_var = resolve_p1_variant_id(args)
     with contextlib.suppress(Exception):
         tracker.start_run(
             experiment_name=exp_name,
@@ -90,6 +92,7 @@ def start_intervention_continuation_tracker(
                 "task": str(getattr(args, "task", "gsm8k")),
                 "method": str(getattr(args, "method", "latent_mas")),
                 "experiment_type": INTERVENTION_CONTINUATION,
+                "p1_variant": p1_var,
                 "data_dir": str(exp_dir.resolve()),
                 "rel_dir": exp_relpath,
                 "git_commit": git_hash,
@@ -149,6 +152,7 @@ def trace_intervention_continuation_sample(
                 "task": str(getattr(args, "task", "gsm8k")),
                 "model": str(getattr(args, "model_name", "")),
                 "method": str(getattr(args, "method", "latent_mas")),
+                "p1_variant": str(shared_meta.get("p1_variant", resolve_p1_variant_id(args))),
                 "sample_id": sample_id,
                 "sample_key": skey,
                 "latent_steps": str(getattr(args, "latent_steps", 10)),
@@ -162,12 +166,9 @@ def trace_intervention_continuation_sample(
                 span_type="CHAIN",
                 inputs={
                     "sample_key": skey,
-                    "prompt": shared_meta.get(
-                        "prompt", shared_meta.get("prompt_text", "")
-                    ),
-                    "latent_steps": shared_meta.get(
-                        "latent_steps", getattr(args, "latent_steps", 10)
-                    ),
+                    "p1_variant": shared_meta.get("p1_variant", resolve_p1_variant_id(args)),
+                    "prompt": shared_meta.get("prompt", shared_meta.get("prompt_text", "")),
+                    "latent_steps": shared_meta.get("latent_steps", getattr(args, "latent_steps", 10)),
                 },
             ) as b_span:
                 if b_span is not None:

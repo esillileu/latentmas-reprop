@@ -67,6 +67,24 @@ def build_params_stem(
     # Differentiating experiment types and calculation options
     if getattr(args, "intervention_continuation", False):
         parts.append("intervention_continuation")
+        p1_custom = getattr(args, "p1_prompt", None)
+        p1_var = getattr(args, "p1_variant", None) or getattr(args, "sender_role", None)
+        if p1_custom:
+            clean_p1 = "".join(
+                c if c.isalnum() or c in ("-", "_") else "_"
+                for c in str(p1_custom).strip()
+            )
+            clean_p1 = "_".join(filter(None, clean_p1.split("_")))[:20]
+            if clean_p1:
+                parts.append(f"p1_{clean_p1}")
+        elif p1_var and str(p1_var).strip() != "planner":
+            clean_var = "".join(
+                c if c.isalnum() or c in ("-", "_") else "_"
+                for c in str(p1_var).strip()
+            )
+            clean_var = "_".join(filter(None, clean_var.split("_")))
+            if clean_var:
+                parts.append(f"p1_{clean_var}")
         sig = getattr(args, "control_signal", None)
         if sig and sig != "\nSolution:":
             clean_sig = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in sig.strip())
