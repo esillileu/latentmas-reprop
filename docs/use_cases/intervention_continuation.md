@@ -113,16 +113,24 @@ storage/experiments/gsm8k/Qwen3-8B/latent_mas/sequential/ls20_seed42_temp0.6_top
 
 ### 경로 격리 규칙
 바리언트 옵션 변경 시 서로 다른 계산 결과가 덮어써지지 않도록 경로 파라미터가 자동으로 격리됩니다:
-* 기본: `..._intervention_continuation`
-* 제어 신호 변경 시: `..._intervention_continuation_sig_<clean_sig>`
-* 수신자 역할 변경 시: `..._intervention_continuation_role_<role>`
-* 커스텀 프롬프트 지정 시: `..._intervention_continuation_plpe_<clean_prompt>`
+* 기본 (`p1_variant: "planner"`): `..._intervention_continuation` (기존 실행 결과와 완벽히 호환)
+* 첫 번째 프롬프트($P_1$) 바리언트 변경 시 (`--p1_variant`): `..._intervention_continuation_p1_<variant>`
+* 커스텀 첫 번째 프롬프트($P_1$) 지정 시 (`--p1_prompt`): `..._intervention_continuation_p1_<clean_prompt>`
+* 제어 신호 변경 시 (`--control_signal`): `..._intervention_continuation_sig_<clean_sig>`
+* 수신자 역할 변경 시 (`--receiver_role`): `..._intervention_continuation_role_<role>`
+* 커스텀 수신자 프롬프트($P_2$) 지정 시 (`--plpe_prompt`): `..._intervention_continuation_plpe_<clean_prompt>`
 
 ---
 
 ## 6. 실행 설정 및 프리셋
 
-기본 프리셋 파일: [`configs/intervention_continuation/gsm8k_q38.yaml`](file:///home/user3/projects/latentmas-reprop/configs/intervention_continuation/gsm8k_q38.yaml)
+* **기본 프리셋 파일**: [`configs/intervention_continuation/gsm8k_q38.yaml`](file:///home/user3/projects/latentmas-reprop/configs/intervention_continuation/gsm8k_q38.yaml)
+* **$P_1$ 프롬프트 바리언트 정의 파일**: [`configs/prompts/intervention_p1.yaml`](file:///home/user3/projects/latentmas-reprop/configs/prompts/intervention_p1.yaml)
+  - `planner` (기본값): 기존 LatentMAS Sequential Planner 프롬프트 (최종 답 없이 단계별 계획만 작성 지시)
+  - `direct_solve`: Single-agent 스타일로 즉시 단계별 추론 및 `\boxed{}` 최종 정답 도출 지시
+  - `question_only`: 역할이나 지시문 없이 `Question: {question}`만 제시
+  - `latent_think`: 내부 잠재 상태에서 단계별로 깊이 생각한 뒤 답을 내도록 지시
+  - `math_agent`: Hierarchical LatentMAS 스타일의 Math Agent 프롬프트
 
 ```yaml
 method: latent_mas
@@ -136,6 +144,7 @@ temperature: 0.6
 top_p: 0.95
 seed: 42
 intervention_continuation: true
+p1_variant: "planner"
 intervention_conditions: "ple,plce,plpe"
 control_signal: "\nSolution:"
 receiver_role: "judger"
@@ -166,6 +175,14 @@ CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_contin
 CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38 \
   --control_signal "\nAnswer:" \
   --receiver_role critic
+
+# 첫 번째 프롬프트(P_1) 바리언트 변경 (경로 및 MLflow Run 자동 격리)
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38 \
+  --p1_variant direct_solve
+
+# 첫 번째 프롬프트(P_1) 커스텀 템플릿 직접 지정
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38 \
+  --p1_prompt "Solve this math problem carefully:\n{question}"
 ```
 
 ### 3) 드라이런 (설정 검증)
