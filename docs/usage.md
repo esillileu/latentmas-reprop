@@ -29,43 +29,44 @@ The primary interface for running benchmarks is `just run`:
 ### 2.1 Using Preset Configurations (`-c`)
 Configurations are stored in [`configs/`](../configs/) using the format:
 ```
-{method}_{model}_{task}.yaml
+<use_case>/{task}_{model}[_{method}].yaml
 ```
+- **Use case**: `benchmark`, `intervention_kv`, `intervention_continuation`, `representation_acquisition`
+- **Task**: Full task name (e.g., `gsm8k`, `secret_digit`, `aime2024`, `medqa`)
+- **Model**: Shortened model name (e.g., `q30.6` for Qwen3-0.6B, `q38` for Qwen3-8B)
 - **Methods**: `lm` (LatentMAS), `tm` (TextMAS), `bs` (Baseline)
-- **Model**: Shortened model name (e.g., `q30.6` for Qwen3-0.6B)
-- **Task**: Full task name (e.g., `gsm8k`, `aime2024`, `medqa`)
 
 Examples:
 ```bash
 # Run LatentMAS on GSM8K using Qwen3-8B
-just run -c lmas/reprop/lm_q38_gsm8k
+just run -c benchmark/gsm8k_q38_lm
 
 # Run the TextMAS and baseline matrix on GSM8K (Qwen3-8B)
-just run -c lmas/reprop/bs_q38_gsm8k
+just run -c benchmark/gsm8k_q38_bs
 
-# Run Single-Agent Baseline on GSM8K
-just run -c bs_q30.6_gsm8k
+# Run Single-Agent Baseline on GSM8K (Qwen3-0.6B)
+just run -c benchmark/gsm8k_q30.6_bs
 ```
 
 > [!TIP]
-> You do not need to append `.yaml` or provide the full path. `-c lmas/reprop/lm_q38_gsm8k`
-> resolves against `configs/lmas/reprop/lm_q38_gsm8k.yaml`, and nested presets such as
-> `-c lmas/secret_digit/preflight` resolve against
-> `configs/lmas/secret_digit/preflight.yaml`. Full paths or arbitrary YAML files can
+> You do not need to append `.yaml` or provide the full path. `-c benchmark/gsm8k_q38_lm`
+> resolves against `configs/benchmark/gsm8k_q38_lm.yaml`, and nested presets such as
+> `-c representation_acquisition/secret_digit_q3_sweep` resolve against
+> `configs/representation_acquisition/secret_digit_q3_sweep.yaml`. Full paths or arbitrary YAML files can
 > also be passed.
 
 ---
 
 ## 3. Overriding Configuration Options
 
-### Receiver acquisition
+### Representation acquisition
 
 Recompute preflight statistics directly from saved MLflow artifacts with
-`just analyze-receiver`. No inference runs and no generated report is used as input.
+`just analyze-representation-acquisition`. No inference runs and no generated report is used as input.
 Receiver observations come from `results/sample_results.jsonl`; Sender cells come
 from `probe/results.json` and `probe/null_statistics.json` in
-`latentmas_sender_probe`, linked to acquisition metadata by `source_run_id`.
-Downloads are cached under `.cache/receiver_acquisition/mlflow/<run_id>/`.
+`latentmas/representation/sender_probe`, linked to acquisition metadata by `source_run_id`.
+Downloads are cached under `.cache/representation_acquisition/mlflow/<run_id>/`.
 
 The output directory contains `summary.md`, run-specific `diagnostics.json`, and
 CSV/JSON tables: `sender_probe_cells`, `receiver_conditions`, `receiver_per_digit`,
@@ -100,7 +101,7 @@ sample count.
 For the current saved Receiver set, the explicitly selected latest 4-step runs are:
 
 ```bash
-just analyze-receiver \
+just analyze-representation-acquisition \
   --canonical-run-id 4d3b741b0d1f4a569da95c0474097ad0 \
   --canonical-run-id 589f77a1f63241459d6ea902337fcea7
 ```
@@ -109,7 +110,7 @@ The synthetic secret-digit experiment uses the transformers KV cache and next-to
 logits directly:
 
 ```bash
-just run-acquisition -c lmas/secret_digit/preflight \
+just run-representation-acquisition -c representation_acquisition/secret_digit_q3_sweep \
   --model_name Qwen/Qwen3-0.6B --latent_steps 4
 ```
 
@@ -122,15 +123,15 @@ with 5,000 within-template permutations. Reanalyze states without model inferenc
 with:
 
 ```bash
-just analyze-sender-probe --states PATH --source-config CONFIG
-MLFLOW_TRACKING_URI=URI just analyze-sender-probe \
+just analyze-representation-sender-probe --states PATH --source-config CONFIG
+MLFLOW_TRACKING_URI=URI just analyze-representation-sender-probe \
   --source-run-id RUN_ID --source-artifact-path probe/sender_latent_states.pt
 ```
 
 To replace a legacy run containing the invalid single-split probe, use:
 
 ```bash
-MLFLOW_TRACKING_URI=URI just analyze-sender-probe \
+MLFLOW_TRACKING_URI=URI just analyze-representation-sender-probe \
   --source-run-id RUN_ID \
   --replace-source-run \
   --backend torch \
@@ -149,13 +150,13 @@ Any option defined in a config file can be overridden directly from the command 
 
 ```bash
 # Override the number of evaluated samples:
-just run -c lmas/reprop/lm_q38_gsm8k --max_samples 10
+just run -c benchmark/gsm8k_q38_lm --max_samples 10
 
 # Override temperature and generation batch size:
-just run -c lmas/reprop/lm_q38_gsm8k --temperature 0.7 --generate_bs 2
+just run -c benchmark/gsm8k_q38_lm --temperature 0.7 --generate_bs 2
 
 # Enable latent space realignment on top of the preset:
-just run -c lmas/reprop/lm_q38_gsm8k --latent_space_realign
+just run -c benchmark/gsm8k_q38_lm --latent_space_realign
 ```
 
 ---
@@ -188,15 +189,15 @@ just --list
 |---|---|
 | `just run <options>` | Execute benchmark runner (`BenchmarkUseCase`) |
 | `just lmas reprop` | Run sequential reproduction benchmarks across 0.6B -> 4B -> 8B -> 14B |
-| `just run-intervention <options>` | Execute latent-cache intervention harness (`InterventionUseCase`) |
-| `just run-single-intervention <options>` | Execute single intervention analysis (`SingleInterventionUseCase`) |
-| `just run-acquisition <options>` | Execute secret-digit receiver acquisition (`ReceiverAcquisitionUseCase`) |
-| `just run-receiver-reasoning <options>` | Execute paired receiver reasoning exploration (`ReceiverReasoningUseCase`) |
-| `just run-receiver-compute-preflight <options>` | Execute receiver compute budget preflight (`ReceiverComputePreflightUseCase`) |
-| `just analyze-sender-probe <options>` | Analyze saved sender states with probe analysis (`SenderProbeAnalysisUseCase`) |
-| `just analyze-handoff <options>` | Offline bootstrap analysis for receiver reasoning handoff |
-| `just analyze-receiver <options>` | Offline receiver acquisition reanalysis |
-| `just run-receiver-trajectory <options>` | Stepwise latent-only KV receiver trajectory collection |
+| `just run-intervention-kv <options>` | Execute latent-cache KV intervention harness (`InterventionKvUseCase`) |
+| `just run-intervention-continuation <options>` | Execute intervention continuation analysis (`InterventionContinuationUseCase`) |
+| `just run-representation-acquisition <options>` | Execute secret-digit representation acquisition (`RepresentationAcquisitionUseCase`) |
+| `just analyze-representation-acquisition <options>` | Offline representation acquisition reanalysis |
+| `just run-representation-trajectory <options>` | Stepwise latent-only KV representation trajectory collection |
+| `just analyze-representation-trajectory <options>` | Analyze saved secret-digit trajectories without inference |
+| `just analyze-stepwise-communication <options>` | Strict offline 60-cell communication metrics, parity table, and plots |
+| `just analyze-representation-sender-probe <options>` | Analyze saved sender states with probe analysis (`RepresentationSenderProbeUseCase`) |
+| `just migrate-use-case-names <options>` | One-time migration of storage paths and MLflow references |
 | `just test` | Run the complete pytest test suite |
 | `just lint` | Run Ruff linter checks |
 | `just format` | Format code using Ruff formatter |

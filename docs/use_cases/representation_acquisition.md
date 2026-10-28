@@ -1,6 +1,6 @@
-# Receiver Acquisition Use Case
+# Representation Acquisition Use Case
 
-`ReceiverAcquisitionUseCase`는 멀티에이전트 통신에서 텍스트 생성(Text Generation)을 일체 거치지 않고, 오직 상위 에이전트의 **연속 잠재 상태(Past Key-Value Cache)**만을 통해 비밀 숫자(Secret Digit: $0 \sim 9$)가 수신자에게 온전히 전달 및 획득(Acquisition)되는지를 검증하는 핵심 표상 전달 유스케이스입니다.
+`RepresentationAcquisitionUseCase`는 멀티에이전트 통신에서 텍스트 생성(Text Generation)을 일체 거치지 않고, 오직 상위 에이전트의 **연속 잠재 상태(Past Key-Value Cache)**만을 통해 비밀 숫자(Secret Digit: $0 \sim 9$)가 수신자에게 온전히 전달 및 획득(Acquisition)되는지를 검증하는 핵심 표상 전달 유스케이스입니다.
 
 ---
 
@@ -22,17 +22,18 @@
 
 ## 2. 대응 클래스 및 시스템 위치
 
-* **애플리케이션 클래스**: [`ReceiverAcquisitionUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/receiver_acquisition_use_case.py)
-* **세부 모듈 (`latentmas_reprop.application.receiver_acquisition`)**:
+* **애플리케이션 클래스**: [`RepresentationAcquisitionUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/representation_acquisition_use_case.py)
+* **세부 모듈 (`latentmas_reprop.application.representation_acquisition`)**:
   - `sampling.py`: 비밀 숫자 샘플 생성(`SecretDigitSample`) 및 상위 캐시 번들링
   - `scoring.py`: 수신자 로짓 스코어링 (`The number is ` 접두어 기반 0~9 로짓 argmax 판정)
   - `runner.py`: 비생성 순전파 루프 오케스트레이션
   - `aggregation.py`: 조건별 수신자 정확도 및 지연 통계 집계
   - `trajectory.py` & `parity.py`: 단계별($k=1 \dots 20$) 잠재 궤적 수집 및 독립 롤아웃 패리티 검증
 * **실행 모듈 진입점**:
-  - `src/run/main.py` -> `src/run/runner.py` (`--acquisition` 플래그)
-  - `src/run/receiver_analysis.py` (`just analyze-receiver`)
-* **실행 레시피**: `just run-acquisition`, `just analyze-receiver`
+  - `src/run/main.py` -> `src/run/runner.py` (`--representation_acquisition` 플래그)
+  - `src/run/representation_acquisition_analysis.py` (`just analyze-representation-acquisition`)
+* **실행 레시피**: `just run-representation-acquisition`, `just analyze-representation-acquisition`
+* **MLflow 실험 이름**: `latentmas/representation/acquisition`
 
 ---
 
@@ -64,7 +65,7 @@ flowchart TD
    - $0 \sim 9$까지의 숫자가 균등하게 포함된 $N$개의 비밀 숫자 샘플을 생성합니다. (기본 100개, 클래스당 10개)
 2. **송신자 잠재 상태 수집 (`collect_sender_states`)**:
    - 모델을 동결(Frozen) 상태로 $T$ 잠재 스텝 동안 forward하여 각 레이어의 히든 벡터와 Past Key-Value 캐시를 획득합니다.
-   - 이때 수집된 히든 벡터는 `sender_latent_states.pt`로 저장되어 사후 프로빙 분석([`sender_probe.md`](sender_probe.md))의 입력으로 활용됩니다.
+   - 이때 수집된 히든 벡터는 `sender_latent_states.pt`로 저장되어 사후 프로빙 분석([`representation_sender_probe.md`](representation_sender_probe.md))의 입력으로 활용됩니다.
 3. **수신자 비생성(Non-generative) 로짓 판정**:
    - 수신자 프롬프트(`"What was the secret number?"`)와 스코어링 접두어(`"The number is "`)를 준비합니다.
    - 텍스트 생성 디코딩을 수행하지 않고, 접두어 직후의 **단일 다음 토큰 로짓(Next-Token Logits)** 벡터를 추출합니다.
@@ -76,41 +77,41 @@ flowchart TD
 
 ## 4. 실행 방법 및 명령어 예시
 
-### 4.1 기본 수신자 획득 실험 실행
+### 4.1 기본 표상 획득 실험 실행
 ```bash
-# Qwen3-0.6B 모델로 4 잠재 스텝 수신자 획득 실행
-just run-acquisition -c lmas/secret_digit/preflight \
+# Qwen3-0.6B 모델로 4 잠재 스텝 표상 획득 실행
+just run-representation-acquisition -c representation_acquisition/secret_digit_q3_sweep \
   --model_name Qwen/Qwen3-0.6B --latent_steps 4
 
 # Qwen3-8B 모델로 20 잠재 스텝 실행
-just run-acquisition -c lmas/secret_digit/preflight \
+just run-representation-acquisition -c representation_acquisition/secret_digit_q3_sweep \
   --model_name Qwen/Qwen3-8B --latent_steps 20
 ```
 
 ### 4.2 오프라인 수신자 통계 재분석 (추론 없이 아티팩트 분석)
 ```bash
 # MLflow에 저장된 관측치(sample_results.jsonl)로부터 통계 재산출
-just analyze-receiver
+just analyze-representation-acquisition
 ```
 
 ---
 
-## 5. 단계별 궤적 수집 및 패리티 게이트 ([`receiver_trajectory.md`](receiver_trajectory.md) 연계)
+## 5. 단계별 궤적 수집 및 패리티 게이트 ([`representation_trajectory.md`](representation_trajectory.md) 연계)
 
-`ReceiverAcquisitionUseCase`의 핵심 연장선으로, $k=1 \dots 20$의 각 잠재 스텝별 전송 능력을 측정하는 단계별 궤적 수집(`src/run/receiver_trajectory.py`)을 지원합니다:
+`RepresentationAcquisitionUseCase`의 핵심 연장선으로, $k=1 \dots 20$의 각 잠재 스텝별 전송 능력을 측정하는 단계별 궤적 수집(`src/run/representation_trajectory.py`)을 지원합니다:
 
 - **BF16 패리티 게이트**: 수집 시작 전, $k=1$ 및 $k=4$ 시점에서 10개 표준 샘플에 대해 완전히 새로 생성된 독립 롤아웃과 KV 텐서 및 다음 토큰 로짓이 100% 일치하는지 비트 단위로 검증합니다.
 - **실행**:
   ```bash
   # 0.6B 모델 단계별 궤적 수집
-  just run-receiver-trajectory --model 0.6B
+  just run-representation-trajectory --model 0.6B
   ```
 
 ---
 
 ## 6. 저장 구조 및 아티팩트
 
-`ReceiverAcquisitionUseCase`는 실험 결과와 후속 분석을 위한 텐서를 분리하여 안전하게 저장합니다:
+`RepresentationAcquisitionUseCase`는 실험 결과와 후속 분석을 위한 텐서를 분리하여 안전하게 저장합니다:
 
 ```text
 storage/experiments/secret_digit/<model>/latent_mas/.../

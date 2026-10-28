@@ -1,6 +1,6 @@
-# LMAS Single Intervention Analysis (PLE, PLCE, PLPE)
+# LMAS Intervention Continuation Analysis (PLE, PLCE, PLPE)
 
-이 문서는 비학습 hidden-state feedback을 수행한 동일한 잠재 계산 상태($P_1 \to L_1 \to \dots \to L_T$)에서 세 가지 조건(`ple`, `plce`, `plpe`)으로 독립 분기하여 명시적 계산 전환 및 프롬프트 개입 시 발생하는 계산적 현상을 관찰하는 **Single Intervention Analysis**의 실행, 설정, 저장 구조 및 증분 재개(Incremental Resumption) 명세를 설명합니다.
+이 문서는 비학습 hidden-state feedback을 수행한 동일한 잠재 계산 상태($P_1 \to L_1 \to \dots \to L_T$)에서 세 가지 조건(`ple`, `plce`, `plpe`)으로 독립 분기하여 명시적 계산 전환 및 프롬프트 개입 시 발생하는 계산적 현상을 관찰하는 **Intervention Continuation Analysis**의 실행, 설정, 저장 구조 및 증분 재개(Incremental Resumption) 명세를 설명합니다.
 
 ---
 
@@ -18,14 +18,14 @@
 
 ## 2. 대응 클래스 및 시스템 위치
 
-* **애플리케이션 클래스**: [`SingleInterventionUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/single_intervention_use_case.py)
+* **애플리케이션 클래스**: [`InterventionContinuationUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/intervention_continuation_use_case.py)
 * **세부 모듈**:
-  - `latentmas_reprop.application.single_intervention.runner`: 공통 잠재 연산 및 3개 분기 디코더 오케스트레이션
-  - `latentmas_reprop.application.single_intervention.checkpoint`: 10스텝 단위 중간 체크포인트 저장 및 증분 재개 탐색
-  - `latentmas_reprop.application.single_intervention.artifacts`: 메트릭 집계 및 MLflow/디스크 원자적 저장
+  - `latentmas_reprop.application.intervention_continuation.runner`: 공통 잠재 연산 및 3개 분기 디코더 오케스트레이션
+  - `latentmas_reprop.application.intervention_continuation.checkpoint`: 10스텝 단위 중간 체크포인트 저장 및 증분 재개 탐색
+  - `latentmas_reprop.application.intervention_continuation.artifacts`: 메트릭 집계 및 MLflow/디스크 원자적 저장
 * **실행 모듈 진입점**:
-  - `src/run/main.py` -> `src/run/runner.py` (`--single_intervention` 플래그)
-* **실행 레시피**: `just run-single-intervention`
+  - `src/run/main.py` -> `src/run/runner.py` (`--intervention_continuation` 플래그)
+* **실행 레시피**: `just run-intervention-continuation`
 
 ---
 
@@ -88,7 +88,7 @@ flowchart TD
 결정론적 5단계 경로 구조(`storage/experiments/<task>/<model>/<method>/<prompt>/<params>/`)를 엄격히 준수합니다:
 
 ```text
-storage/experiments/gsm8k/Qwen3-8B/latent_mas/sequential/ls20_seed42_temp0.6_top0.95_mt2048_float16_single_intervention/
+storage/experiments/gsm8k/Qwen3-8B/latent_mas/sequential/ls20_seed42_temp0.6_top0.95_mt2048_float16_intervention_continuation/
   ├── config.json
   ├── summary.json
   ├── samples.jsonl
@@ -113,16 +113,16 @@ storage/experiments/gsm8k/Qwen3-8B/latent_mas/sequential/ls20_seed42_temp0.6_top
 
 ### 경로 격리 규칙
 바리언트 옵션 변경 시 서로 다른 계산 결과가 덮어써지지 않도록 경로 파라미터가 자동으로 격리됩니다:
-* 기본: `..._single_intervention`
-* 제어 신호 변경 시: `..._single_intervention_sig_<clean_sig>`
-* 수신자 역할 변경 시: `..._single_intervention_role_<role>`
-* 커스텀 프롬프트 지정 시: `..._single_intervention_plpe_<clean_prompt>`
+* 기본: `..._intervention_continuation`
+* 제어 신호 변경 시: `..._intervention_continuation_sig_<clean_sig>`
+* 수신자 역할 변경 시: `..._intervention_continuation_role_<role>`
+* 커스텀 프롬프트 지정 시: `..._intervention_continuation_plpe_<clean_prompt>`
 
 ---
 
 ## 6. 실행 설정 및 프리셋
 
-기본 프리셋 파일: [`configs/lmas/single_intervention/gsm8k.yaml`](file:///home/user3/projects/latentmas-reprop/configs/lmas/single_intervention/gsm8k.yaml)
+기본 프리셋 파일: [`configs/intervention_continuation/gsm8k_q38.yaml`](file:///home/user3/projects/latentmas-reprop/configs/intervention_continuation/gsm8k_q38.yaml)
 
 ```yaml
 method: latent_mas
@@ -135,13 +135,14 @@ max_new_tokens: 2048
 temperature: 0.6
 top_p: 0.95
 seed: 42
-single_intervention: true
+intervention_continuation: true
 intervention_conditions: "ple,plce,plpe"
 control_signal: "\nSolution:"
 receiver_role: "judger"
 latent_step_checkpoint_interval: 10
-tracking_experiment_name: latentmas_single_intervention
 ```
+
+* **MLflow 실험 이름**: `latentmas/intervention/continuation` (`use_cases.py`에서 일원화 관리)
 
 ---
 
@@ -150,26 +151,26 @@ tracking_experiment_name: latentmas_single_intervention
 ### 1) 기본 프리셋 실행
 ```bash
 # 기본 설정으로 실행 (지정 디바이스 활성화 권장)
-CUDA_VISIBLE_DEVICES=3 just run-single-intervention -c lmas/single_intervention/gsm8k
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38
 ```
 
 ### 2) 파라미터 오버라이드
 ```bash
 # 40스텝으로 실행 (기존 20스텝 체크포인트에서 21~40스텝만 증분 실행)
-CUDA_VISIBLE_DEVICES=3 just run-single-intervention -c lmas/single_intervention/gsm8k --latent_steps 40
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --latent_steps 40
 
 # 샘플 수 제한 실행 (스모크 테스트)
-CUDA_VISIBLE_DEVICES=3 just run-single-intervention -c lmas/single_intervention/gsm8k --max_samples 10
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --max_samples 10
 
 # 제어 신호 또는 수신자 역할 변경
-CUDA_VISIBLE_DEVICES=3 just run-single-intervention -c lmas/single_intervention/gsm8k \
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38 \
   --control_signal "\nAnswer:" \
   --receiver_role critic
 ```
 
 ### 3) 드라이런 (설정 검증)
 ```bash
-just run-single-intervention -c lmas/single_intervention/gsm8k --dry-run
+just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --dry-run
 ```
 
 ---
@@ -177,7 +178,7 @@ just run-single-intervention -c lmas/single_intervention/gsm8k --dry-run
 ## 8. 진행도 표시 모니터링 (`tqdm`)
 
 실행 중 터미널에 3단계 계층의 실시간 진행도가 출력됩니다:
-1. **전체 샘플 진행도**: `Single Intervention: 45%|████... [01:23<02:15, 12.3s/sample]`
+1. **전체 샘플 진행도**: `Intervention Continuation: 45%|████... [01:23<02:15, 12.3s/sample]`
 2. **공통 잠재 스텝 진행도**: `Common latent (21..40): 75%|███████▌...`
 3. **조건별 토큰 생성 진행도**: `Decoding · PLE: 15%|█▌...`, `Decoding · PLCE: ...`, `Decoding · PLPE: ...`
 
@@ -189,7 +190,7 @@ just run-single-intervention -c lmas/single_intervention/gsm8k --dry-run
 
 * **실시간 Run 및 샘플 트레이스 전송**:
   - 실험 시작 시점에 즉시 MLflow Run을 생성하고 설정 파라미터를 기록합니다.
-  - 각 샘플이 완료될 때마다 루트 트레이스(`single_intervention_sample`) 아래에 다음 하위 스팬을 기록하고 즉시 플러시(`flush_traces()`)합니다:
+  - 각 샘플이 완료될 때마다 루트 트레이스(`intervention_continuation_sample`) 아래에 다음 하위 스팬을 기록하고 즉시 플러시(`flush_traces()`)합니다:
     - `common_latent` (`CHAIN`): 상위 프롬프트 원문, 프롬프트 토큰 길이, 잠재 스텝 수
     - `decode_ple`, `decode_plce`, `decode_plpe` (`LLM`): 조건별 개입 입력 텍스트/토큰 수, 생성 텍스트, 생성 길이, 종료 사유(`finish_reason`), 예산 소진 여부(`budget_exhausted`), 예측값 및 정답 여부
   - 각 샘플 트레이스에는 정답 기대값(`expected_answer`)과 조건별 평가 피드백(`ple_correct`, `plce_correct`, `plpe_correct`)이 함께 기록되며, 생성된 `trace_id`는 각 조건의 `result.json`에 저장됩니다.

@@ -1,6 +1,6 @@
 # Latent Communication Intervention Use Case
 
-`InterventionUseCase`는 에이전트 간 잠재 통신(Latent Communication)에서 전달되는 연속 표상(KV 캐시)이 수신자의 최종 추론 성공에 **실질적인 인과적 기여(Causal Contribution)**를 하는지 엄밀하게 검증하기 위한 인과적 개입 분석 유스케이스입니다.
+`InterventionKvUseCase`는 에이전트 간 잠재 통신(Latent Communication)에서 전달되는 연속 표상(KV 캐시)이 수신자의 최종 추론 성공에 **실질적인 인과적 기여(Causal Contribution)**를 하는지 엄밀하게 검증하기 위한 인과적 개입 분석 유스케이스입니다.
 
 ---
 
@@ -22,15 +22,16 @@
 
 ## 2. 대응 클래스 및 시스템 위치
 
-* **애플리케이션 클래스**: [`InterventionUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/intervention_use_case.py)
+* **애플리케이션 클래스**: [`InterventionKvUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/intervention_kv_use_case.py)
 * **주요 헬퍼 및 통계 모듈**:
-  - `latentmas_reprop.application.intervention.algo`: Derangement 기반 `cross` 인덱스 생성
-  - `latentmas_reprop.application.intervention.context_builder`: 4가지 개입 조건별 KV 캐시 구축
-  - `latentmas_reprop.application.intervention.stats`: 조건별 정확도 및 McNemar 통계 검정 계산
-  - `latentmas_reprop.application.intervention.runner`: 조건별 디코딩 실행
+  - `latentmas_reprop.application.intervention_kv.algo`: Derangement 기반 `cross` 인덱스 생성
+  - `latentmas_reprop.application.intervention_kv.context_builder`: 4가지 개입 조건별 KV 캐시 구축
+  - `latentmas_reprop.application.intervention_kv.stats`: 조건별 정확도 및 McNemar 통계 검정 계산
+  - `latentmas_reprop.application.intervention_kv.runner`: 조건별 디코딩 실행
 * **실행 모듈 진입점**:
-  - `src/run/main.py` -> `src/run/runner.py` (`--intervention` 플래그)
-* **실행 레시피**: `just run-intervention`
+  - `src/run/main.py` -> `src/run/runner.py` (`--intervention_kv` 플래그)
+* **실행 레시피**: `just run-intervention-kv`
+* **MLflow 실험 이름**: `latentmas/intervention/kv`
 
 ---
 
@@ -77,11 +78,11 @@ flowchart TD
 ## 4. 실행 방법 및 명령어 예시
 
 ```bash
-# 기본 인터벤션 실험 실행 (CLI 옵션 기반)
-just run-intervention -c lmas/reprop/lm_q38_gsm8k --max_samples 100
+# 기본 인터벤션 실험 실행 (YAML 프리셋 기반)
+just run-intervention-kv -c intervention_kv/gsm8k_q38 --max_samples 100
 
 # 세부 개입 조건 및 샘플 지정 실행
-uv run python -m src.run --intervention \
+uv run python -m src.run --intervention_kv \
   --model_name Qwen/Qwen3-8B \
   --task gsm8k \
   --latent_steps 20 \
@@ -93,7 +94,7 @@ uv run python -m src.run --intervention \
 
 ## 5. 산출 메트릭 및 통계 분석
 
-`InterventionUseCase`는 단순 정답률 외에 다음과 같은 엄밀한 비교 지표를 산출합니다:
+`InterventionKvUseCase`는 단순 정답률 외에 다음과 같은 엄밀한 비교 지표를 산출합니다:
 
 1. **조건별 정확도**:
    - `acc_own`: 본인 잠재 상태 주입 시 정확도
@@ -115,7 +116,7 @@ uv run python -m src.run --intervention \
 각 샘플은 조건별 디렉터리로 엄격히 격리 저장되어, 중간 중단 시 완료된 조건은 건너뛰고 미완료 조건만 계산합니다:
 
 ```text
-storage/experiments/<task>/<model>/<method>/<prompt>/<params>_intervention/
+storage/experiments/<task>/<model>/<method>/<prompt>/<params>_intervention_kv/
 ├── summary.json                     # 조건별 종합 정확도 및 McNemar p-value 요약
 └── sample_0000/
     ├── condition_own/

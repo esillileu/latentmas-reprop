@@ -1,6 +1,6 @@
-# Sender Probe Analysis Use Case
+# Representation Sender Probe Use Case
 
-`SenderProbeAnalysisUseCase`는 수집된 송신자의 내부 잠재 상태(`sender_latent_states.pt`)를 바탕으로, 모델을 메모리에 로드하지 않고(Zero-Inference) 비밀 정보가 **어떤 레이어와 잠재 스텝에서 선형 분리 가능한 형태(Linearly Decodable Representation)**로 인코딩되어 있는지를 통계적으로 규명하는 분석 유스케이스입니다.
+`RepresentationSenderProbeUseCase`는 수집된 송신자의 내부 잠재 상태(`sender_latent_states.pt`)를 바탕으로, 모델을 메모리에 로드하지 않고(Zero-Inference) 비밀 정보가 **어떤 레이어와 잠재 스텝에서 선형 분리 가능한 형태(Linearly Decodable Representation)**로 인코딩되어 있는지를 통계적으로 규명하는 분석 유스케이스입니다.
 
 ---
 
@@ -15,16 +15,17 @@
 
 ## 2. 대응 클래스 및 시스템 위치
 
-* **애플리케이션 클래스**: [`SenderProbeAnalysisUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/sender_probe/use_case.py)
-* **세부 모듈 (`latentmas_reprop.application.sender_probe`)**:
+* **애플리케이션 클래스**: [`RepresentationSenderProbeUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/representation_sender_probe/use_case.py)
+* **세부 모듈 (`latentmas_reprop.application.representation_sender_probe`)**:
   - `analysis.py`: 프로브 분석 전체 파이프라인 관리 및 통계량 계산
   - `folds.py`: 숫자 클래스별 Grouped 5-Fold 교차 검증 분할
   - `torch_solver.py`: PyTorch 기반 고속 GPU 배치 선형 분류기 솔버
   - `estimator.py`: Scikit-learn 기반 CPU 로지스틱 회귀 솔버
   - `replacement.py`: 기존 MLflow 런의 원자적 교체 및 메타데이터 보존
 * **실행 모듈 진입점**:
-  - `src/run/sender_probe.py`
-* **실행 레시피**: `just analyze-sender-probe`
+  - `src/run/representation_sender_probe.py`
+* **실행 레시피**: `just analyze-representation-sender-probe`
+* **MLflow 실험 이름**: `latentmas/representation/sender_probe` (단, `representation_trajectory` 스위프 프로브는 `latentmas/representation/trajectory`에 `phase=sender_probe`로 기록)
 
 ---
 
@@ -55,7 +56,7 @@ flowchart TD
 
 ### 2) 고속 GPU 배치 순열 솔버 (`torch_solver.py`)
 * 순열 검정을 위해 5,000회의 독립적인 분류기를 CPU에서 루프로 돌리면 수 시간이 소요될 수 있습니다.
-* `SenderProbeAnalysisUseCase`는 PyTorch 텐서 연산을 통해 5,000개의 순열 분류기를 GPU에서 일괄 배치(Batching)로 병렬 최적화하여 수 분 내에 검정을 완료합니다.
+* `RepresentationSenderProbeUseCase`는 PyTorch 텐서 연산을 통해 5,000개의 순열 분류기를 GPU에서 일괄 배치(Batching)로 병렬 최적화하여 수 분 내에 검정을 완료합니다.
 
 ### 3) 최대 통계량(Max-Statistic) 다중 비교 보정
 * 각 레이어 $\times$ 각 잠재 스텝마다 가설 검정을 수행할 때 발생하는 패밀리 와이즈 오류율(Family-Wise Error Rate, FWER)을 보정하기 위해, 순열별 최대 통계량 분포(Max-T distribution)를 구성하여 정규성 가정 없이 엄격한 유의확률($p$-value)을 산출합니다.
@@ -66,15 +67,15 @@ flowchart TD
 
 ### 4.1 로컬 저장 텐서 직접 분석 (모델 추론 불필요)
 ```bash
-just analyze-sender-probe \
-  --states .cache/evaluation/receiver_acquisition/sender_latent_states.pt \
-  --source-config configs/lmas/secret_digit/preflight.yaml
+just analyze-representation-sender-probe \
+  --states .cache/evaluation/representation_acquisition/sender_latent_states.pt \
+  --source-config configs/representation_acquisition/secret_digit_q3_sweep.yaml
 ```
 
 ### 4.2 MLflow 기존 런 ID를 지정하여 분석 및 런 교체
 ```bash
 # GPU 백엔드로 5,000회 순열 검정을 수행하고 기존 MLflow 런 메타데이터 갱신
-just analyze-sender-probe \
+just analyze-representation-sender-probe \
   --source-run-id <RUN_ID> \
   --replace-source-run \
   --backend torch \
