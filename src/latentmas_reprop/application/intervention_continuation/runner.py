@@ -17,7 +17,7 @@ from ...domain.services.prompts import (
 from .decoder import forward_intervention_prefix, run_explicit_generation
 
 
-class SingleInterventionRunner:
+class InterventionContinuationRunner:
     """Executes UC-01 common latent calculation and UC-02 three branch conditions."""
 
     def __init__(self, model: Any, args: Any, evaluator: Any) -> None:

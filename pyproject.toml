@@ -81,7 +81,7 @@ soft = 250
 hard = 300
 
 allow = [
-    "src/latentmas_reprop/application/receiver_acquisition_use_case.py",
+    "src/latentmas_reprop/application/representation_acquisition_use_case.py",
     "src/run/cli.py",
-    "tests/test_receiver_acquisition.py",
+    "tests/test_representation_acquisition.py",
 ]

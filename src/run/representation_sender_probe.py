@@ -12,10 +12,15 @@ import mlflow
 import yaml
 from dotenv import load_dotenv
 
-from latentmas_reprop.application.sender_probe import (
+from latentmas_reprop.application.representation_sender_probe import (
     ProbeAnalysisConfig,
-    SenderProbeAnalysisUseCase,
+    RepresentationSenderProbeUseCase,
     replace_probe_run,
+)
+from latentmas_reprop.domain.models.use_cases import (
+    REPRESENTATION_SENDER_PROBE,
+    REPRESENTATION_TRAJECTORY,
+    mlflow_experiment_name,
 )
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
@@ -86,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         source = client.get_run(args.source_run_id)
         if (
             client.get_experiment(source.info.experiment_id).name
-            == "latentmas_receiver_trajectory"
+            == mlflow_experiment_name(REPRESENTATION_TRAJECTORY)
         ):
             raise ValueError(
                 "Trajectory sweeps must be preserved; analyze without --replace-source-run"
@@ -96,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     source_config = {}
     source_artifact = None
-    experiment_name = "latentmas_sender_probe"
+    experiment_name = mlflow_experiment_name(REPRESENTATION_SENDER_PROBE)
     with tempfile.TemporaryDirectory(prefix="latentmas-probe-") as temporary:
         if args.experiment_dir:
             from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
@@ -157,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             source_experiment = client.get_experiment(
                 source_run.info.experiment_id
             ).name
-            trajectory = source_experiment == "latentmas_receiver_trajectory"
+            trajectory = source_experiment == mlflow_experiment_name(REPRESENTATION_TRAJECTORY)
             if trajectory:
                 if (
                     source_run.info.status != "FINISHED"
@@ -219,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             states_path = args.states
         if states_path is None or not states_path.is_file():
             raise FileNotFoundError(f"sender states not found: {states_path}")
-        result = SenderProbeAnalysisUseCase(tracker).execute(
+        result = RepresentationSenderProbeUseCase(tracker).execute(
             states_path,
             analysis_config,
             source_run_id=args.source_run_id,

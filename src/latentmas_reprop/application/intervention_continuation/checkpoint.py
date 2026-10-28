@@ -12,8 +12,8 @@ from ...infrastructure.paths.resolver import get_git_commit_hash
 from ...infrastructure.storage import FileStorage, get_file_storage
 from .artifacts import (
     log_to_mlflow_tracker,
-    start_single_intervention_tracker,
-    trace_single_intervention_sample,
+    start_intervention_continuation_tracker,
+    trace_intervention_continuation_sample,
 )
 
 
@@ -91,7 +91,7 @@ def make_step_checkpoint_saver(
     return callback
 
 
-def backfill_single_intervention_traces(
+def backfill_intervention_continuation_traces(
     tracker: Any,
     exp_dir: Path,
     exp_relpath: str,
@@ -106,7 +106,7 @@ def backfill_single_intervention_traces(
         return
     store = storage or get_file_storage()
     git_hash = get_git_commit_hash()
-    run_started = start_single_intervention_tracker(
+    run_started = start_intervention_continuation_tracker(
         tracker, exp_dir, exp_relpath, git_hash, args
     )
     show_progress = not bool(getattr(args, "no_progress", False))
@@ -129,7 +129,7 @@ def backfill_single_intervention_traces(
             if store.is_condition_complete(exp_relpath, skey, "shared")
             else {}
         )
-        tid = trace_single_intervention_sample(
+        tid = trace_intervention_continuation_sample(
             tracker,
             args,
             idx,

@@ -5,6 +5,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ...domain.models.use_cases import (
+    INTERVENTION_CONTINUATION,
+    mlflow_experiment_name,
+)
 from ...infrastructure.storage import save_json_atomic
 
 
@@ -66,7 +70,7 @@ def save_experiment_summary(
     tmp_jsonl.replace(jsonl_path)
 
 
-def start_single_intervention_tracker(
+def start_intervention_continuation_tracker(
     tracker: Any,
     exp_dir: Path,
     exp_relpath: str,
@@ -76,9 +80,7 @@ def start_single_intervention_tracker(
     """Start the MLflow run and log experiment parameters before the sample loop."""
     if not tracker:
         return False
-    exp_name = getattr(
-        args, "tracking_experiment_name", "latentmas_single_intervention"
-    )
+    exp_name = mlflow_experiment_name(INTERVENTION_CONTINUATION)
     with contextlib.suppress(Exception):
         tracker.start_run(
             experiment_name=exp_name,
@@ -87,7 +89,7 @@ def start_single_intervention_tracker(
                 "model": str(getattr(args, "model_name", "")),
                 "task": str(getattr(args, "task", "gsm8k")),
                 "method": str(getattr(args, "method", "latent_mas")),
-                "experiment_type": "single_intervention",
+                "experiment_type": INTERVENTION_CONTINUATION,
                 "data_dir": str(exp_dir.resolve()),
                 "rel_dir": exp_relpath,
                 "git_commit": git_hash,
@@ -106,7 +108,7 @@ def start_single_intervention_tracker(
     return False
 
 
-def trace_single_intervention_sample(
+def trace_intervention_continuation_sample(
     tracker: Any,
     args: Any,
     idx: int,
@@ -136,7 +138,7 @@ def trace_single_intervention_sample(
 
     with contextlib.suppress(Exception):
         with tracker.start_sample_trace(
-            name="single_intervention_sample",
+            name="intervention_continuation_sample",
             inputs={
                 "sample_index": idx,
                 "sample_key": skey,
@@ -269,7 +271,7 @@ def log_to_mlflow_tracker(
         return
     with contextlib.suppress(Exception):
         if not run_already_started:
-            start_single_intervention_tracker(
+            start_intervention_continuation_tracker(
                 tracker, exp_dir, exp_relpath, git_hash, args
             )
         metrics = summary_data.get("metrics", {})

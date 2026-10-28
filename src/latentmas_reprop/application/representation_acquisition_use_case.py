@@ -5,7 +5,14 @@ import time
 import traceback
 from typing import Any
 
-from ..domain.models import ReceiverAcquisitionMetrics, ReceiverAcquisitionRecord
+from ..domain.models import (
+    RepresentationAcquisitionMetrics,
+    RepresentationAcquisitionRecord,
+)
+from ..domain.models.use_cases import (
+    REPRESENTATION_ACQUISITION,
+    mlflow_experiment_name,
+)
 from ..domain.ports.cache_port import CachePort
 from ..domain.ports.tracking_port import ExperimentTrackerPort
 from ..domain.services.prompts.acquisition import (
@@ -23,23 +30,23 @@ from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
 from ..infrastructure.models.model_wrapper import ModelWrapper
 from ..infrastructure.paths.naming import build_experiment_relpath
 from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
-from .receiver_acquisition.aggregation import aggregate_receiver_records
-from .receiver_acquisition.artifacts import log_receiver_artifacts
-from .receiver_acquisition.runner import run_acquisition_loop
-from .receiver_acquisition.sampling import (
+from .representation_acquisition.aggregation import aggregate_receiver_records
+from .representation_acquisition.artifacts import log_receiver_artifacts
+from .representation_acquisition.runner import run_acquisition_loop
+from .representation_acquisition.sampling import (
     SecretDigitSample,
     SenderCacheBundle,
     generate_secret_digit_samples,
     pair_different_digit_sources,
 )
-from .receiver_acquisition.scoring import (
+from .representation_acquisition.scoring import (
     prepare_receiver_scoring,
     score_digit_logits,
     validate_digit_candidates,
 )
-from .sender_probe import (
+from .representation_sender_probe import (
     ProbeAnalysisConfig,
-    SenderProbeAnalysisUseCase,
+    RepresentationSenderProbeUseCase,
     collect_sender_states,
 )
 
@@ -51,7 +58,7 @@ __all__ = [
     "RECEIVER_PROMPT_TEMPLATE_VERSION",
     "SENDER_PROMPT_TEMPLATE",
     "SENDER_PROMPT_TEMPLATE_VERSION",
-    "ReceiverAcquisitionUseCase",
+    "RepresentationAcquisitionUseCase",
     "SecretDigitSample",
     "SenderCacheBundle",
     "aggregate_receiver_records",
@@ -64,7 +71,7 @@ __all__ = [
 ]
 
 
-class ReceiverAcquisitionUseCase:
+class RepresentationAcquisitionUseCase:
     """Application use case for secret digit receiver acquisition."""
 
     def __init__(
@@ -77,7 +84,7 @@ class ReceiverAcquisitionUseCase:
 
     def execute(
         self, model: ModelWrapper, args: Any
-    ) -> tuple[ReceiverAcquisitionMetrics, list[ReceiverAcquisitionRecord]]:
+    ) -> tuple[RepresentationAcquisitionMetrics, list[RepresentationAcquisitionRecord]]:
         self._validate_args(args)
         start = time.perf_counter()
         samples = generate_secret_digit_samples(args.max_samples, args.seed)
@@ -88,7 +95,7 @@ class ReceiverAcquisitionUseCase:
             if "cross" in conditions
             else [0] * len(samples)
         )
-        args.acquisition = True
+        args.representation_acquisition = True
         git_hash = get_git_commit_hash()
         dtype_name = str(
             getattr(getattr(model, "model", None), "dtype", "bfloat16")
@@ -100,7 +107,7 @@ class ReceiverAcquisitionUseCase:
 
         if self.tracker_port:
             tags = {
-                "experiment_type": "receiver_acquisition",
+                "experiment_type": REPRESENTATION_ACQUISITION,
                 "model": args.model_name,
                 "task": args.task,
                 "method": args.method,
@@ -112,7 +119,7 @@ class ReceiverAcquisitionUseCase:
                 "run_name": exp_relpath,
             }
             self.tracker_port.start_run(
-                experiment_name="latentmas_receiver_acquisition",
+                experiment_name=mlflow_experiment_name(REPRESENTATION_ACQUISITION),
                 run_name=exp_relpath,
                 tags=tags,
             )
@@ -215,7 +222,7 @@ class ReceiverAcquisitionUseCase:
                 self.tracker_port.flush_traces()
                 self.tracker_port.end_run("FINISHED")
             if state_path is not None:
-                SenderProbeAnalysisUseCase(self.tracker_port).execute(
+                RepresentationSenderProbeUseCase(self.tracker_port).execute(
                     state_path,
                     ProbeAnalysisConfig(
                         seed=args.seed,
@@ -252,10 +259,6 @@ class ReceiverAcquisitionUseCase:
             raise ValueError("acquisition requires the transformers backend")
         if args.latent_steps <= 0:
             raise ValueError("acquisition requires latent_steps > 0")
-        if args.tracking_experiment_name != "latentmas_receiver_acquisition":
-            raise ValueError(
-                "acquisition experiment name must be latentmas_receiver_acquisition"
-            )
         if args.acquisition_cross_policy != CROSS_PAIRING_POLICY:
             raise ValueError(
                 f"unsupported acquisition cross policy: {args.acquisition_cross_policy}"

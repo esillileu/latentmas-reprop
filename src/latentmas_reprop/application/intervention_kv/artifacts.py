@@ -3,6 +3,7 @@
 from typing import Any
 
 from ...domain.models import InterventionMetrics, SampleInterventionRecord
+from ...domain.models.use_cases import INTERVENTION_KV, mlflow_experiment_name
 from ...domain.ports.cache_port import CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.paths.naming import build_experiment_relpath
@@ -43,7 +44,7 @@ def start_intervention_tracker(
     if not tracker_port:
         return run_name, ""
 
-    exp_name = getattr(args, "tracking_experiment_name", "latentmas_intervention")
+    exp_name = mlflow_experiment_name(INTERVENTION_KV)
     exp_dir = get_path_resolver().get_experiment_dir(run_name)
 
     tracker_port.start_run(
@@ -53,7 +54,7 @@ def start_intervention_tracker(
             "model": args.model_name,
             "task": args.task,
             "method": args.method,
-            "experiment_type": "intervention",
+            "experiment_type": INTERVENTION_KV,
             "git_commit": git_hash,
             "data_dir": str(exp_dir.resolve()),
             "rel_dir": run_name,

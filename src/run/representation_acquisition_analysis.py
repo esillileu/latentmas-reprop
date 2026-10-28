@@ -9,17 +9,26 @@ from pathlib import Path
 import torch
 from mlflow.tracking import MlflowClient
 
-from latentmas_reprop.application.receiver_acquisition.analysis import (
+from latentmas_reprop.application.representation_acquisition.analysis import (
     analyze_records,
     read_records,
     select_receiver_runs,
 )
-from latentmas_reprop.application.receiver_acquisition.markdown import render_markdown
-from latentmas_reprop.application.receiver_acquisition.report import (
+from latentmas_reprop.application.representation_acquisition.markdown import (
+    render_markdown,
+)
+from latentmas_reprop.application.representation_acquisition.report import (
     export_tables,
     sender_cells,
 )
-from latentmas_reprop.application.sender_probe.diagnostics import analyze_saved_features
+from latentmas_reprop.application.representation_sender_probe.diagnostics import (
+    analyze_saved_features,
+)
+from latentmas_reprop.domain.models.use_cases import (
+    REPRESENTATION_ACQUISITION,
+    REPRESENTATION_SENDER_PROBE,
+    mlflow_experiment_name,
+)
 from latentmas_reprop.infrastructure.paths.resolver import get_path_resolver
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
     MLflowTracker,
@@ -33,7 +42,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=paths.root / "artifacts" / "receiver_acquisition",
+        default=paths.root / "artifacts" / "representation_acquisition",
     )
     parser.add_argument(
         "--experiment-dir",
@@ -60,35 +69,24 @@ def main() -> None:
     if args.permutations < 1:
         parser.error("--permutations must be positive")
     client = MlflowClient()
-    experiments = client.search_experiments(
-        filter_string="name = 'latentmas_receiver_acquisition'"
-    )
+    acq_exp_name = mlflow_experiment_name(REPRESENTATION_ACQUISITION)
+    experiments = client.search_experiments(filter_string=f"name = '{acq_exp_name}'")
     if len(experiments) != 1:
-        raise ValueError("Expected one latentmas_receiver_acquisition experiment")
+        raise ValueError(f"Expected one {acq_exp_name} experiment")
+    exp_id = experiments[0].experiment_id
     if args.experiment_dir:
         for ed in args.experiment_dir:
             edir_path = paths.get_experiment_dir(ed, create=False)
-            found = client.search_runs(
-                [experiments[0].experiment_id],
-                filter_string=f"tags.data_dir = '{edir_path.resolve()!s}'",
-                max_results=1,
-            )
-            if not found:
-                with contextlib.suppress(ValueError):
-                    rel_dir = str(edir_path.relative_to(paths.experiments_dir))
-                    found = client.search_runs(
-                        [experiments[0].experiment_id],
-                        filter_string=f"tags.rel_dir = '{rel_dir}'",
-                        max_results=1,
-                    )
-            if not found:
-                found = client.search_runs(
-                    [experiments[0].experiment_id],
-                    filter_string=f"tags.rel_dir = '{ed}'",
-                    max_results=1,
-                )
-            for r in found:
-                args.canonical_run_id.append(r.info.run_id)
+            queries = [f"tags.data_dir = '{edir_path.resolve()!s}'"]
+            with contextlib.suppress(ValueError):
+                rel_dir = str(edir_path.relative_to(paths.experiments_dir))
+                queries.append(f"tags.rel_dir = '{rel_dir}'")
+            queries.append(f"tags.rel_dir = '{ed}'")
+            for q in queries:
+                found = client.search_runs([exp_id], filter_string=q, max_results=1)
+                if found:
+                    args.canonical_run_id.extend(r.info.run_id for r in found)
+                    break
         if not args.canonical_run_id:
             raise FileNotFoundError(
                 f"No receiver acquisition runs found matching experiment directory: {args.experiment_dir}"
@@ -99,7 +97,7 @@ def main() -> None:
     probe_sources = {}
     probe_statistics = {}
     sender_experiments = client.search_experiments(
-        filter_string="name = 'latentmas_sender_probe'"
+        filter_string=f"name = '{mlflow_experiment_name(REPRESENTATION_SENDER_PROBE)}'"
     )
     for run in client.search_runs(
         [e.experiment_id for e in sender_experiments], max_results=1000
@@ -109,7 +107,7 @@ def main() -> None:
         }
         if {"probe/results.json", "probe/null_statistics.json"} <= probe_artifacts:
             probe_cache = paths.get_cache_layer_dir(
-                f"receiver_acquisition/mlflow/{run.info.run_id}"
+                f"representation_acquisition/mlflow/{run.info.run_id}"
             )
             payloads = [
                 json.loads(
@@ -149,7 +147,7 @@ def main() -> None:
         if "results/sample_results.jsonl" not in artifacts:
             continue
         cache_dir = paths.get_cache_layer_dir(
-            f"receiver_acquisition/mlflow/{run.info.run_id}"
+            f"representation_acquisition/mlflow/{run.info.run_id}"
         )
         path = Path(
             client.download_artifacts(
@@ -234,7 +232,7 @@ def main() -> None:
             for cell in probes_by_id[run_id]:
                 cell.update(effect_ci_low=None, effect_ci_high=None)
             continue
-        cache = paths.get_cache_layer_dir(f"receiver_acquisition/mlflow/{source_id}")
+        cache = paths.get_cache_layer_dir(f"representation_acquisition/mlflow/{source_id}")
         state_path = client.download_artifacts(source_id, artifact, dst_path=str(cache))
         payload = torch.load(state_path, map_location="cpu", weights_only=True)
         print(f"Analyzing saved Sender features: {run_id}", flush=True)
@@ -285,7 +283,7 @@ def main() -> None:
                     parent.rmdir()
     log_analysis_results_to_mlflow(
         MLflowTracker(),
-        "receiver_acquisition",
+        "representation_acquisition",
         args.output_dir,
         params={"permutations": args.permutations, "seed": args.seed},
     )

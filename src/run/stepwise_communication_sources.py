@@ -6,6 +6,12 @@ from pathlib import Path
 
 import numpy as np
 
+from latentmas_reprop.domain.models.use_cases import (
+    REPRESENTATION_ACQUISITION,
+    REPRESENTATION_TRAJECTORY,
+    mlflow_experiment_name,
+)
+
 from .stepwise_communication_analysis import MODELS, grid, number
 
 
@@ -36,7 +42,7 @@ class SavedRunReader:
         return json.loads(downloaded.read_text())
 
     def probes(self, run_id, sweep_ids):
-        run = self.run(run_id, "latentmas_receiver_trajectory")
+        run = self.run(run_id, mlflow_experiment_name(REPRESENTATION_TRAJECTORY))
         source_id = run.data.params.get("source_run_id") or run.data.tags.get(
             "source_run_id"
         )
@@ -51,7 +57,7 @@ class SavedRunReader:
             raise ValueError(
                 f"Expected a probe of the sweep's saved sender states: {run_id}"
             )
-        source = self.run(source_id, "latentmas_receiver_trajectory")
+        source = self.run(source_id, mlflow_experiment_name(REPRESENTATION_TRAJECTORY))
         if source.data.tags.get("phase") != "sweep":
             raise ValueError(f"Probe source must be a trajectory sweep: {source_id}")
         metadata = {**source.data.tags, **source.data.params}
@@ -103,9 +109,9 @@ class SavedRunReader:
 
     def receiver(self, run_id, sweep):
         experiment = (
-            "latentmas_receiver_trajectory"
+            mlflow_experiment_name(REPRESENTATION_TRAJECTORY)
             if sweep
-            else "latentmas_receiver_acquisition"
+            else mlflow_experiment_name(REPRESENTATION_ACQUISITION)
         )
         run = self.run(run_id, experiment)
         metadata = {**run.data.tags, **run.data.params}
@@ -160,7 +166,7 @@ class SavedRunReader:
             target[key] = record
         if len(drops) != 100 or len(own) != 100 * len(steps):
             raise ValueError(f"Incomplete receiver sample set: {run_id}")
-        from latentmas_reprop.application.receiver_acquisition.sampling import (
+        from latentmas_reprop.application.representation_acquisition.sampling import (
             generate_secret_digit_samples,
         )
 

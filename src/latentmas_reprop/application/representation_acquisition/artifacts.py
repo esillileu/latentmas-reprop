@@ -6,7 +6,10 @@ from typing import Any
 
 import torch
 
-from ...domain.models import ReceiverAcquisitionMetrics, ReceiverAcquisitionRecord
+from ...domain.models import (
+    RepresentationAcquisitionMetrics,
+    RepresentationAcquisitionRecord,
+)
 from ...domain.ports.cache_port import CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.paths.naming import build_experiment_relpath
@@ -17,8 +20,8 @@ def log_receiver_artifacts(
     cache_port: CachePort,
     tracker_port: ExperimentTrackerPort | None,
     args: Any,
-    records: list[ReceiverAcquisitionRecord],
-    metrics: ReceiverAcquisitionMetrics,
+    records: list[RepresentationAcquisitionRecord],
+    metrics: RepresentationAcquisitionMetrics,
     mapping: dict[str, Any],
     hidden: dict[str, tuple],
     sender_states: dict[str, Any] | None,

@@ -7,7 +7,7 @@ from typing import Any
 import torch
 from tqdm import tqdm
 
-from ...domain.models import ReceiverAcquisitionRecord
+from ...domain.models import RepresentationAcquisitionRecord
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.models.model_wrapper import ModelWrapper
 from ...infrastructure.paths.resolver import get_path_resolver
@@ -63,9 +63,9 @@ def run_acquisition_loop(
     mapping: dict[str, Any],
     tracker_port: ExperimentTrackerPort | None,
     run_id: str | None = None,
-) -> tuple[list[ReceiverAcquisitionRecord], dict[str, Any], float]:
+) -> tuple[list[RepresentationAcquisitionRecord], dict[str, Any], float]:
     """Execute sender caching and receiver evaluation loop across all samples and conditions."""
-    records: list[ReceiverAcquisitionRecord] = []
+    records: list[RepresentationAcquisitionRecord] = []
     hidden: dict[str, torch.Tensor] = {}
     resolver = get_path_resolver()
     sender_bundles: dict[int, Any] = {}
@@ -131,9 +131,9 @@ def run_acquisition_loop(
                                         else None
                                     ),
                                 )
-                                for f in dataclasses.fields(ReceiverAcquisitionRecord)
+                                for f in dataclasses.fields(RepresentationAcquisitionRecord)
                             }
-                            rec = ReceiverAcquisitionRecord(**rec_kwargs)
+                            rec = RepresentationAcquisitionRecord(**rec_kwargs)
                             records.append(rec)
                             if rec.hidden_state_artifact_key and "hidden.pt" in d.get(
                                 "files", []

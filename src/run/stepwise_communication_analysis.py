@@ -7,6 +7,11 @@ import json
 import math
 from pathlib import Path
 
+from latentmas_reprop.domain.models.use_cases import (
+    REPRESENTATION_TRAJECTORY,
+    mlflow_experiment_name,
+)
+
 from .presentation_plots import STYLE, plt, save
 
 MODELS = ("Qwen/Qwen3-0.6B", "Qwen/Qwen3-4B", "Qwen/Qwen3-8B", "Qwen/Qwen3-14B")
@@ -244,7 +249,7 @@ def main(argv=None):
     independent_ids = list(args.independent_run_ids)
 
     if args.experiment_dir:
-        exp = client.get_experiment_by_name("latentmas_receiver_trajectory")
+        exp = client.get_experiment_by_name(mlflow_experiment_name(REPRESENTATION_TRAJECTORY))
         matched_any = False
         if exp:
             for ed in args.experiment_dir:

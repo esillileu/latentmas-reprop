@@ -93,7 +93,7 @@ def main(argv=None):
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("artifacts/receiver_trajectory/analysis/trajectory.csv"),
+        default=Path("artifacts/representation_trajectory/analysis/trajectory.csv"),
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("artifacts/presentation")

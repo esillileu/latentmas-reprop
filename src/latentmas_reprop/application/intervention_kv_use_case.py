@@ -30,23 +30,23 @@ from ..infrastructure.paths.naming import build_experiment_relpath
 from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
 from ..infrastructure.storage import save_json_atomic
 from .common.reporter import build_run_stem
-from .intervention.algo import generate_cross_indices
-from .intervention.artifacts import (
+from .intervention_kv.algo import generate_cross_indices
+from .intervention_kv.artifacts import (
     save_intervention_artifacts,
     start_intervention_tracker,
 )
-from .intervention.context_builder import build_intervention_contexts
-from .intervention.runner import run_intervention_decoding
-from .intervention.stats import (
+from .intervention_kv.context_builder import build_intervention_contexts
+from .intervention_kv.runner import run_intervention_decoding
+from .intervention_kv.stats import (
     calculate_intervention_metrics,
     compute_cache_and_ram_stats,
     compute_mcnemar_test,
 )
 
-__all__ = ["InterventionUseCase", "compute_mcnemar_test", "generate_cross_indices"]
+__all__ = ["InterventionKvUseCase", "compute_mcnemar_test", "generate_cross_indices"]
 
 
-class InterventionUseCase:
+class InterventionKvUseCase:
     """Application use case for latent communication intervention experiments."""
 
     def __init__(
@@ -92,7 +92,7 @@ class InterventionUseCase:
                 f"Intervention condition 'cross' requires at least 2 samples, got {n_samples}."
             )
 
-        args.intervention = True
+        args.intervention_kv = True
         sample_keys = [f"{i:06d}" for i in range(n_samples)]
         dtype_name = str(getattr(model, "dtype_name", ""))
         exp_relpath = build_experiment_relpath(args, dtype_name=dtype_name)

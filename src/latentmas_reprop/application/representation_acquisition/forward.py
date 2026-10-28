@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from ...domain.models import ReceiverAcquisitionRecord
+from ...domain.models import RepresentationAcquisitionRecord
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...domain.services.kv_cache import (
     clone_past_kv,
@@ -35,7 +35,7 @@ def forward_receiver_observation(
     original_full_seq_len: int,
     tracker_port: ExperimentTrackerPort | None,
     raw_logits: dict[str, torch.Tensor] | None = None,
-) -> tuple[ReceiverAcquisitionRecord, Any]:
+) -> tuple[RepresentationAcquisitionRecord, Any]:
     """Execute a single receiver forward observation under a specified cache condition."""
     active_ids = receiver_ids[0][receiver_mask[0].bool()].cpu().tolist()
     receiver_input = {
@@ -201,7 +201,7 @@ def forward_receiver_observation(
         else None
     )
     return (
-        ReceiverAcquisitionRecord(
+        RepresentationAcquisitionRecord(
             sample_id=target.sample_id,
             sample_index=target.sample_index,
             sample_key=target.sample_key,

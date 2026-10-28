@@ -7,12 +7,17 @@ from typing import Any
 
 import torch
 
+from ...domain.models.use_cases import (
+    REPRESENTATION_SENDER_PROBE,
+    REPRESENTATION_TRAJECTORY,
+    mlflow_experiment_name,
+)
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.paths.resolver import get_git_commit_hash
 from .analysis import ProbeAnalysisConfig, analyze_sender_states
 
 
-class SenderProbeAnalysisUseCase:
+class RepresentationSenderProbeUseCase:
     def __init__(self, tracker_port: ExperimentTrackerPort | None = None) -> None:
         self.tracker_port = tracker_port
 
@@ -24,10 +29,10 @@ class SenderProbeAnalysisUseCase:
         source_run_id: str | None = None,
         source_artifact_path: str | None = None,
         source_config: dict[str, Any] | None = None,
-        experiment_name: str = "latentmas_sender_probe",
+        experiment_name: str = mlflow_experiment_name(REPRESENTATION_SENDER_PROBE),
     ) -> dict[str, Any]:
         payload = torch.load(states_path, map_location="cpu", weights_only=False)
-        if experiment_name == "latentmas_receiver_trajectory":
+        if experiment_name == mlflow_experiment_name(REPRESENTATION_TRAJECTORY):
             if (
                 not source_run_id
                 or source_artifact_path != "sender_latent_states.pt"
@@ -45,13 +50,13 @@ class SenderProbeAnalysisUseCase:
                     )
         tracker = self.tracker_port
         clean_source = str(source_run_id or (states_path.parent.name if states_path else "local")).replace("/", "_")
-        probe_run_name = f"sender_probe_{clean_source}_s{config.seed}_f{config.folds}"
+        probe_run_name = f"{REPRESENTATION_SENDER_PROBE}_{clean_source}_s{config.seed}_f{config.folds}"
         if tracker:
             tracker.start_run(
                 experiment_name=experiment_name,
                 run_name=probe_run_name,
                 tags={
-                    "experiment_type": "sender_probe",
+                    "experiment_type": REPRESENTATION_SENDER_PROBE,
                     "phase": "sender_probe",
                     "source_run_id": source_run_id or "local_file",
                     "git_commit": get_git_commit_hash(),
@@ -69,7 +74,7 @@ class SenderProbeAnalysisUseCase:
                         "source_artifact": source,
                         **(
                             {"model": source_config["model"], "latent_steps": 20}
-                            if experiment_name == "latentmas_receiver_trajectory"
+                            if experiment_name == mlflow_experiment_name(REPRESENTATION_TRAJECTORY)
                             else {}
                         ),
                         "git_commit": get_git_commit_hash(),

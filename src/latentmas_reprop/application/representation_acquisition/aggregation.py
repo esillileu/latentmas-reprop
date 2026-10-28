@@ -3,18 +3,21 @@
 from statistics import mean
 from typing import Any
 
-from ...domain.models import ReceiverAcquisitionMetrics, ReceiverAcquisitionRecord
+from ...domain.models import (
+    RepresentationAcquisitionMetrics,
+    RepresentationAcquisitionRecord,
+)
 from ...domain.services.prompts.acquisition import CANDIDATE_DIGITS
 
 
 def aggregate_receiver_records(
-    records: list[ReceiverAcquisitionRecord],
+    records: list[RepresentationAcquisitionRecord],
     n_samples: int,
     expected: int,
     runtime: float,
     context_runtime: float,
-) -> ReceiverAcquisitionMetrics:
-    """Aggregate per-condition cells, deltas, and stats into ReceiverAcquisitionMetrics."""
+) -> RepresentationAcquisitionMetrics:
+    """Aggregate per-condition cells, deltas, and stats into RepresentationAcquisitionMetrics."""
     successful = [record for record in records if record.error is None]
     cells: dict[str, dict[str, Any]] = {}
     for cell in sorted(
@@ -185,7 +188,7 @@ def aggregate_receiver_records(
             byte_values = [r.cache_bytes for r in group]
             lengths[mode] = {"mean": mean(seqs), "min": min(seqs), "max": max(seqs)}
             sizes[mode] = {"mean": mean(byte_values), "max": max(byte_values)}
-    return ReceiverAcquisitionMetrics(
+    return RepresentationAcquisitionMetrics(
         n_samples=n_samples,
         n_records_expected=expected,
         n_records_successful=len(successful),

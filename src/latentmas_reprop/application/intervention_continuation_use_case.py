@@ -1,4 +1,4 @@
-"""Application use case for LMAS Single Intervention Analysis (PLE, PLCE, PLPE)."""
+"""Application use case for LMAS Intervention Continuation Analysis (PLE, PLCE, PLPE)."""
 
 from typing import Any
 
@@ -24,23 +24,23 @@ from ..infrastructure.storage import (
     get_file_storage,
     save_json_atomic,
 )
-from .single_intervention.artifacts import (
+from .intervention_continuation.artifacts import (
     build_summary_dict,
     log_to_mlflow_tracker,
     save_experiment_summary,
-    start_single_intervention_tracker,
-    trace_single_intervention_sample,
+    start_intervention_continuation_tracker,
+    trace_intervention_continuation_sample,
 )
-from .single_intervention.checkpoint import (
+from .intervention_continuation.checkpoint import (
     find_latent_step_checkpoint,
     make_step_checkpoint_saver,
 )
-from .single_intervention.runner import SingleInterventionRunner
+from .intervention_continuation.runner import InterventionContinuationRunner
 
 CONDITIONS = ["ple", "plce", "plpe"]
 
 
-class SingleInterventionUseCase:
+class InterventionContinuationUseCase:
     """Orchestrates Common Latent calculation and branching across PLE, PLCE, PLPE."""
 
     def __init__(
@@ -63,7 +63,7 @@ class SingleInterventionUseCase:
         model: ModelWrapper,
         args: Any,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        args.single_intervention = True
+        args.intervention_continuation = True
         overwrite = is_overwrite_requested(args)
 
         dtype_name = getattr(model, "dtype_name", "") or resolve_experiment_dtype_name(args)
@@ -106,17 +106,17 @@ class SingleInterventionUseCase:
         else:
             conditions = ["ple", "plce", "plpe"]
 
-        runner = SingleInterventionRunner(model, args, self.evaluator_port)
+        runner = InterventionContinuationRunner(model, args, self.evaluator_port)
         all_records: list[dict[str, Any]] = []
         git_hash = get_git_commit_hash()
-        run_started = start_single_intervention_tracker(
+        run_started = start_intervention_continuation_tracker(
             self.tracker_port, exp_dir, exp_relpath, git_hash, args
         )
 
         show_progress = not bool(getattr(args, "no_progress", False))
         dataset_iter = tqdm(
             dataset,
-            desc="Single Intervention",
+            desc="Intervention Continuation",
             disable=not show_progress,
             unit="sample",
         )
@@ -141,7 +141,7 @@ class SingleInterventionUseCase:
                 if self.tracker_port and any(
                     not r.get("trace_id") for r in cond_records.values()
                 ):
-                    tid = trace_single_intervention_sample(
+                    tid = trace_intervention_continuation_sample(
                         self.tracker_port,
                         args,
                         idx,
@@ -248,7 +248,7 @@ class SingleInterventionUseCase:
                     )
                 cond_records[cond] = rec
 
-            tid = trace_single_intervention_sample(
+            tid = trace_intervention_continuation_sample(
                 self.tracker_port,
                 args,
                 idx,

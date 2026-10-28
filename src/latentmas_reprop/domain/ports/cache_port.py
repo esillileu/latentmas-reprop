@@ -12,11 +12,11 @@ class CacheLayer(StrEnum):
     EVALUATION = "evaluation"
     EVALUATION_RUNS = "evaluation/runs"
     EVALUATION_INTERVENTIONS = "evaluation/interventions"
-    EVALUATION_RECEIVER_ACQUISITION = "evaluation/receiver_acquisition"
+    EVALUATION_REPRESENTATION_ACQUISITION = "evaluation/representation_acquisition"
     DATASETS = "datasets"
     RUNTIME = "runtime"
     LATENT_INTERVENTIONS = "latent_interventions"
-    LATENT_RECEIVER_ACQUISITION = "latent_receiver_acquisition"
+    LATENT_REPRESENTATION_ACQUISITION = "latent_representation_acquisition"
 
 
 class CachePort(ABC):

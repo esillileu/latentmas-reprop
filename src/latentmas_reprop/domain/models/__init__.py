@@ -1,6 +1,6 @@
 from .acquisition import (
-    ReceiverAcquisitionMetrics,
-    ReceiverAcquisitionRecord,
+    RepresentationAcquisitionMetrics,
+    RepresentationAcquisitionRecord,
 )
 from .core import (
     Agent,
@@ -36,8 +36,8 @@ __all__ = [
     "InterventionMetrics",
     "ManifestCorruptedError",
     "ProblemSample",
-    "ReceiverAcquisitionMetrics",
-    "ReceiverAcquisitionRecord",
+    "RepresentationAcquisitionMetrics",
+    "RepresentationAcquisitionRecord",
     "SampleInterventionRecord",
     "StorageError",
     "TensorChecksumMismatchError",

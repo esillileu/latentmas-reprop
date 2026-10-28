@@ -11,19 +11,25 @@ import torch
 import transformers
 from dotenv import load_dotenv
 
-from latentmas_reprop.application.receiver_acquisition.parity import (
+from latentmas_reprop.application.representation_acquisition.parity import (
     verify_prefix_parity,
 )
-from latentmas_reprop.application.receiver_acquisition.sampling import (
+from latentmas_reprop.application.representation_acquisition.sampling import (
     generate_secret_digit_samples,
 )
-from latentmas_reprop.application.receiver_acquisition.scoring import (
+from latentmas_reprop.application.representation_acquisition.scoring import (
     prepare_receiver_scoring,
 )
-from latentmas_reprop.application.receiver_acquisition.trajectory import (
+from latentmas_reprop.application.representation_acquisition.trajectory import (
     collect_trajectory,
 )
-from latentmas_reprop.application.sender_probe import collect_sender_states
+from latentmas_reprop.application.representation_sender_probe import (
+    collect_sender_states,
+)
+from latentmas_reprop.domain.models.use_cases import (
+    REPRESENTATION_TRAJECTORY,
+    mlflow_experiment_name,
+)
 from latentmas_reprop.domain.services.prompts.acquisition import (
     CANDIDATE_DIGITS,
     RECEIVER_ANSWER_PREFIX,
@@ -51,12 +57,12 @@ def tracked_model(directory, name, smoke, exp_rel=None):
     rel_name = exp_rel or Path(directory).name
     tracker = MLflowTracker()
     tracker.start_run(
-        experiment_name="latentmas_receiver_trajectory",
+        experiment_name=mlflow_experiment_name(REPRESENTATION_TRAJECTORY),
         run_name=rel_name,
         tags={
-            "protocol": "receiver_acquisition",
+            "protocol": "representation_acquisition",
             "phase": "smoke" if smoke else "sweep",
-            "experiment_type": "receiver_acquisition",
+            "experiment_type": REPRESENTATION_TRAJECTORY,
             "model": name,
             "task": "secret_digit",
             "method": "latent_mas",

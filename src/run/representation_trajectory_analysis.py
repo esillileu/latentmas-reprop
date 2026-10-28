@@ -5,7 +5,7 @@ import csv
 import json
 from pathlib import Path
 
-from latentmas_reprop.application.receiver_acquisition.trajectory_analysis import (
+from latentmas_reprop.application.representation_acquisition.trajectory_analysis import (
     summarize_trajectory,
 )
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
@@ -14,7 +14,7 @@ from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
 )
 
 from .presentation_plots import STYLE, plt
-from .receiver_trajectory_plots import plot_trajectory
+from .representation_trajectory_plots import plot_trajectory
 
 
 def write_csv(path, rows):
@@ -54,22 +54,22 @@ def analyze_trajectory(input_dir, probe_path, output_dir):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--input-dir", type=Path, default=Path("artifacts/receiver_trajectory")
+        "--input-dir", type=Path, default=Path("artifacts/representation_trajectory")
     )
     parser.add_argument(
         "--probe-cells",
         type=Path,
-        default=Path("artifacts/receiver_acquisition/sender_probe_cells.csv"),
+        default=Path("artifacts/representation_acquisition/sender_probe_cells.csv"),
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("artifacts/receiver_trajectory/analysis"),
+        default=Path("artifacts/representation_trajectory/analysis"),
     )
     args = parser.parse_args(argv)
     analyze_trajectory(args.input_dir, args.probe_cells, args.output_dir)
     log_analysis_results_to_mlflow(
-        MLflowTracker(), "receiver_trajectory", args.output_dir
+        MLflowTracker(), "representation_trajectory", args.output_dir
     )
 
 
