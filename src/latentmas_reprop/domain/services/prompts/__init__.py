@@ -13,6 +13,12 @@ from .acquisition import (
 )
 from .hierarchical_latent import build_agent_message_hierarchical_latent_mas
 from .hierarchical_text import build_agent_messages_hierarchical_text_mas
+from .intervention_p1 import (
+    DEFAULT_P1_VARIANT,
+    build_intervention_p1_messages,
+    load_p1_variants,
+    resolve_p1_variant_id,
+)
 from .sequential_latent import build_agent_message_sequential_latent_mas
 from .sequential_text import build_agent_messages_sequential_text_mas
 from .single_agent import build_agent_messages_single_agent
@@ -20,6 +26,7 @@ from .single_agent import build_agent_messages_single_agent
 __all__ = [
     "CANDIDATE_DIGITS",
     "CROSS_PAIRING_POLICY",
+    "DEFAULT_P1_VARIANT",
     "RECEIVER_ANSWER_PREFIX",
     "RECEIVER_PROMPT",
     "RECEIVER_PROMPT_TEMPLATE_VERSION",
@@ -30,6 +37,9 @@ __all__ = [
     "build_agent_messages_hierarchical_text_mas",
     "build_agent_messages_sequential_text_mas",
     "build_agent_messages_single_agent",
+    "build_intervention_p1_messages",
     "build_receiver_messages",
     "build_sender_messages",
+    "load_p1_variants",
+    "resolve_p1_variant_id",
 ]
