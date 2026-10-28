@@ -7,8 +7,11 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from latentmas_reprop.application.sender_probe import ProbeAnalysisConfig, use_case
-from src.run import sender_probe as cli
+from latentmas_reprop.application.representation_sender_probe import (
+    ProbeAnalysisConfig,
+    use_case,
+)
+from src.run import representation_sender_probe as cli
 
 
 def setup_cli(monkeypatch, tmp_path, status="FINISHED", phase="sweep"):
@@ -19,7 +22,7 @@ def setup_cli(monkeypatch, tmp_path, status="FINISHED", phase="sweep"):
     client = SimpleNamespace(
         get_run=lambda run_id: source,
         get_experiment=lambda experiment_id: SimpleNamespace(
-            name="latentmas_receiver_trajectory"
+            name="latentmas/representation/trajectory"
         ),
     )
     monkeypatch.setattr(cli.mlflow, "MlflowClient", lambda: client)
@@ -51,7 +54,7 @@ def setup_cli(monkeypatch, tmp_path, status="FINISHED", phase="sweep"):
             calls.append(kwargs)
             return {}
 
-    monkeypatch.setattr(cli, "SenderProbeAnalysisUseCase", Analysis)
+    monkeypatch.setattr(cli, "RepresentationSenderProbeUseCase", Analysis)
     return downloads, calls
 
 
@@ -61,7 +64,7 @@ def test_cli_uses_sweep_root_states_and_same_experiment(monkeypatch, tmp_path):
     assert downloads == ["source.json", "sender_latent_states.pt"]
     assert calls[0]["source_run_id"] == "sweep-14B"
     assert calls[0]["source_artifact_path"] == "sender_latent_states.pt"
-    assert calls[0]["experiment_name"] == "latentmas_receiver_trajectory"
+    assert calls[0]["experiment_name"] == "latentmas/representation/trajectory"
     assert calls[0]["source_config"]["model"] == "Qwen/Qwen3-14B"
 
 
@@ -126,15 +129,15 @@ def test_use_case_logs_sweep_lineage_in_trajectory_experiment(monkeypatch, tmp_p
         log_metrics=lambda values: None,
         end_run=lambda status: statuses.append(status),
     )
-    use_case.SenderProbeAnalysisUseCase(tracker).execute(
+    use_case.RepresentationSenderProbeUseCase(tracker).execute(
         Path("unused.pt"),
         ProbeAnalysisConfig(),
         source_run_id="sweep",
         source_artifact_path="sender_latent_states.pt",
         source_config={"model": "Qwen/Qwen3-14B"},
-        experiment_name="latentmas_receiver_trajectory",
+        experiment_name="latentmas/representation/trajectory",
     )
-    assert starts[0]["experiment_name"] == "latentmas_receiver_trajectory"
+    assert starts[0]["experiment_name"] == "latentmas/representation/trajectory"
     assert starts[0]["tags"]["phase"] == "sender_probe"
     assert starts[0]["tags"]["source_run_id"] == "sweep"
     assert params[0]["source_artifact"] == "sender_latent_states.pt"

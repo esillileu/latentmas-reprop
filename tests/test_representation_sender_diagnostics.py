@@ -3,12 +3,12 @@
 import numpy as np
 import pytest
 
-from latentmas_reprop.application.sender_probe.diagnostics import (
+from latentmas_reprop.application.representation_sender_probe.diagnostics import (
     effect_intervals,
     feature_geometry,
     robustness_probes,
 )
-from latentmas_reprop.application.sender_probe.folds import grouped_folds
+from latentmas_reprop.application.representation_sender_probe.folds import grouped_folds
 
 
 def test_geometry_scatter_and_covariance_spectrum():

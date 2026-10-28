@@ -6,15 +6,15 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from latentmas_reprop.application.single_intervention.checkpoint import (
+from latentmas_reprop.application.intervention_continuation.checkpoint import (
     find_latent_step_checkpoint,
     make_step_checkpoint_saver,
 )
-from latentmas_reprop.application.single_intervention.runner import (
-    SingleInterventionRunner,
+from latentmas_reprop.application.intervention_continuation.runner import (
+    InterventionContinuationRunner,
 )
-from latentmas_reprop.application.single_intervention_use_case import (
-    SingleInterventionUseCase,
+from latentmas_reprop.application.intervention_continuation_use_case import (
+    InterventionContinuationUseCase,
 )
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage import FileStorage, InMemoryStorage
@@ -63,7 +63,7 @@ def test_find_and_save_latent_step_checkpoint(tmp_path):
         temperature=0.6,
         top_p=0.95,
         max_new_tokens=2048,
-        single_intervention=True,
+        intervention_continuation=True,
         latent_steps=20,
     )
     cb = make_step_checkpoint_saver(
@@ -110,12 +110,12 @@ def test_incremental_latent_execution(tmp_path, mock_model):
         temperature=0.6,
         top_p=0.95,
         max_new_tokens=256,
-        single_intervention=True,
+        intervention_continuation=True,
         latent_steps=20,
         latent_step_checkpoint_interval=10,
         no_progress=True,
     )
-    runner = SingleInterventionRunner(mock_model, args, evaluator)
+    runner = InterventionContinuationRunner(mock_model, args, evaluator)
     checkpoints = {}
 
     def test_cb(step, kv, hidden, meta):
@@ -178,12 +178,12 @@ def test_mlflow_sample_tracing_and_backfill(mock_model):
         temperature=0.6,
         top_p=0.95,
         max_new_tokens=16,
-        single_intervention=True,
+        intervention_continuation=True,
         latent_steps=2,
         no_progress=True,
     )
 
-    uc = SingleInterventionUseCase(
+    uc = InterventionContinuationUseCase(
         dataset_port=dataset,
         evaluator_port=evaluator,
         tracker_port=tracker,

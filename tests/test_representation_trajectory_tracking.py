@@ -9,8 +9,8 @@ import pytest
 import torch
 from mlflow.tracking import MlflowClient
 
-from latentmas_reprop.application.receiver_acquisition import trajectory
-from latentmas_reprop.application.receiver_acquisition.sampling import (
+from latentmas_reprop.application.representation_acquisition import trajectory
+from latentmas_reprop.application.representation_acquisition.sampling import (
     generate_secret_digit_samples,
 )
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
@@ -161,7 +161,7 @@ def test_run_uploads_prompt_artifacts_and_all_raw_logits(
     tmp_path, monkeypatch, make_mlflow_db
 ):
     interrupted = False
-    from src.run import receiver_trajectory as cli
+    from src.run import representation_trajectory as cli
 
     previous_uri = mlflow.get_tracking_uri()
     tracker = MLflowTracker(
@@ -170,7 +170,7 @@ def test_run_uploads_prompt_artifacts_and_all_raw_logits(
         path_resolver=PathResolver(tmp_path),
     )
     monkeypatch.setattr(cli, "MLflowTracker", lambda: tracker)
-    staging = TemporaryDirectory(prefix="receiver-trajectory-", dir=tmp_path)
+    staging = TemporaryDirectory(prefix="representation-trajectory-", dir=tmp_path)
     directory = Path(staging.name)
     (directory / "receiver_outputs").mkdir()
     torch.save(

@@ -1,21 +1,21 @@
-"""Tests for LMAS Single Intervention Analysis (PLE, PLCE, PLPE) specification v0.2."""
+"""Tests for LMAS Intervention Continuation Analysis (PLE, PLCE, PLPE) specification v0.2."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import torch
 
-from latentmas_reprop.application.single_intervention.analysis import (
+from latentmas_reprop.application.intervention_continuation.analysis import (
     SingleInterventionAnalyzer,
 )
-from latentmas_reprop.application.single_intervention.decoder import (
+from latentmas_reprop.application.intervention_continuation.decoder import (
     decode_tokens_with_hiddens,
 )
-from latentmas_reprop.application.single_intervention.runner import (
-    SingleInterventionRunner,
+from latentmas_reprop.application.intervention_continuation.runner import (
+    InterventionContinuationRunner,
 )
-from latentmas_reprop.application.single_intervention_use_case import (
-    SingleInterventionUseCase,
+from latentmas_reprop.application.intervention_continuation_use_case import (
+    InterventionContinuationUseCase,
 )
 from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
 from latentmas_reprop.infrastructure.paths.naming import build_experiment_relpath
@@ -99,7 +99,7 @@ def test_verification_01_02_03_04_05(tmp_path):
     )
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("42", True, None)
-    runner = SingleInterventionRunner(wrapper, args, evaluator)
+    runner = InterventionContinuationRunner(wrapper, args, evaluator)
     item = {"question": "What is 2+2?", "gold": "4"}
 
     # UC-01
@@ -166,7 +166,7 @@ def test_verification_06_07_resumption_and_partial_failure(tmp_path):
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("1", True, None)
 
-    uc = SingleInterventionUseCase(
+    uc = InterventionContinuationUseCase(
         dataset_port=dataset,
         storage=storage,
         evaluator_port=evaluator,
@@ -189,7 +189,7 @@ def test_verification_06_07_resumption_and_partial_failure(tmp_path):
 
 
 def test_verification_08_09_cache_cleaning_and_path_isolation(tmp_path):
-    """Verify criteria 8 & 9: clean-cache preserves storage data; single_intervention path never collides."""
+    """Verify criteria 8 & 9: clean-cache preserves storage data; intervention_continuation path never collides."""
     resolver = PathResolver(tmp_path)
     cache_mgr = ExecutionCacheManager(resolver)
     args_std = SimpleNamespace(
@@ -217,7 +217,7 @@ def test_verification_08_09_cache_cleaning_and_path_isolation(tmp_path):
         prompt="sequential",
         latent_steps=20,
         seed=42,
-        single_intervention=True,
+        intervention_continuation=True,
     )
     p_std = build_experiment_relpath(args_std)
     p_cross = build_experiment_relpath(args_interv)
@@ -230,12 +230,12 @@ def test_verification_08_09_cache_cleaning_and_path_isolation(tmp_path):
         prompt="sequential",
         latent_steps=20,
         seed=42,
-        single_intervention=True,
+        intervention_continuation=True,
         receiver_role="critic",
     )
     p_plpe = build_experiment_relpath(args_custom_plpe)
 
-    assert "single_intervention" in p_single
+    assert "intervention_continuation" in p_single
     assert p_single != p_std
     assert p_single != p_cross
     assert "role_critic" in p_plpe

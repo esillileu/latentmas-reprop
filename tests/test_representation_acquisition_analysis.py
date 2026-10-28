@@ -2,11 +2,13 @@
 
 import pytest
 
-from latentmas_reprop.application.receiver_acquisition.analysis import (
+from latentmas_reprop.application.representation_acquisition.analysis import (
     analyze_records,
     select_receiver_runs,
 )
-from latentmas_reprop.application.receiver_acquisition.markdown import render_markdown
+from latentmas_reprop.application.representation_acquisition.markdown import (
+    render_markdown,
+)
 
 
 def _candidate(run_id, model="model", steps=4, samples=100, designated=False):
@@ -150,7 +152,9 @@ def test_probability_mass_normalization_and_pairing():
 
 
 def test_sender_statistics_use_saved_permutation_family():
-    from latentmas_reprop.application.receiver_acquisition.report import sender_cells
+    from latentmas_reprop.application.representation_acquisition.report import (
+        sender_cells,
+    )
 
     specs = [
         {"representation": "hidden_pre_realign", "step": 1},
@@ -171,7 +175,7 @@ def test_sender_statistics_use_saved_permutation_family():
 def test_export_tables_preserves_statistics_and_corrects_family(tmp_path):
     import json
 
-    from latentmas_reprop.application.receiver_acquisition.report import (
+    from latentmas_reprop.application.representation_acquisition.report import (
         export_tables,
         sender_cells,
     )

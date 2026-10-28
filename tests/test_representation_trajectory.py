@@ -8,14 +8,14 @@ import pytest
 import torch
 from transformers import DynamicCache
 
-from latentmas_reprop.application.receiver_acquisition import parity
-from latentmas_reprop.application.receiver_acquisition.sampling import (
+from latentmas_reprop.application.representation_acquisition import parity
+from latentmas_reprop.application.representation_acquisition.sampling import (
     generate_secret_digit_samples,
 )
-from latentmas_reprop.application.receiver_acquisition.trajectory import (
+from latentmas_reprop.application.representation_acquisition.trajectory import (
     latent_prefix,
 )
-from latentmas_reprop.application.receiver_acquisition.trajectory_analysis import (
+from latentmas_reprop.application.representation_acquisition.trajectory_analysis import (
     summarize_trajectory,
 )
 
@@ -151,7 +151,7 @@ def test_summary_rejects_incomplete_unpaired_or_mispositioned_cells(corruption):
 
 @pytest.mark.parametrize("corruption", ["smoke", "duplicate"])
 def test_scatter_rejects_smoke_or_missing_model_step_cells(tmp_path, corruption):
-    from src.run.receiver_trajectory_plots import plot_trajectory
+    from src.run.representation_trajectory_plots import plot_trajectory
 
     rows = [
         {
@@ -179,7 +179,7 @@ def test_scatter_rejects_smoke_or_missing_model_step_cells(tmp_path, corruption)
 def test_scatter_accepts_complete_requested_schema_and_connects_step_order(
     tmp_path, monkeypatch
 ):
-    from src.run import receiver_trajectory_plots as plots
+    from src.run import representation_trajectory_plots as plots
 
     records, probes = trajectory_fixture()
     base = summarize_trajectory(records, probes, "Qwen/Qwen3-0.6B")
@@ -206,7 +206,7 @@ def test_scatter_accepts_complete_requested_schema_and_connects_step_order(
 def test_offline_analysis_matches_saved_receiver_results(tmp_path, monkeypatch):
     import json
 
-    from src.run import receiver_trajectory_analysis as analysis
+    from src.run import representation_trajectory_analysis as analysis
 
     records, probes = trajectory_fixture()
     for size in ("0.6B", "14B"):
@@ -242,7 +242,7 @@ def test_large_models_load_without_prior_runs_or_local_analysis_files(
 ):
     from contextlib import nullcontext
 
-    from src.run import receiver_trajectory as cli
+    from src.run import representation_trajectory as cli
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli.torch.cuda, "is_available", lambda: True)

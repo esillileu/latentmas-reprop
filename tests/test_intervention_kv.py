@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from latentmas_reprop.application.intervention.runner import (
+from latentmas_reprop.application.intervention_kv.runner import (
     run_intervention_decoding,
 )
-from latentmas_reprop.application.intervention_use_case import InterventionUseCase
+from latentmas_reprop.application.intervention_kv_use_case import InterventionKvUseCase
 from latentmas_reprop.domain.models import InterventionMetrics
 from latentmas_reprop.infrastructure.cache.manager import ExecutionCacheManager
 from latentmas_reprop.infrastructure.paths.resolver import (
@@ -126,7 +126,7 @@ def test_intervention_use_case_execute_all_conditions(tmp_path):
     tracker = MagicMock()
     tracker.active_run_id = None
 
-    uc = InterventionUseCase(
+    uc = InterventionKvUseCase(
         cache_port=cache,
         tracker_port=tracker,
         dataset_port=dataset_port,
@@ -152,11 +152,11 @@ def test_intervention_use_case_execute_all_conditions(tmp_path):
 
     with (
         patch(
-            "latentmas_reprop.application.intervention_use_case.LatentMASMethod.build_latent_contexts",
+            "latentmas_reprop.application.intervention_kv_use_case.LatentMASMethod.build_latent_contexts",
             return_value=(dummy_kv, [[{"trace": "planner"}]]),
         ),
         patch(
-            "latentmas_reprop.application.intervention_use_case.LatentMASMethod.decode_with_context",
+            "latentmas_reprop.application.intervention_kv_use_case.LatentMASMethod.decode_with_context",
             return_value=[
                 {
                     "prediction": "4",
@@ -190,7 +190,6 @@ def _default_args(**kwargs):
         "top_p": 0.95,
         "seed": 42,
         "model_name": "test-model",
-        "tracking_experiment_name": "test_exp",
         "prompt": "sequential",
         "use_vllm": False,
         "save_raw_cache": False,
@@ -211,7 +210,7 @@ def test_mlflow_run_created_before_execution():
     )
     tracker.start_sample_trace.return_value.__exit__ = lambda s, *a: False
 
-    uc = InterventionUseCase(tracker_port=tracker)
+    uc = InterventionKvUseCase(tracker_port=tracker)
     dataset_mock = MagicMock(
         load=lambda **kw: [
             {"question": "q0", "gold": "1"},
@@ -239,7 +238,7 @@ def test_mlflow_run_created_before_execution():
 
 def test_failed_experiment_calls_end_run_failed():
     tracker = MagicMock(start_run=lambda *a, **kw: None, log_params=lambda *a, **kw: None)
-    uc = InterventionUseCase(tracker_port=tracker)
+    uc = InterventionKvUseCase(tracker_port=tracker)
     dataset_mock = MagicMock(
         load=lambda **kw: [{"question": "q0", "gold": "1"}, {"question": "q1", "gold": "2"}]
     )
@@ -262,7 +261,7 @@ def test_failed_experiment_calls_end_run_failed():
 
 
 def test_intervention_context_builder_saves_shared_kv(tmp_path):
-    from latentmas_reprop.application.intervention.context_builder import (
+    from latentmas_reprop.application.intervention_kv.context_builder import (
         build_intervention_contexts,
     )
 

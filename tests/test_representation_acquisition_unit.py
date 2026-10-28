@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from latentmas_reprop.application.receiver_acquisition_use_case import (
+from latentmas_reprop.application.representation_acquisition_use_case import (
     build_receiver_messages,
     generate_secret_digit_samples,
     pair_different_digit_sources,

@@ -5,13 +5,13 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from latentmas_reprop.application.receiver_acquisition.forward import (
+from latentmas_reprop.application.representation_acquisition.forward import (
     forward_receiver_observation,
 )
-from latentmas_reprop.application.receiver_acquisition_use_case import (
+from latentmas_reprop.application.representation_acquisition_use_case import (
     aggregate_receiver_records,
 )
-from latentmas_reprop.domain.models import ReceiverAcquisitionRecord
+from latentmas_reprop.domain.models import RepresentationAcquisitionRecord
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
 from run.cli import parse_args
 
@@ -45,10 +45,9 @@ def acquisition_config_path(tmp_path):
                 "task: secret_digit",
                 "max_samples: 100",
                 "latent_steps: 4",
-                "acquisition: true",
+                "representation_acquisition: true",
                 "carrier_modes: full,prompt_only,latent_only",
                 "acquisition_conditions: own,cross,drop,drop_position_matched",
-                "tracking_experiment_name: latentmas_receiver_acquisition",
                 "probe_sender_latents: true",
                 "probe_prompt_templates: 20",
             )
@@ -61,7 +60,7 @@ def acquisition_config_path(tmp_path):
 def _record(condition="own", mode="full", source_digit=2, source_prob=0.7):
     probs = {str(i): 0.01 for i in range(10)}
     probs[str(source_digit if source_digit is not None else 1)] = source_prob
-    return ReceiverAcquisitionRecord(
+    return RepresentationAcquisitionRecord(
         sample_id="secret_digit_0000",
         sample_index=0,
         sample_key="key",
@@ -125,8 +124,8 @@ def test_metrics_pair_source_probability_against_same_sample_drop():
 
 
 def test_cli_routes_canonical_acquisition_preset(acquisition_config_path):
-    args = parse_args(["--acquisition", "-c", acquisition_config_path])
-    assert args.acquisition
+    args = parse_args(["--representation_acquisition", "-c", acquisition_config_path])
+    assert args.representation_acquisition
     assert args.carrier_modes == ["full", "prompt_only", "latent_only"]
     assert args.context_modes == args.carrier_modes
     assert args.acquisition_conditions == [

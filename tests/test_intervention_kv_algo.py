@@ -2,8 +2,8 @@
 
 import pytest
 
-from latentmas_reprop.application.intervention.algo import generate_cross_indices
-from latentmas_reprop.application.intervention.stats import compute_mcnemar_test
+from latentmas_reprop.application.intervention_kv.algo import generate_cross_indices
+from latentmas_reprop.application.intervention_kv.stats import compute_mcnemar_test
 from latentmas_reprop.domain.models import (
     SampleInterventionRecord,
     compute_sample_key,

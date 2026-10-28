@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from latentmas_reprop.application.receiver_acquisition.inference import (
+from latentmas_reprop.application.representation_acquisition.inference import (
     analyze_probability_records,
     correct_receiver_families,
     enrich_condition,
@@ -92,10 +92,10 @@ def test_holm_fwer_covers_all_runs_and_excludes_drop():
 
 
 def test_markdown_tables_keep_rows_with_headers_and_include_new_statistics():
-    from latentmas_reprop.application.receiver_acquisition.analysis import (
+    from latentmas_reprop.application.representation_acquisition.analysis import (
         analyze_records,
     )
-    from latentmas_reprop.application.receiver_acquisition.markdown import (
+    from latentmas_reprop.application.representation_acquisition.markdown import (
         render_markdown,
     )
 

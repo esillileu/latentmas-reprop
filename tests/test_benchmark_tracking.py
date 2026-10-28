@@ -3,13 +3,10 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
 from latentmas_reprop.domain.models import BenchmarkMetrics
 from latentmas_reprop.domain.ports.tracking_port import ExperimentTrackerPort
 from run.cli import parse_args
-from run.runner import run_benchmark
 
 
 class DummyTracker(ExperimentTrackerPort):
@@ -121,56 +118,13 @@ class DummyTracker(ExperimentTrackerPort):
         self.flushed = True
 
 
-def test_benchmark_use_case_requires_tracking_experiment_name():
-    use_case = BenchmarkUseCase()
-    args = SimpleNamespace(
-        method="baseline",
-        model_name="test_model",
-        task="gsm8k",
-        split="test",
-        seed=42,
-        max_samples=1,
-    )
-    model = MagicMock()
-    with pytest.raises(
-        ValueError, match="MLflow tracking experiment name must be specified"
+def test_reprop_configs_do_not_hardcode_an_experiment_name():
+    for preset, extra in (
+        ("gsm8k_q38_bs", ["--method", "baseline"]),
+        ("gsm8k_q38_lm", ["--latent_steps", "10"]),
     ):
-        use_case.execute(model, args)
-
-
-def test_run_benchmark_requires_tracking_experiment_name():
-    args = SimpleNamespace(
-        method="baseline",
-        model_name="test_model",
-        task="gsm8k",
-        seed=42,
-    )
-    with pytest.raises(
-        ValueError, match="MLflow tracking experiment name must be specified"
-    ):
-        run_benchmark(args)
-
-
-def test_reprop_configs_resolve_to_latentmas_reprop_experiment():
-    bs_args = parse_args(
-        [
-            "-c",
-            "configs/lmas/reprop/bs_q38_gsm8k.yaml",
-            "--method",
-            "baseline",
-        ]
-    )
-    assert bs_args.tracking_experiment_name == "latentmas-reprop"
-
-    lm_args = parse_args(
-        [
-            "-c",
-            "configs/lmas/reprop/lm_q38_gsm8k.yaml",
-            "--latent_steps",
-            "10",
-        ]
-    )
-    assert lm_args.tracking_experiment_name == "latentmas-reprop"
+        args = parse_args(["-c", f"configs/benchmark/{preset}.yaml", *extra])
+        assert not hasattr(args, "tracking_experiment_name")
 
 
 def test_benchmark_traces_and_spans_for_textmas(tmp_path):
@@ -198,7 +152,6 @@ def test_benchmark_traces_and_spans_for_textmas(tmp_path):
         temperature=0.7,
         top_p=0.95,
         generate_bs=1,
-        tracking_experiment_name="latentmas-reprop",
     )
 
     # Mock method execution result
@@ -241,7 +194,7 @@ def test_benchmark_traces_and_spans_for_textmas(tmp_path):
 
     assert isinstance(metrics, BenchmarkMetrics)
     assert len(preds) == 1
-    assert tracker.runs[0]["experiment_name"] == "latentmas-reprop"
+    assert tracker.runs[0]["experiment_name"] == "latentmas/benchmark"
     assert tracker.ended_status == "FINISHED"
     assert tracker.flushed is True
 

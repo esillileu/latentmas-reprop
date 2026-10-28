@@ -5,19 +5,19 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-import latentmas_reprop.application.sender_probe.replacement as replacement_module
-from latentmas_reprop.application.sender_probe import (
+import latentmas_reprop.application.representation_sender_probe.replacement as replacement_module
+from latentmas_reprop.application.representation_sender_probe import (
     ProbeAnalysisConfig,
     analyze_sender_states,
 )
-from latentmas_reprop.application.sender_probe.folds import grouped_folds
-from latentmas_reprop.application.sender_probe.replacement import (
+from latentmas_reprop.application.representation_sender_probe.folds import grouped_folds
+from latentmas_reprop.application.representation_sender_probe.replacement import (
     LEGACY_PROBE_PARAMS,
     _analysis_params,
     _replacement_params,
     _without_probe_results,
 )
-from latentmas_reprop.application.sender_probe.torch_solver import (
+from latentmas_reprop.application.representation_sender_probe.torch_solver import (
     TorchSolverConfig,
     _fit_predict,
 )
@@ -27,7 +27,7 @@ def test_analysis_cli_does_not_import_model_wrapper():
     import ast
     from pathlib import Path
 
-    source = Path("src/run/sender_probe.py").read_text()
+    source = Path("src/run/representation_sender_probe.py").read_text()
     tree = ast.parse(source)
     imported = []
     for node in ast.walk(tree):
