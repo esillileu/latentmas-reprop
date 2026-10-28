@@ -43,11 +43,12 @@
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | [**`README.md`**](README.md)                             | 프로젝트 전체 진입점, 빠른 실행 명령어(`just run`), 업스트림 및 라이선스 정보                 |
 | [**`docs/architecture.md`**](docs/architecture.md)       | 헥사고날 아키텍처(Ports & Adapters), 도메인 계층, 인프라스트럭처, 실행 계층 분리 원칙         |
+| [**`docs/use_cases/`**](docs/use_cases/README.md)        | 7대 핵심 유스케이스(Benchmark, Intervention, Receiver Acquisition 등) 상세 명세 색인         |
 | [**`docs/usage.md`**](docs/usage.md)                     | `just run -c <config_name>` 실행 인터페이스, 옵션 오버라이드, `just` 레시피 목록              |
 | [**`docs/configuration.md`**](docs/configuration.md)     | YAML 설정 파일 명명 규칙(`{method}_{model}_{task}.yaml`), 파라미터 스키마, 신규 프리셋 작성법 |
 | [**`docs/cache_and_paths.md`**](docs/cache_and_paths.md) | `PathResolver` 중앙 경로 관리, `.cache/` 계층 분리 (재정렬 가중치, 평가 로그)                 |
 | [**`docs/development.md`**](docs/development.md)         | `uv` 패키지 관리, 테스트 및 린트 절차, 신규 데이터셋/평가자 어댑터 추가 가이드                |
-| [**`docs/single_intervention.md`**](docs/single_intervention.md) | PLE, PLCE, PLPE 단일 개입 실험 명세, 10스텝 체크포인트/증분 재개, 5단계 저장 구조     |
+| [**`docs/use_cases/single_intervention.md`**](docs/use_cases/single_intervention.md) | PLE, PLCE, PLPE 단일 개입 실험 명세, 10스텝 체크포인트/증분 재개, 5단계 저장 구조     |
 
 ---
 
