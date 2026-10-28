@@ -154,19 +154,12 @@ def check_conflicts(moves: list[DirMove]) -> None:
 
 def apply_move(move: DirMove, verify: str) -> None:
     source, dest = Path(move.source), Path(move.dest)
-    before_files = file_manifest(source, verify)
-    before_state = completion_state(source)
+    before_files, before_state = file_manifest(source, verify), completion_state(source)
     dest.parent.mkdir(parents=True, exist_ok=True)
     os.rename(source, dest)
-    try:
-        if file_manifest(dest, verify) != before_files:
-            raise RuntimeError("file contents differ after move")
-        if completion_state(dest) != before_state:
-            raise RuntimeError("completion state differs after move")
-    except RuntimeError as error:
+    if file_manifest(dest, verify) != before_files or completion_state(dest) != before_state:
         os.rename(dest, source)
-        move.status = "failed"
-        move.detail = f"{error}; rolled back"
+        move.status, move.detail = "failed", "verification failed; rolled back"
         return
     move.status = "moved"
     move.detail = f"{len(before_files)} files verified ({verify or 'size'})"
@@ -257,23 +250,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--experiments-dir", type=Path, default=resolver.experiments_dir)
     parser.add_argument("--artifacts-dir", type=Path, default=resolver.artifacts_dir)
     parser.add_argument("--cache-dir", type=Path, default=resolver.cache_dir)
-    parser.add_argument(
-        "--mlflow-tracking-uri",
-        default=None,
-        help="Defaults to the local SQLite database when it exists.",
-    )
+    parser.add_argument("--mlflow-tracking-uri", default=None)
     parser.add_argument("--skip-mlflow", action="store_true")
-    parser.add_argument(
-        "--rename-mlflow-experiments",
-        action="store_true",
-        help="Rename legacy experiments one-to-one (runs and traces stay in place).",
-    )
-    parser.add_argument(
-        "--verify",
-        choices=("size", "sha256"),
-        default="size",
-        help="File verification after in-place rename (default: size; pass sha256 for full content hashing).",
-    )
+    parser.add_argument("--rename-mlflow-experiments", action="store_true")
+    parser.add_argument("--verify", choices=("size", "sha256"), default="size")
     parser.add_argument("--report", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -284,9 +264,11 @@ def main(argv: list[str] | None = None) -> int:
     run_filesystem(moves, args.execute, args.verify)
 
     mlflow_summary = None
-    uri = args.mlflow_tracking_uri
-    if uri is None and resolver.mlflow_db_path.is_file():
-        uri = f"sqlite:///{resolver.mlflow_db_path.resolve()}"
+    uri = args.mlflow_tracking_uri or (
+        f"sqlite:///{resolver.mlflow_db_path.resolve()}"
+        if resolver.mlflow_db_path.is_file()
+        else None
+    )
     if not args.skip_mlflow and uri:
         mlflow_summary = run_mlflow(
             uri, args.experiments_dir, args.execute, args.rename_mlflow_experiments
@@ -300,11 +282,8 @@ def main(argv: list[str] | None = None) -> int:
         "mlflow": mlflow_summary,
     }
     if args.execute:
-        report_path = args.report or (
-            args.experiments_dir.parent
-            / "migrations"
-            / f"use_case_names_{datetime.now():%Y%m%d_%H%M%S}.json"
-        )
+        default_rep = args.experiments_dir.parent / "migrations" / f"use_case_names_{datetime.now():%Y%m%d_%H%M%S}.json"
+        report_path = args.report or default_rep
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"report: {report_path}")
