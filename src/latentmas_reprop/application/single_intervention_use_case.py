@@ -28,6 +28,8 @@ from .single_intervention.artifacts import (
     build_summary_dict,
     log_to_mlflow_tracker,
     save_experiment_summary,
+    start_single_intervention_tracker,
+    trace_single_intervention_sample,
 )
 from .single_intervention.checkpoint import (
     find_latent_step_checkpoint,
@@ -106,6 +108,10 @@ class SingleInterventionUseCase:
 
         runner = SingleInterventionRunner(model, args, self.evaluator_port)
         all_records: list[dict[str, Any]] = []
+        git_hash = get_git_commit_hash()
+        run_started = start_single_intervention_tracker(
+            self.tracker_port, exp_dir, exp_relpath, git_hash, args
+        )
 
         show_progress = not bool(getattr(args, "no_progress", False))
         dataset_iter = tqdm(
@@ -116,6 +122,44 @@ class SingleInterventionUseCase:
         )
         for idx, item in enumerate(dataset_iter):
             skey = f"{idx:06d}"
+            all_conds_complete = (
+                not overwrite
+                and self.storage.is_condition_complete(exp_relpath, skey, "shared")
+                and all(
+                    self.storage.is_condition_complete(exp_relpath, skey, c)
+                    for c in conditions
+                )
+            )
+            if all_conds_complete:
+                shared_meta = self.storage.load_condition_result(
+                    exp_relpath, skey, "shared"
+                )
+                cond_records: dict[str, dict[str, Any]] = {
+                    c: self.storage.load_condition_result(exp_relpath, skey, c)
+                    for c in conditions
+                }
+                if self.tracker_port and any(
+                    not r.get("trace_id") for r in cond_records.values()
+                ):
+                    tid = trace_single_intervention_sample(
+                        self.tracker_port,
+                        args,
+                        idx,
+                        skey,
+                        item,
+                        shared_meta,
+                        cond_records,
+                        git_hash,
+                    )
+                    if tid:
+                        for c, r in cond_records.items():
+                            r["trace_id"] = tid
+                            self.storage.save_condition(
+                                exp_relpath, skey, c, r, tensors=None, overwrite=True
+                            )
+                all_records.extend(cond_records.values())
+                continue
+
             # UC-01: Shared common latent calculation
             if not overwrite and self.storage.is_condition_complete(
                 exp_relpath, skey, "shared"
@@ -125,6 +169,9 @@ class SingleInterventionUseCase:
                 )
                 shared_hidden = self.storage.load_condition_tensor(
                     exp_relpath, skey, "shared", "hidden"
+                )
+                shared_meta = self.storage.load_condition_result(
+                    exp_relpath, skey, "shared"
                 )
             else:
                 target_ls = int(getattr(args, "latent_steps", 10))
@@ -146,7 +193,7 @@ class SingleInterventionUseCase:
                     initial_step=init_step,
                     checkpoint_callback=ckpt_cb,
                 )
-                shared_payload = {
+                shared_meta = {
                     "status": "complete",
                     "sample_index": idx,
                     "task": getattr(args, "task", "gsm8k"),
@@ -157,12 +204,13 @@ class SingleInterventionUseCase:
                     exp_relpath,
                     skey,
                     "shared",
-                    shared_payload,
+                    shared_meta,
                     tensors={"hidden": shared_hidden, "kv": shared_kv},
                     overwrite=overwrite,
                 )
 
             last_hidden = shared_hidden[-1]
+            cond_records = {}
 
             # UC-02: Branch into ple, plce, plpe
             for cond in conditions:
@@ -184,7 +232,7 @@ class SingleInterventionUseCase:
                     else:
                         continue
 
-                    rec_payload = {
+                    rec = {
                         "status": "complete",
                         "sample_index": idx,
                         "files": ["hidden.pt"],
@@ -194,17 +242,34 @@ class SingleInterventionUseCase:
                         exp_relpath,
                         skey,
                         cond,
-                        rec_payload,
+                        rec,
                         tensors={"hidden": branch_h},
                         overwrite=overwrite,
                     )
-                all_records.append(rec)
+                cond_records[cond] = rec
+
+            tid = trace_single_intervention_sample(
+                self.tracker_port,
+                args,
+                idx,
+                skey,
+                item,
+                shared_meta,
+                cond_records,
+                git_hash,
+            )
+            if tid:
+                for c, r in cond_records.items():
+                    r["trace_id"] = tid
+                    self.storage.save_condition(
+                        exp_relpath, skey, c, r, tensors=None, overwrite=True
+                    )
+            all_records.extend(cond_records.values())
 
         summary_data = build_summary_dict(
             all_records, conditions, n_samples, cfg_dict
         )
         save_experiment_summary(exp_dir, summary_data, all_records)
-        git_hash = get_git_commit_hash()
         log_to_mlflow_tracker(
             self.tracker_port,
             exp_dir,
@@ -212,5 +277,6 @@ class SingleInterventionUseCase:
             git_hash,
             args,
             summary_data,
+            run_already_started=run_started,
         )
         return summary_data, all_records

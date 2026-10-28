@@ -1,12 +1,20 @@
 """Helpers for finding and persisting intermediate latent step checkpoints."""
 
 import copy
+from pathlib import Path
 from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from ...infrastructure.paths.naming import build_experiment_relpath
-from ...infrastructure.storage import FileStorage
+from ...infrastructure.paths.resolver import get_git_commit_hash
+from ...infrastructure.storage import FileStorage, get_file_storage
+from .artifacts import (
+    log_to_mlflow_tracker,
+    start_single_intervention_tracker,
+    trace_single_intervention_sample,
+)
 
 
 def find_latent_step_checkpoint(
@@ -81,3 +89,69 @@ def make_step_checkpoint_saver(
         )
 
     return callback
+
+
+def backfill_single_intervention_traces(
+    tracker: Any,
+    exp_dir: Path,
+    exp_relpath: str,
+    args: Any,
+    summary_data: dict[str, Any],
+    conditions: list[str],
+    target_count: int,
+    storage: FileStorage | None = None,
+) -> None:
+    """Backfill MLflow sample traces from completed local result.json files and log summary."""
+    if not tracker:
+        return
+    store = storage or get_file_storage()
+    git_hash = get_git_commit_hash()
+    run_started = start_single_intervention_tracker(
+        tracker, exp_dir, exp_relpath, git_hash, args
+    )
+    show_progress = not bool(getattr(args, "no_progress", False))
+    for idx in tqdm(
+        range(target_count),
+        desc="Syncing MLflow traces",
+        disable=not show_progress,
+        unit="sample",
+    ):
+        skey = f"{idx:06d}"
+        cond_records = {
+            c: store.load_condition_result(exp_relpath, skey, c)
+            for c in conditions
+            if store.is_condition_complete(exp_relpath, skey, c)
+        }
+        if not cond_records or all(r.get("trace_id") for r in cond_records.values()):
+            continue
+        shared_meta = (
+            store.load_condition_result(exp_relpath, skey, "shared")
+            if store.is_condition_complete(exp_relpath, skey, "shared")
+            else {}
+        )
+        tid = trace_single_intervention_sample(
+            tracker,
+            args,
+            idx,
+            skey,
+            {},
+            shared_meta,
+            cond_records,
+            git_hash,
+            flush=((idx + 1) % 25 == 0),
+        )
+        if tid:
+            for c, r in cond_records.items():
+                r["trace_id"] = tid
+                store.save_condition(
+                    exp_relpath, skey, c, r, tensors=None, overwrite=True
+                )
+    log_to_mlflow_tracker(
+        tracker,
+        exp_dir,
+        exp_relpath,
+        git_hash,
+        args,
+        summary_data,
+        run_already_started=run_started,
+    )

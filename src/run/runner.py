@@ -19,6 +19,9 @@ from latentmas_reprop.application.receiver_compute_preflight_use_case import (
 from latentmas_reprop.application.receiver_reasoning_use_case import (
     ReceiverReasoningUseCase,
 )
+from latentmas_reprop.application.single_intervention.checkpoint import (
+    backfill_single_intervention_traces,
+)
 from latentmas_reprop.application.single_intervention_use_case import (
     SingleInterventionUseCase,
 )
@@ -198,18 +201,18 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
     if exp_name:
         with contextlib.suppress(Exception):
             tracker = MLflowTracker()
-            run_name = exp_rel
-            tracker.start_run(
-                experiment_name=exp_name,
-                run_name=run_name,
-                tags={
-                    "data_dir": str(exp_dir.resolve()),
-                    "rel_dir": exp_rel,
-                    "run_name": run_name,
-                },
-            )
-            tracker.log_dict(summary_data, "summary.json")
-            tracker.end_run("FINISHED")
+            if getattr(args, "single_intervention", False):
+                backfill_single_intervention_traces(
+                    tracker, exp_dir, exp_rel, args, summary_data, conditions, target_count
+                )
+            else:
+                tracker.start_run(
+                    experiment_name=exp_name,
+                    run_name=exp_rel,
+                    tags={"data_dir": str(exp_dir.resolve()), "rel_dir": exp_rel, "run_name": exp_rel},
+                )
+                tracker.log_dict(summary_data, "summary.json")
+                tracker.end_run("FINISHED")
 
     metrics = summary_data.get("metrics", summary_data)
     print(f"Reusing completed experiment at {exp_rel}")
