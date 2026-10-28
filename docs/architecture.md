@@ -53,11 +53,14 @@ The core domain is free of external framework dependencies (such as CLI parsers,
   - `prompts/`: Prompt builder and agent topology definitions.
 
 ### 1.2 Application Layer (`src/latentmas_reprop/application/`)
-Orchestrates domain services and ports to fulfill use-case workflows:
-- **`BenchmarkUseCase`**: Orchestrates loading problem batches, invoking multi-agent reasoning, evaluating answers, recording agent traces, and persisting execution run caches.
-- **`ReceiverAcquisitionUseCase`**: Evaluates carrier digit recovery across latent, prompt, and no-cache contexts with per-condition file storage.
-- **`InterventionUseCase`**: Manages paired condition interventions (`own`, `cross`, `drop`, `zero`) with per-condition file storage and crash-safe resumption.
-- **`ReceiverReasoningUseCase` & `ReceiverComputePreflightUseCase`**: Trajectory analysis and compute budgeting.
+Orchestrates domain services and ports to fulfill use-case workflows (see [**Application Use Cases Catalog**](use_cases/README.md)):
+- [**`BenchmarkUseCase`**](use_cases/benchmark.md): Orchestrates loading problem batches, invoking multi-agent reasoning, evaluating answers, recording agent traces, and persisting execution run caches.
+- [**`InterventionUseCase`**](use_cases/intervention.md): Manages paired condition interventions (`own`, `cross`, `drop`, `zero`) with per-condition file storage and crash-safe resumption.
+- [**`SingleInterventionUseCase`**](use_cases/single_intervention.md): Manages common latent calculation and independent branching (`ple`, `plce`, `plpe`) with 10-step incremental checkpointing.
+- [**`ReceiverAcquisitionUseCase`**](use_cases/receiver_acquisition.md): Evaluates carrier digit recovery across latent, prompt, and no-cache contexts with per-condition file storage.
+- [**`SenderProbeAnalysisUseCase`**](use_cases/sender_probe.md): Analyzes saved sender latent states with logistic regression and max-statistic permutation testing (GPU/CPU).
+- [**`ReceiverReasoningUseCase`**](use_cases/receiver_reasoning.md): Trajectory analysis comparing `answer_only` vs `free` reasoning under shared upstream KV caches.
+- [**`ReceiverComputePreflightUseCase`**](use_cases/receiver_compute_preflight.md): Evaluates compute budget curves ($R$) and verifies exact token prefix integrity.
 
 ### 1.3 Infrastructure Layer (`src/latentmas_reprop/infrastructure/`)
 Contains technology-specific adapters and system integration:

@@ -11,6 +11,7 @@ Use the links below to navigate the project documentation:
 | Document | Description |
 |---|---|
 | [**Architecture & Design**](docs/architecture.md) | Hexagonal Architecture (Ports & Adapters), domain models, ports, and layer separation |
+| [**Application Use Cases**](docs/use_cases/README.md) | 1:1 mapped specifications for all 7 application use cases (Benchmark, Intervention, etc.) |
 | [**Usage & Execution**](docs/usage.md) | Running benchmarks with `just run`, CLI options, and recipe reference |
 | [**Configuration Guide**](docs/configuration.md) | YAML preset schemas (`configs/`), naming conventions (`{method}_{model}_{task}.yaml`), and customization |
 | [**Storage, Cache & Path Management**](docs/cache_and_paths.md) | Universal storage tiers, `PathResolver`, and safe cache cleaning |
@@ -77,12 +78,12 @@ This reads local artifacts only and writes to `artifacts/presentation/`.
 See [presentation plots](docs/presentation_plots.md) for required inputs and sources.
 
 For parity-checked stepwise latent-only KV receiver evaluation and the stepwise
-scatter, see [receiver trajectory](docs/receiver_trajectory.md). Run 0.6B on the local 8GB GPU with `just run-receiver-trajectory --model 0.6B`.
+scatter, see [receiver trajectory](docs/use_cases/receiver_trajectory.md) and [receiver acquisition](docs/use_cases/receiver_acquisition.md). Run 0.6B on the local 8GB GPU with `just run-receiver-trajectory --model 0.6B`.
 4B/8B/14B require a larger BF16 GPU (32GB minimum; 14B has little headroom there).
 All sweeps check exact KV/logit parity against freshly generated independent runs.
 Collection requires no local historical or analysis artifacts. Collection saves receiver records and
 raw sender states. Probe fitting and the communication scatter run later through
-`just analyze-sender-probe --source-run-id SWEEP_RUN_ID` and
+`just analyze-sender-probe --source-run-id SWEEP_RUN_ID` (see [sender probe](docs/use_cases/sender_probe.md)) and
 `just analyze-stepwise-communication`. Sweep-derived probes are logged in the
 same `latentmas_receiver_trajectory` experiment with `phase=sender_probe` and
 the exact source sweep ID. Communication analysis rejects probes from any other
@@ -101,6 +102,15 @@ just analyze-sender-probe \
 ```
 
 The replacement is created and verified before the legacy run is soft-deleted.
+
+### Single Intervention Analysis (PLE, PLCE, PLPE)
+Run single intervention analysis decomposing explicit decoding from common latent representations:
+
+```bash
+CUDA_VISIBLE_DEVICES=3 just run-single-intervention -c lmas/single_intervention/gsm8k
+```
+
+This branches into `ple` (direct decoding), `plce` (control signal), and `plpe` (role/prompt) from the same $P_1 \to L_1 \dots \to L_T$ state, with 10-step automatic intermediate checkpointing and incremental resumption. See [Single Intervention Analysis](docs/use_cases/single_intervention.md) for detailed specifications.
 
 ### 3. Developer Commands
 ```bash
@@ -150,7 +160,7 @@ in one paired run; use `--dry-run` to inspect the plan without inference.
 The preset runs 20 GSM8K samples with Qwen3-4B at 10 and 40 latent steps,
 passing the full upstream KV cache, plus no-handoff baselines. Both receiver
 modes use greedy decoding; free reasoning has a 4096-token budget.
-See [receiver reasoning exploration](docs/receiver_reasoning.md) for artifacts and controls.
+See [receiver reasoning exploration](docs/use_cases/receiver_reasoning.md) for artifacts and controls.
 
 Analyze saved Latent Handoff Pilot results from MLflow without inference:
 
@@ -171,5 +181,5 @@ just analyze-receiver-compute-preflight --model all
 just analyze-receiver-compute-preflight --model 4B
 ```
 
-See [receiver compute preflight](docs/receiver_compute_preflight.md) for full-KV
+See [receiver compute preflight](docs/use_cases/receiver_compute_preflight.md) for full-KV
 paired budget curves, exact token-prefix smoke verification, and MLflow artifacts.

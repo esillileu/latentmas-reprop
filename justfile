@@ -40,6 +40,10 @@ lmas action="reprop" *args:
 run-intervention *args:
     uv run python -m src.run --intervention {{args}}
 
+# Run LMAS Single Intervention Analysis (PLE, PLCE, PLPE)
+run-single-intervention *args:
+    uv run python -m src.run --single_intervention {{args}}
+
 run-receiver-reasoning *args:
     uv run python -m src.run --receiver_reasoning {{args}}
 

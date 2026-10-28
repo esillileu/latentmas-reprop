@@ -186,14 +186,24 @@ just --list
 
 | Command | Description |
 |---|---|
-| `just run <options>` | Execute benchmark runner (`uv run python -m src.run <args>`) |
-| `just run-intervention <options>` | Execute the latent-cache intervention harness |
-| `just run-acquisition <options>` | Execute secret-digit receiver acquisition |
-| `just analyze-sender-probe <options>` | Analyze saved sender states without inference |
+| `just run <options>` | Execute benchmark runner (`BenchmarkUseCase`) |
+| `just lmas reprop` | Run sequential reproduction benchmarks across 0.6B -> 4B -> 8B -> 14B |
+| `just run-intervention <options>` | Execute latent-cache intervention harness (`InterventionUseCase`) |
+| `just run-single-intervention <options>` | Execute single intervention analysis (`SingleInterventionUseCase`) |
+| `just run-acquisition <options>` | Execute secret-digit receiver acquisition (`ReceiverAcquisitionUseCase`) |
+| `just run-receiver-reasoning <options>` | Execute paired receiver reasoning exploration (`ReceiverReasoningUseCase`) |
+| `just run-receiver-compute-preflight <options>` | Execute receiver compute budget preflight (`ReceiverComputePreflightUseCase`) |
+| `just analyze-sender-probe <options>` | Analyze saved sender states with probe analysis (`SenderProbeAnalysisUseCase`) |
+| `just analyze-handoff <options>` | Offline bootstrap analysis for receiver reasoning handoff |
+| `just analyze-receiver <options>` | Offline receiver acquisition reanalysis |
+| `just run-receiver-trajectory <options>` | Stepwise latent-only KV receiver trajectory collection |
 | `just test` | Run the complete pytest test suite |
 | `just lint` | Run Ruff linter checks |
 | `just format` | Format code using Ruff formatter |
 | `just clean-cache` | Clear execution runs and model caches in `.cache/` |
+
+> [!TIP]
+> For in-depth operational flow, architecture, parameters, and storage specifications for each recipe, see the [**Application Use Cases Catalog**](use_cases/README.md).
 
 ### Additional saved-feature diagnostics
 

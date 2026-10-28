@@ -52,7 +52,22 @@ def estimate_past_kv_bytes(past_kv: Any) -> int:
 
 def clone_past_kv(past_kv: Any) -> Any:
     """Deep-copy a cache. Call before helpers that mutate DynamicCache objects."""
-    return copy.deepcopy(past_kv) if past_kv is not None else None
+    if past_kv is None:
+        return None
+    if hasattr(past_kv, "layers"):
+        for layer in past_kv.layers:
+            if torch.is_tensor(getattr(layer, "keys", None)) and not layer.keys.is_leaf:
+                layer.keys = layer.keys.detach()
+            if torch.is_tensor(getattr(layer, "values", None)) and not layer.values.is_leaf:
+                layer.values = layer.values.detach()
+    elif isinstance(past_kv, (list, tuple)):
+        past_kv = tuple(
+            tuple(t.detach() if torch.is_tensor(t) and not t.is_leaf else t for t in layer)
+            if isinstance(layer, (list, tuple))
+            else (layer.detach() if torch.is_tensor(layer) and not layer.is_leaf else layer)
+            for layer in past_kv
+        )
+    return copy.deepcopy(past_kv)
 
 
 def move_past_kv(past_kv: Any, device: torch.device | str) -> Any:
