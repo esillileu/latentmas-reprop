@@ -16,6 +16,11 @@ from latentmas_reprop.application.intervention_continuation.runner import (
 from latentmas_reprop.application.intervention_continuation_use_case import (
     InterventionContinuationUseCase,
 )
+from latentmas_reprop.domain.services.prompts import (
+    build_intervention_p1_messages,
+    load_p1_variants,
+)
+from latentmas_reprop.infrastructure.paths.naming import build_experiment_relpath
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage import FileStorage, InMemoryStorage
 
@@ -202,3 +207,38 @@ def test_mlflow_sample_tracing_and_backfill(mock_model):
     uc.execute(mock_model, args)
     assert mock_model.model.call_count == 0
     assert tracker.start_sample_trace.call_count == 0
+
+
+def test_p1_variant_isolation_and_prompt_builder():
+    """Verify P1 prompt variants preserve default path for 'planner' and isolate non-default variants."""
+    variants = load_p1_variants()
+    assert {"planner", "direct_solve", "question_only", "latent_think"} <= set(variants)
+
+    base = {
+        "task": "gsm8k",
+        "model_name": "Qwen/Qwen3-8B",
+        "method": "latent_mas",
+        "prompt": "sequential",
+        "latent_steps": 20,
+        "seed": 42,
+        "intervention_continuation": True,
+    }
+    args_default = SimpleNamespace(**base)
+    args_planner = SimpleNamespace(**base, p1_variant="planner")
+    args_direct = SimpleNamespace(**base, p1_variant="direct_solve")
+    args_custom = SimpleNamespace(**base, p1_prompt="Custom solve: {question}")
+
+    p_default = build_experiment_relpath(args_default)
+    p_planner = build_experiment_relpath(args_planner)
+    p_direct = build_experiment_relpath(args_direct)
+    p_custom = build_experiment_relpath(args_custom)
+
+    assert p_default == p_planner
+    assert "_p1_" not in p_default
+    assert p_direct.endswith("_intervention_continuation_p1_direct_solve")
+    assert "_p1_Custom_solve_questio" in p_custom
+    assert p_direct != p_default and p_custom != p_default
+
+    assert "Planner Agent" in build_intervention_p1_messages("3+4?", args_planner)[-1]["content"]
+    assert "Target Question: 3+4?" in build_intervention_p1_messages("3+4?", args_direct)[-1]["content"]
+    assert build_intervention_p1_messages("3+4?", args_custom)[-1]["content"] == "Custom solve: 3+4?"
