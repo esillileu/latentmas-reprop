@@ -1,4 +1,4 @@
-method: text_mas
+method: baseline
 model_name: Qwen/Qwen3-14B
 task: gsm8k
 prompt: sequential
@@ -9,4 +9,3 @@ temperature: 0.6
 top_p: 0.95
 device: cuda
 seed: 42
-tracking_experiment_name: latentmas-reprop

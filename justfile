@@ -14,66 +14,59 @@ run *args:
 lmas action="reprop" *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [ "{{action}}" = "reprop" ]; then
-        echo "=== [1/4] Running Reproduction: Qwen3-0.6B ==="
-        uv run python -m src.run -c lmas/reprop/bs_q30.6_gsm8k {{args}}
-        uv run python -m src.run -c lmas/reprop/tm_q30.6_gsm8k {{args}}
-        uv run python -m src.run -c lmas/reprop/lm_q30.6_gsm8k {{args}}
-        echo "=== [2/4] Running Reproduction: Qwen3-4B ==="
-        uv run python -m src.run -c lmas/reprop/bs_q34_gsm8k {{args}}
-        uv run python -m src.run -c lmas/reprop/tm_q34_gsm8k {{args}}
-        uv run python -m src.run -c lmas/reprop/lm_q34_gsm8k {{args}}
-        echo "=== [3/4] Running Reproduction: Qwen3-8B ==="
-        uv run python -m src.run -c lmas/reprop/bs_q38_gsm8k {{args}}
-        uv run python -m src.run -c lmas/reprop/tm_q38_gsm8k {{args}}
-        uv run python -m src.run -c lmas/reprop/lm_q38_gsm8k {{args}}
-        echo "=== [4/4] Running Reproduction: Qwen3-14B ==="
-        uv run python -m src.run -c lmas/reprop/bs_q314_gsm8k {{args}}
-        uv run python -m src.run -c lmas/reprop/tm_q314_gsm8k {{args}}
-        uv run python -m src.run -c lmas/reprop/lm_q314_gsm8k {{args}}
+    if [ "{{action}}" = "reprop" ] || [ "{{action}}" = "benchmark" ]; then
+        echo "=== [1/4] Running Benchmark: Qwen3-0.6B ==="
+        uv run python -m src.run -c benchmark/gsm8k_q30.6_bs {{args}}
+        uv run python -m src.run -c benchmark/gsm8k_q30.6_tm {{args}}
+        uv run python -m src.run -c benchmark/gsm8k_q30.6_lm {{args}}
+        echo "=== [2/4] Running Benchmark: Qwen3-4B ==="
+        uv run python -m src.run -c benchmark/gsm8k_q34_bs {{args}}
+        uv run python -m src.run -c benchmark/gsm8k_q34_tm {{args}}
+        uv run python -m src.run -c benchmark/gsm8k_q34_lm {{args}}
+        echo "=== [3/4] Running Benchmark: Qwen3-8B ==="
+        uv run python -m src.run -c benchmark/gsm8k_q38_bs {{args}}
+        uv run python -m src.run -c benchmark/gsm8k_q38_tm {{args}}
+        uv run python -m src.run -c benchmark/gsm8k_q38_lm {{args}}
+        echo "=== [4/4] Running Benchmark: Qwen3-14B ==="
+        uv run python -m src.run -c benchmark/gsm8k_q314_bs {{args}}
+        uv run python -m src.run -c benchmark/gsm8k_q314_tm {{args}}
+        uv run python -m src.run -c benchmark/gsm8k_q314_lm {{args}}
     else
-        echo "Unknown action: {{action}}. Usage: just lmas reprop [args...]"
+        echo "Unknown action: {{action}}. Usage: just lmas [benchmark|reprop] [args...]"
         exit 1
     fi
 
-# Run latent communication intervention experiment
-run-intervention *args:
-    uv run python -m src.run --intervention {{args}}
+# Run KV intervention experiment (own, cross, drop, zero)
+run-intervention-kv *args:
+    uv run python -m src.run --intervention_kv {{args}}
 
-# Run LMAS Single Intervention Analysis (PLE, PLCE, PLPE)
-run-single-intervention *args:
-    uv run python -m src.run --single_intervention {{args}}
+# Run intervention continuation analysis (PLE, PLCE, PLPE)
+run-intervention-continuation *args:
+    uv run python -m src.run --intervention_continuation {{args}}
 
-run-receiver-reasoning *args:
-    uv run python -m src.run --receiver_reasoning {{args}}
-
-# Run secret-digit receiver acquisition
-run-acquisition *args:
-    uv run python -m src.run --acquisition {{args}}
+# Run secret-digit representation acquisition
+run-representation-acquisition *args:
+    uv run python -m src.run --representation_acquisition {{args}}
 
 # Analyze previously collected sender latent states
-analyze-sender-probe *args:
-    uv run python -m src.run.sender_probe {{args}}
+analyze-representation-sender-probe *args:
+    uv run python -m src.run.representation_sender_probe {{args}}
 
-# Analyze saved latent handoff pilot artifacts (no inference)
-analyze-handoff *args:
-    uv run python -m src.run.handoff_analysis {{args}}
-
-# Reanalyze saved receiver observations from MLflow (no inference)
-analyze-receiver *args:
-    uv run python -m src.run.receiver_analysis {{args}}
+# Reanalyze saved acquisition observations from MLflow (no inference)
+analyze-representation-acquisition *args:
+    uv run python -m src.run.representation_acquisition_analysis {{args}}
 
 # Presentation PNG/PDF figures from existing analysis CSVs (no inference)
 plot-presentation *args:
     uv run --frozen python -m src.run.presentation_plots {{args}}
 
 # BF16 latent-only KV trajectories; full execution requires a 32GB GPU
-run-receiver-trajectory *args:
-    uv run --frozen python -m src.run.receiver_trajectory {{args}}
+run-representation-trajectory *args:
+    uv run --frozen python -m src.run.representation_trajectory {{args}}
 
 # Read-only 60-point scatter from completed receiver trajectories
-plot-receiver-trajectory *args:
-    uv run --frozen python -m src.run.receiver_trajectory_plots {{args}}
+plot-representation-trajectory *args:
+    uv run --frozen python -m src.run.representation_trajectory_plots {{args}}
 
 # Run test suite
 test *args:
@@ -96,16 +89,14 @@ clean-cache:
 mlflow-ui *args:
     uv run mlflow ui --backend-store-uri sqlite:///storage/mlflow/mlflow.db --default-artifact-root storage/mlflow/mlflow_artifacts {{args}}
 
-run-receiver-compute-preflight *args:
-    uv run python -m src.run --receiver_compute_preflight {{args}}
-
-analyze-receiver-compute-preflight *args:
-    uv run python -m src.run.compute_preflight_analysis {{args}}
-
 # Analyze saved secret-digit trajectories without inference
-analyze-receiver-trajectory *args:
-    uv run --frozen python -m src.run.receiver_trajectory_analysis {{args}}
+analyze-representation-trajectory *args:
+    uv run --frozen python -m src.run.representation_trajectory_analysis {{args}}
 
 # Strict offline 60-cell communication metrics, parity table and plots
 analyze-stepwise-communication *args:
     uv run --frozen python -m src.run.stepwise_communication_analysis {{args}}
+
+# One-time migration of results and MLflow references after the use case rename (dry run by default)
+migrate-use-case-names *args:
+    uv run python -m tools.migrations.use_case_names.migrate {{args}}
