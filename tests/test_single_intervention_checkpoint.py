@@ -13,8 +13,11 @@ from latentmas_reprop.application.single_intervention.checkpoint import (
 from latentmas_reprop.application.single_intervention.runner import (
     SingleInterventionRunner,
 )
+from latentmas_reprop.application.single_intervention_use_case import (
+    SingleInterventionUseCase,
+)
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
-from latentmas_reprop.infrastructure.storage import FileStorage
+from latentmas_reprop.infrastructure.storage import FileStorage, InMemoryStorage
 
 
 @pytest.fixture
@@ -22,6 +25,10 @@ def mock_model():
     model = MagicMock()
     model.device = torch.device("cpu")
     model.tokenizer = MagicMock()
+    model.tokenizer.return_value = {
+        "input_ids": torch.tensor([[4, 5]], dtype=torch.long),
+        "attention_mask": torch.tensor([[1, 1]], dtype=torch.long),
+    }
     model.tokenizer.pad_token_id = 0
     model.tokenizer.eos_token_id = 2
     model.tokenizer.convert_ids_to_tokens.side_effect = lambda ids: [
@@ -146,3 +153,52 @@ def test_incremental_latent_execution(tmp_path, mock_model):
     assert kv30 is not None
     assert meta30["latent_steps"] == 30
     assert hidden30.shape[0] == 3 + 30
+
+
+def test_mlflow_sample_tracing_and_backfill(mock_model):
+    dataset = MagicMock()
+    dataset.load.return_value = [{"question": "What is 1+1?", "gold": "2"}]
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("2", True, None)
+    storage = InMemoryStorage()
+
+    tracker = MagicMock()
+    root_span = MagicMock()
+    root_span.trace_id = "tr-12345"
+    tracker.start_sample_trace.return_value.__enter__.return_value = root_span
+    child_span = MagicMock()
+    tracker.start_span.return_value.__enter__.return_value = child_span
+
+    args = SimpleNamespace(
+        task="gsm8k",
+        model_name="Qwen/Qwen3-8B",
+        method="latent_mas",
+        prompt="sequential",
+        seed=42,
+        temperature=0.6,
+        top_p=0.95,
+        max_new_tokens=16,
+        single_intervention=True,
+        latent_steps=2,
+        no_progress=True,
+    )
+
+    uc = SingleInterventionUseCase(
+        dataset_port=dataset,
+        evaluator_port=evaluator,
+        tracker_port=tracker,
+        storage=storage,
+    )
+    _, records = uc.execute(mock_model, args)
+
+    assert tracker.start_run.call_count == 1
+    assert tracker.start_sample_trace.call_count == 1
+    assert tracker.flush_traces.call_count >= 1
+    assert all(r.get("trace_id") == "tr-12345" for r in records)
+
+    # Re-running when trace_id is already present should skip both inference and duplicate tracing
+    tracker.start_sample_trace.reset_mock()
+    mock_model.model.reset_mock()
+    uc.execute(mock_model, args)
+    assert mock_model.model.call_count == 0
+    assert tracker.start_sample_trace.call_count == 0
