@@ -1,0 +1,18 @@
+method: latent_mas
+model_name: Qwen/Qwen3-8B
+task: gsm8k
+prompt: sequential
+max_samples: -1  # 전체 데이터셋 1319개 (CLI에서 --max_samples N 으로 임의 제한 가능)
+latent_steps: 20
+max_new_tokens: 2048
+temperature: 0.6
+top_p: 0.95
+seed: 42
+intervention_continuation: true
+# 동일 공통 잠재 상태(shared)에서 분기하는 3가지 개입 조건:
+#   ple:  P_1 -> L -> E       (추가 개입 없이 잠재 상태에서 직접 명시적 디코딩)
+#   plce: P_1 -> L -> C -> E  (지정된 제어 신호 control_signal 개입 후 디코딩)
+#   plpe: P_1 -> L -> P_2 -> E (Judger 역할 지시 및 문제 재제시 프롬프트 개입 후 디코딩)
+intervention_conditions: "ple,plce,plpe"
+control_signal: "\nSolution:"
+latent_step_checkpoint_interval: 10

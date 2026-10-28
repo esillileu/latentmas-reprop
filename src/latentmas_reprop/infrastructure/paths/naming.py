@@ -65,8 +65,8 @@ def build_params_stem(
         parts.append("realign")
 
     # Differentiating experiment types and calculation options
-    if getattr(args, "single_intervention", False):
-        parts.append("single_intervention")
+    if getattr(args, "intervention_continuation", False):
+        parts.append("intervention_continuation")
         sig = getattr(args, "control_signal", None)
         if sig and sig != "\nSolution:":
             clean_sig = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in sig.strip())
@@ -82,14 +82,14 @@ def build_params_stem(
             clean_p = "_".join(filter(None, clean_p.split("_")))[:20]
             if clean_p:
                 parts.append(f"plpe_{clean_p}")
-    elif getattr(args, "intervention", False):
-        parts.append("intervention")
+    elif getattr(args, "intervention_kv", False):
+        parts.append("intervention_kv")
         cross_policy = getattr(args, "cross_policy", None)
         if cross_policy:
             parts.append(f"cross_{cross_policy}")
 
-    if getattr(args, "acquisition", False):
-        parts.append("acquisition")
+    if getattr(args, "representation_acquisition", False):
+        parts.append("representation_acquisition")
         modes = getattr(args, "context_modes", None)
         if modes:
             modes_str = "-".join(sorted(str(m) for m in modes))
@@ -99,36 +99,11 @@ def build_params_stem(
             conds_str = "-".join(sorted(str(c) for c in conds))
             parts.append(f"cond_{conds_str}")
 
-    if getattr(args, "receiver_reasoning", False):
-        parts.append("reasoning")
-        hp = getattr(args, "handoff_positions", None)
-        if hp is not None:
-            parts.append(f"hp{hp}")
-        hm = getattr(args, "handoff_mode", None)
-        if hm:
-            parts.append(f"hm_{hm}")
-
-    if getattr(args, "receiver_compute_preflight", False):
-        parts.append("preflight")
-
-    if getattr(args, "receiver_trajectory", False):
-        parts.append("trajectory")
+    if getattr(args, "representation_trajectory", False):
+        parts.append("representation_trajectory")
 
     if getattr(args, "smoke", False):
         parts.append("smoke")
-
-    upstream = getattr(args, "upstream_steps", None)
-    if upstream and (
-        getattr(args, "receiver_reasoning", False)
-        or getattr(args, "receiver_compute_preflight", False)
-    ):
-        steps_str = "-".join(str(s) for s in sorted(upstream))
-        parts.append(f"upstream{steps_str}")
-
-    budgets = getattr(args, "receiver_budgets", None)
-    if budgets and getattr(args, "receiver_compute_preflight", False):
-        budgets_str = "-".join(str(b) for b in budgets)
-        parts.append(f"r{budgets_str}")
 
     return "_".join(parts)
 

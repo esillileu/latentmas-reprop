@@ -3,7 +3,7 @@ from typing import Any
 
 
 @dataclass
-class ReceiverAcquisitionRecord:
+class RepresentationAcquisitionRecord:
     """One receiver next-token observation under a sender-cache condition."""
 
     sample_id: str
@@ -56,7 +56,7 @@ class ReceiverAcquisitionRecord:
 
 
 @dataclass
-class ReceiverAcquisitionMetrics:
+class RepresentationAcquisitionMetrics:
     """Nested receiver-acquisition summary plus stable MLflow flattening."""
 
     n_samples: int

@@ -9,9 +9,9 @@ def add_intervention_args(
 ) -> None:
     """Add command-line arguments for the intervention harness."""
     parser.add_argument(
-        "--intervention",
+        "--intervention_kv",
         action="store_true",
-        default=defaults.get("intervention", False),
+        default=defaults.get("intervention_kv", False),
         help="Enable latent communication intervention experiment harness (own, cross, zero).",
     )
     parser.add_argument(
@@ -41,10 +41,10 @@ def add_intervention_args(
         help="Persist raw latent KV cache tensors to .cache/latent_interventions/ locally.",
     )
     parser.add_argument(
-        "--single_intervention",
+        "--intervention_continuation",
         action="store_true",
-        default=defaults.get("single_intervention", False),
-        help="Run LMAS Single Intervention Analysis (PLE, PLCE, PLPE).",
+        default=defaults.get("intervention_continuation", False),
+        help="Run LMAS Intervention Continuation Analysis (PLE, PLCE, PLPE).",
     )
     parser.add_argument(
         "--control_signal",
@@ -70,12 +70,6 @@ def add_intervention_args(
         default=int(defaults.get("latent_step_checkpoint_interval", 10)),
         help="Interval of latent steps at which to save intermediate KV cache checkpoints (default: 10).",
     )
-    parser.add_argument(
-        "--tracking_experiment_name",
-        type=str,
-        default=defaults.get("tracking_experiment_name"),
-        help="Experiment name for MLflow tracking.",
-    )
 
 
 def add_acquisition_args(
@@ -83,9 +77,9 @@ def add_acquisition_args(
 ) -> None:
     """Add command-line arguments for the receiver acquisition experiment."""
     parser.add_argument(
-        "--acquisition",
+        "--representation_acquisition",
         action="store_true",
-        default=defaults.get("acquisition", False),
+        default=defaults.get("representation_acquisition", False),
         help="Run the secret-digit receiver acquisition experiment.",
     )
     parser.add_argument(
@@ -190,29 +184,24 @@ def validate_intervention_and_acquisition_args(
         "acquisition_conditions",
         {"own", "cross", "drop", "drop_position_matched"},
     )
-    if parsed.intervention and parsed.acquisition:
-        parser.error("--intervention and --acquisition are mutually exclusive")
-    if getattr(parsed, "single_intervention", False):
-        if parsed.acquisition or parsed.intervention:
-            parser.error("--single_intervention is mutually exclusive with other harnesses")
-        if not getattr(parsed, "tracking_experiment_name", None):
-            parsed.tracking_experiment_name = "latentmas_single_intervention"
+    if parsed.intervention_kv and parsed.representation_acquisition:
+        parser.error(
+            "--intervention_kv and --representation_acquisition are mutually exclusive"
+        )
+    if getattr(parsed, "intervention_continuation", False):
+        if parsed.representation_acquisition or parsed.intervention_kv:
+            parser.error("--intervention_continuation is mutually exclusive with other harnesses")
         if not getattr(parsed, "intervention_conditions", None) or parsed.intervention_conditions == ["own", "cross", "zero"]:
             parsed.intervention_conditions = ["ple", "plce", "plpe"]
-    if parsed.acquisition:
+    if parsed.representation_acquisition:
         if parsed.method != "latent_mas" or parsed.task != "secret_digit":
             parser.error(
-                "--acquisition requires --method latent_mas --task secret_digit"
+                "--representation_acquisition requires --method latent_mas --task secret_digit"
             )
         if parsed.use_vllm or parsed.latent_steps <= 0:
-            parser.error("--acquisition requires transformers and --latent_steps > 0")
+            parser.error("--representation_acquisition requires transformers and --latent_steps > 0")
         if parsed.acquisition_cross_policy != "different_digit_shift_v1":
             parser.error("unsupported --acquisition_cross_policy")
-        if parsed.tracking_experiment_name != "latentmas_receiver_acquisition":
-            parser.error(
-                "--acquisition requires --tracking_experiment_name "
-                "latentmas_receiver_acquisition"
-            )
         if "cross" in parsed.acquisition_conditions and parsed.max_samples < 2:
             parser.error("cross acquisition requires at least two samples")
         if parsed.probe_folds < 2 or parsed.probe_prompt_templates < parsed.probe_folds:

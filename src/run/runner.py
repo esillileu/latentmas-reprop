@@ -9,21 +9,22 @@ import numpy as np
 import torch
 
 from latentmas_reprop.application.benchmark_use_case import BenchmarkUseCase
-from latentmas_reprop.application.intervention_use_case import InterventionUseCase
-from latentmas_reprop.application.receiver_acquisition_use_case import (
-    ReceiverAcquisitionUseCase,
+from latentmas_reprop.application.intervention_continuation.checkpoint import (
+    backfill_intervention_continuation_traces,
 )
-from latentmas_reprop.application.receiver_compute_preflight_use_case import (
-    ReceiverComputePreflightUseCase,
+from latentmas_reprop.application.intervention_continuation_use_case import (
+    InterventionContinuationUseCase,
 )
-from latentmas_reprop.application.receiver_reasoning_use_case import (
-    ReceiverReasoningUseCase,
+from latentmas_reprop.application.intervention_kv_use_case import InterventionKvUseCase
+from latentmas_reprop.application.representation_acquisition_use_case import (
+    RepresentationAcquisitionUseCase,
 )
-from latentmas_reprop.application.single_intervention.checkpoint import (
-    backfill_single_intervention_traces,
-)
-from latentmas_reprop.application.single_intervention_use_case import (
-    SingleInterventionUseCase,
+from latentmas_reprop.domain.models.use_cases import (
+    BENCHMARK,
+    INTERVENTION_CONTINUATION,
+    INTERVENTION_KV,
+    REPRESENTATION_ACQUISITION,
+    mlflow_experiment_name,
 )
 from latentmas_reprop.infrastructure.models.model_wrapper import ModelWrapper
 from latentmas_reprop.infrastructure.paths.naming import (
@@ -53,18 +54,15 @@ def auto_device(device: str | None = None) -> torch.device:
     return torch.device("cpu")
 
 
-def finalize_run_args(args: Any) -> None:
-    """Ensure all decisive calculation options are fixed before model loading and path resolution."""
-    if getattr(args, "receiver_reasoning", False):
-        args.temperature = 0.0
-        args.top_p = 1.0
-        if getattr(args, "handoff_positions", None) is not None and args.handoff_positions <= 0:
-            raise ValueError("Handoff positions must be positive")
-        args.handoff_mode = "full" if getattr(args, "handoff_positions", None) is None else "tail"
-        args.include_no_handoff = True
-    elif getattr(args, "receiver_compute_preflight", False):
-        args.temperature = 0.0
-        args.top_p = 1.0
+def _use_case_of(args: Any) -> str:
+    """Resolve which use case a parsed run configuration selects."""
+    if getattr(args, "representation_acquisition", False):
+        return REPRESENTATION_ACQUISITION
+    if getattr(args, "intervention_continuation", False):
+        return INTERVENTION_CONTINUATION
+    if getattr(args, "intervention_kv", False):
+        return INTERVENTION_KV
+    return BENCHMARK
 
 
 def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
@@ -82,23 +80,15 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
         summary_path = exp_dir / "collection_summary.json"
 
     # Determine required conditions and target count
-    if getattr(args, "receiver_compute_preflight", False):
-        max_s = int(getattr(args, "max_samples", 0))
-        upstream = getattr(args, "upstream_steps", [20])
-        conditions = ["no_handoff"] + [f"u{s}_matched" for s in upstream] + [f"u{s}_mismatched" for s in upstream]
-    elif getattr(args, "receiver_reasoning", False):
-        max_s = int(getattr(args, "max_samples", 0))
-        upstream = [0, *getattr(args, "upstream_steps", [20])]
-        conditions = [f"u{s}_{m}" for s in upstream for m in ("answer_only", "free")]
-    elif getattr(args, "acquisition", False):
+    if getattr(args, "representation_acquisition", False):
         max_s = int(getattr(args, "max_samples", 100))
         modes = list(getattr(args, "context_modes", ["full", "latent_only", "prompt_only"]))
         conds = list(getattr(args, "acquisition_conditions", ["own", "cross", "drop"]))
         conditions = [c if c in {"drop", "drop_position_matched"} else f"{m}_{c}" for c in conds for m in ([""] if c in {"drop", "drop_position_matched"} else modes)]
-    elif getattr(args, "single_intervention", False):
+    elif getattr(args, "intervention_continuation", False):
         max_s = int(getattr(args, "max_samples", 0))
         conditions = ["ple", "plce", "plpe"]
-    elif getattr(args, "intervention", False):
+    elif getattr(args, "intervention_kv", False):
         max_s = int(getattr(args, "max_samples", 0))
         raw_c = getattr(args, "intervention_conditions", ["own", "cross", "drop", "zero"])
         conditions = [c.strip() for c in raw_c.split(",")] if isinstance(raw_c, str) else list(raw_c)
@@ -178,41 +168,30 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
 
     s_count = summary_data.get("sample_count") or summary_data.get("metrics", {}).get("total")
     if not summary_data or s_count != target_count:
-        if getattr(args, "receiver_reasoning", False):
-            from latentmas_reprop.application.receiver_reasoning.metrics import (
-                summarize_receiver_records,
-            )
-
-            steps = getattr(args, "upstream_steps", [20])
-            agg = summarize_receiver_records(records, steps)
-            summary_data = agg | {"sample_count": target_count, "config": summary_data.get("config", {})}
-        else:
-            correct = sum(1 for r in records if r.get("correct", False))
-            acc = correct / max(1, len(records))
-            m = dict(summary_data.get("metrics", {}))
-            m.update({"accuracy": acc, "correct": correct, "total": len(records), "sample_count": len(records), "reused_trajectories": len(records), "fresh_trajectories": 0})
-            summary_data = {"status": "complete", "sample_count": len(records), "metrics": m, "config": summary_data.get("config", {})}
+        correct = sum(1 for r in records if r.get("correct", False))
+        acc = correct / max(1, len(records))
+        m = dict(summary_data.get("metrics", {}))
+        m.update({"accuracy": acc, "correct": correct, "total": len(records), "sample_count": len(records), "reused_trajectories": len(records), "fresh_trajectories": 0})
+        summary_data = {"status": "complete", "sample_count": len(records), "metrics": m, "config": summary_data.get("config", {})}
         if not summary_path.is_file():
             with contextlib.suppress(Exception):
                 summary_path.write_text(json.dumps(summary_data, indent=2) + "\n", encoding="utf-8")
 
-    # Log to MLflow if tracking experiment is specified
-    exp_name = getattr(args, "tracking_experiment_name", None)
-    if exp_name:
-        with contextlib.suppress(Exception):
-            tracker = MLflowTracker()
-            if getattr(args, "single_intervention", False):
-                backfill_single_intervention_traces(
-                    tracker, exp_dir, exp_rel, args, summary_data, conditions, target_count
-                )
-            else:
-                tracker.start_run(
-                    experiment_name=exp_name,
-                    run_name=exp_rel,
-                    tags={"data_dir": str(exp_dir.resolve()), "rel_dir": exp_rel, "run_name": exp_rel},
-                )
-                tracker.log_dict(summary_data, "summary.json")
-                tracker.end_run("FINISHED")
+    # Log the reused result to the use case's MLflow experiment
+    with contextlib.suppress(Exception):
+        tracker = MLflowTracker()
+        if getattr(args, "intervention_continuation", False):
+            backfill_intervention_continuation_traces(
+                tracker, exp_dir, exp_rel, args, summary_data, conditions, target_count
+            )
+        else:
+            tracker.start_run(
+                experiment_name=mlflow_experiment_name(_use_case_of(args)),
+                run_name=exp_rel,
+                tags={"data_dir": str(exp_dir.resolve()), "rel_dir": exp_rel, "run_name": exp_rel},
+            )
+            tracker.log_dict(summary_data, "summary.json")
+            tracker.end_run("FINISHED")
 
     metrics = summary_data.get("metrics", summary_data)
     print(f"Reusing completed experiment at {exp_rel}")
@@ -223,13 +202,6 @@ def _reuse_completed_run(args: Any) -> tuple[dict, list[dict]] | None:
 
 def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
     """Execute a benchmark experiment with given parsed arguments."""
-    finalize_run_args(args)
-    exp_name = getattr(args, "tracking_experiment_name", None)
-    if not exp_name:
-        raise ValueError(
-            "MLflow tracking experiment name must be specified (--tracking_experiment_name or via config) before running model inference."
-        )
-
     set_seed(args.seed)
     device = auto_device(args.device)
 
@@ -249,32 +221,20 @@ def run_benchmark(args: Any) -> tuple[dict, list[dict]]:
     model = ModelWrapper(args.model_name, device, use_vllm=args.use_vllm, args=args)
     model.load_time_sec = time.perf_counter() - load_started
 
-    if getattr(args, "receiver_compute_preflight", False):
-        return ReceiverComputePreflightUseCase(tracker_port=MLflowTracker()).execute(
-            model, args
-        )
-
-    if getattr(args, "receiver_reasoning", False):
-        summary, records = ReceiverReasoningUseCase(
-            tracker_port=MLflowTracker()
-        ).execute(model, args)
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
-        return summary, records
-
-    if getattr(args, "acquisition", False):
-        metrics, records = ReceiverAcquisitionUseCase(tracker_port=MLflowTracker()).execute(model, args)
+    if getattr(args, "representation_acquisition", False):
+        metrics, records = RepresentationAcquisitionUseCase(tracker_port=MLflowTracker()).execute(model, args)
         metrics_dict = metrics.to_dict()
         print("\n================ Receiver Acquisition Summary ================\n" + json.dumps(metrics_dict, ensure_ascii=False, indent=2))
         return metrics_dict, [record.to_dict() for record in records]
 
-    if getattr(args, "single_intervention", False):
-        summary, recs = SingleInterventionUseCase(tracker_port=MLflowTracker()).execute(model, args)
+    if getattr(args, "intervention_continuation", False):
+        summary, recs = InterventionContinuationUseCase(tracker_port=MLflowTracker()).execute(model, args)
         if getattr(args, "print_summary", False):
             print(json.dumps(summary, ensure_ascii=False, indent=2))
         return summary, recs
 
-    if getattr(args, "intervention", False):
-        metrics, records = InterventionUseCase(tracker_port=MLflowTracker()).execute(model, args)
+    if getattr(args, "intervention_kv", False):
+        metrics, records = InterventionKvUseCase(tracker_port=MLflowTracker()).execute(model, args)
         metrics_dict = metrics.to_dict()
         print("\n==================== Intervention Summary ====================\n" + json.dumps(metrics_dict, ensure_ascii=False, indent=2))
         return metrics_dict, [r.to_dict() for r in records]

@@ -3,6 +3,7 @@
 from typing import Any
 
 from ...domain.models import BenchmarkMetrics
+from ...domain.models.use_cases import BENCHMARK, mlflow_experiment_name
 from ...domain.ports.cache_port import CachePort
 from ...domain.ports.tracking_port import ExperimentTrackerPort
 from ...infrastructure.models.dtype import peak_allocated_bytes
@@ -19,11 +20,6 @@ def start_benchmark_tracker(
     if not tracker_port:
         return
 
-    exp_name = getattr(args, "tracking_experiment_name", None)
-    if not exp_name:
-        raise ValueError(
-            "MLflow tracking experiment name must be specified (--tracking_experiment_name or via config) before running benchmark."
-        )
 
     backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
     dtype_name = getattr(args, "model_dtype", "") or getattr(args, "dtype", "")
@@ -38,7 +34,7 @@ def start_benchmark_tracker(
         "method": args.method,
         "split": getattr(args, "split", "test"),
         "seed": str(args.seed),
-        "experiment_type": "benchmark",
+        "experiment_type": BENCHMARK,
         "data_dir": str(exp_dir.resolve()),
         "rel_dir": exp_rel,
         "run_name": run_name,
@@ -47,7 +43,7 @@ def start_benchmark_tracker(
         tags["latent_steps"] = str(args.latent_steps)
 
     tracker_port.start_run(
-        experiment_name=exp_name,
+        experiment_name=mlflow_experiment_name(BENCHMARK),
         run_name=run_name,
         tags=tags,
     )

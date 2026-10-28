@@ -1,0 +1,265 @@
+"""Receiver carrier acquisition use case."""
+
+import contextlib
+import time
+import traceback
+from typing import Any
+
+from ..domain.models import (
+    RepresentationAcquisitionMetrics,
+    RepresentationAcquisitionRecord,
+)
+from ..domain.models.use_cases import (
+    REPRESENTATION_ACQUISITION,
+    mlflow_experiment_name,
+)
+from ..domain.ports.cache_port import CachePort
+from ..domain.ports.tracking_port import ExperimentTrackerPort
+from ..domain.services.prompts.acquisition import (
+    CANDIDATE_DIGITS,
+    CROSS_PAIRING_POLICY,
+    RECEIVER_ANSWER_PREFIX,
+    RECEIVER_PROMPT,
+    RECEIVER_PROMPT_TEMPLATE_VERSION,
+    SENDER_PROMPT_TEMPLATE,
+    SENDER_PROMPT_TEMPLATE_VERSION,
+    build_receiver_messages,
+    build_sender_messages,
+)
+from ..infrastructure.cache.manager import DEFAULT_CACHE_MANAGER
+from ..infrastructure.models.model_wrapper import ModelWrapper
+from ..infrastructure.paths.naming import build_experiment_relpath
+from ..infrastructure.paths.resolver import get_git_commit_hash, get_path_resolver
+from .representation_acquisition.aggregation import aggregate_receiver_records
+from .representation_acquisition.artifacts import log_receiver_artifacts
+from .representation_acquisition.runner import run_acquisition_loop
+from .representation_acquisition.sampling import (
+    SecretDigitSample,
+    SenderCacheBundle,
+    generate_secret_digit_samples,
+    pair_different_digit_sources,
+)
+from .representation_acquisition.scoring import (
+    prepare_receiver_scoring,
+    score_digit_logits,
+    validate_digit_candidates,
+)
+from .representation_sender_probe import (
+    ProbeAnalysisConfig,
+    RepresentationSenderProbeUseCase,
+    collect_sender_states,
+)
+
+__all__ = [
+    "CANDIDATE_DIGITS",
+    "CROSS_PAIRING_POLICY",
+    "RECEIVER_ANSWER_PREFIX",
+    "RECEIVER_PROMPT",
+    "RECEIVER_PROMPT_TEMPLATE_VERSION",
+    "SENDER_PROMPT_TEMPLATE",
+    "SENDER_PROMPT_TEMPLATE_VERSION",
+    "RepresentationAcquisitionUseCase",
+    "SecretDigitSample",
+    "SenderCacheBundle",
+    "aggregate_receiver_records",
+    "build_receiver_messages",
+    "build_sender_messages",
+    "generate_secret_digit_samples",
+    "pair_different_digit_sources",
+    "score_digit_logits",
+    "validate_digit_candidates",
+]
+
+
+class RepresentationAcquisitionUseCase:
+    """Application use case for secret digit receiver acquisition."""
+
+    def __init__(
+        self,
+        cache_port: CachePort | None = None,
+        tracker_port: ExperimentTrackerPort | None = None,
+    ) -> None:
+        self.cache_port = cache_port or DEFAULT_CACHE_MANAGER
+        self.tracker_port = tracker_port
+
+    def execute(
+        self, model: ModelWrapper, args: Any
+    ) -> tuple[RepresentationAcquisitionMetrics, list[RepresentationAcquisitionRecord]]:
+        self._validate_args(args)
+        start = time.perf_counter()
+        samples = generate_secret_digit_samples(args.max_samples, args.seed)
+        conditions = list(args.acquisition_conditions)
+        modes = list(args.context_modes)
+        cross_indices = (
+            pair_different_digit_sources(samples)
+            if "cross" in conditions
+            else [0] * len(samples)
+        )
+        args.representation_acquisition = True
+        git_hash = get_git_commit_hash()
+        dtype_name = str(
+            getattr(getattr(model, "model", None), "dtype", "bfloat16")
+        ).replace("torch.", "")
+        exp_relpath = build_experiment_relpath(args, dtype_name=dtype_name)
+        exp_dir = get_path_resolver().get_experiment_dir(exp_relpath)
+        args.run_id = exp_relpath
+        args.exp_relpath = exp_relpath
+
+        if self.tracker_port:
+            tags = {
+                "experiment_type": REPRESENTATION_ACQUISITION,
+                "model": args.model_name,
+                "task": args.task,
+                "method": args.method,
+                "git_commit": git_hash,
+                "seed": str(args.seed),
+                "latent_steps": str(args.latent_steps),
+                "data_dir": str(exp_dir.resolve()),
+                "rel_dir": exp_relpath,
+                "run_name": exp_relpath,
+            }
+            self.tracker_port.start_run(
+                experiment_name=mlflow_experiment_name(REPRESENTATION_ACQUISITION),
+                run_name=exp_relpath,
+                tags=tags,
+            )
+
+        try:
+            receiver_ids, receiver_mask, mapping = prepare_receiver_scoring(model)
+            if self.tracker_port:
+                self.tracker_port.log_params(
+                    {
+                        "model": args.model_name,
+                        "config_path": args.config_path,
+                        "task": args.task,
+                        "sample_count": len(samples),
+                        "method": args.method,
+                        "latent_steps": args.latent_steps,
+                        "seed": args.seed,
+                        "backend": "transformers",
+                        "dtype": str(
+                            getattr(getattr(model, "model", None), "dtype", "unknown")
+                        ),
+                        "device": str(model.device),
+                        "context_modes": ",".join(modes),
+                        "carrier_modes": ",".join(modes),
+                        "acquisition_conditions": ",".join(conditions),
+                        "candidate_digits": ",".join(CANDIDATE_DIGITS),
+                        "cross_pairing_policy": CROSS_PAIRING_POLICY,
+                        "sender_prompt_template_version": SENDER_PROMPT_TEMPLATE_VERSION,
+                        "receiver_prompt_template_version": RECEIVER_PROMPT_TEMPLATE_VERSION,
+                        "sender_prompt_template": SENDER_PROMPT_TEMPLATE,
+                        "receiver_prompt_template": RECEIVER_PROMPT,
+                        "git_commit": git_hash,
+                        "save_hidden_states": bool(args.save_hidden_states),
+                        "save_raw_cache": bool(args.save_raw_cache),
+                        "latent_space_realign": bool(args.latent_space_realign),
+                        "probe_sender_latents": bool(args.probe_sender_latents),
+                        "probe_prompt_templates": args.probe_prompt_templates,
+                        "save_latent_states": bool(args.save_latent_states),
+                    }
+                )
+                self.tracker_port.log_dict(
+                    mapping, "tokenizer/candidate_token_mapping.json"
+                )
+            records, hidden, context_runtime = run_acquisition_loop(
+                model,
+                args,
+                samples,
+                cross_indices,
+                receiver_ids,
+                receiver_mask,
+                mapping,
+                self.tracker_port,
+                run_id=exp_relpath,
+            )
+            sender_states = None
+            if args.probe_sender_latents:
+                sender_states = collect_sender_states(
+                    model,
+                    latent_steps=args.latent_steps,
+                    template_count=args.probe_prompt_templates,
+                ).payload()
+            cells_per_sample = len(modes) * sum(
+                condition in {"own", "cross"} for condition in conditions
+            ) + sum(
+                condition in {"drop", "drop_position_matched"}
+                for condition in conditions
+            )
+            metrics = aggregate_receiver_records(
+                records,
+                len(samples),
+                len(samples) * cells_per_sample,
+                time.perf_counter() - start,
+                context_runtime,
+            )
+            metrics.research_matrix = {
+                "carrier_source_follow_accuracy": {
+                    carrier: values["source_follow_accuracy"]
+                    for carrier, values in metrics.carrier_comparison.items()
+                },
+                "carrier_source_probability_mean": {
+                    carrier: values["source_probability_mean"]
+                    for carrier, values in metrics.carrier_comparison.items()
+                },
+                "carrier_probability_deltas": metrics.carrier_probability_deltas,
+            }
+            state_path = log_receiver_artifacts(
+                self.cache_port,
+                self.tracker_port,
+                args,
+                records,
+                metrics,
+                mapping,
+                hidden,
+                sender_states,
+            )
+            source_run_id = (
+                self.tracker_port.active_run_id if self.tracker_port else None
+            )
+            if self.tracker_port:
+                self.tracker_port.log_metrics(metrics.to_mlflow_metrics())
+                self.tracker_port.flush_traces()
+                self.tracker_port.end_run("FINISHED")
+            if state_path is not None:
+                RepresentationSenderProbeUseCase(self.tracker_port).execute(
+                    state_path,
+                    ProbeAnalysisConfig(
+                        seed=args.seed,
+                        folds=args.probe_folds,
+                        permutations=args.probe_permutations,
+                        backend=args.probe_backend,
+                        workers=args.probe_workers,
+                        c=args.probe_c,
+                        max_iter=args.probe_max_iter,
+                        tol=args.probe_tol,
+                        batch_size=args.probe_batch_size,
+                    ),
+                    source_run_id=source_run_id,
+                    source_artifact_path="probe/sender_latent_states.pt",
+                    source_config=vars(args),
+                )
+            return metrics, records
+        except Exception:
+            if self.tracker_port:
+                with contextlib.suppress(Exception):
+                    self.tracker_port.log_params(
+                        {"failure_traceback": traceback.format_exc()[:500]}
+                    )
+                    self.tracker_port.end_run("FAILED")
+            raise
+
+    @staticmethod
+    def _validate_args(args: Any) -> None:
+        if args.method != "latent_mas" or args.task != "secret_digit":
+            raise ValueError(
+                "acquisition requires method='latent_mas' and task='secret_digit'"
+            )
+        if args.use_vllm:
+            raise ValueError("acquisition requires the transformers backend")
+        if args.latent_steps <= 0:
+            raise ValueError("acquisition requires latent_steps > 0")
+        if args.acquisition_cross_policy != CROSS_PAIRING_POLICY:
+            raise ValueError(
+                f"unsupported acquisition cross policy: {args.acquisition_cross_policy}"
+            )

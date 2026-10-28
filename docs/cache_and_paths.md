@@ -29,8 +29,8 @@ Repository Root
 │
 ├── artifacts/                  # Tier 2: Publication & Presentation Artifacts (Permanent)
 │   ├── presentation/           # High-resolution publication plots (PNG/PDF)
-│   ├── receiver_acquisition/   # Analysis tables and conditions
-│   └── receiver_compute_preflight/ # Budget curves and model reports
+│   ├── representation_acquisition/   # Analysis tables and conditions
+│   └── representation_trajectory/    # Stepwise trajectory tables and plots
 │
 ├── .cache/                     # Tier 3: Volatile Execution Cache (Safely Cleanable)
 │   ├── models/realign/         # Reconstructable projection matrices

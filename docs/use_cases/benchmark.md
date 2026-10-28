@@ -86,22 +86,22 @@ sequenceDiagram
 ### 4.1 기본 YAML 프리셋 실행
 ```bash
 # Qwen3-8B 기반 LatentMAS GSM8K 벤치마크
-just run -c lmas/reprop/lm_q38_gsm8k
+just run -c benchmark/gsm8k_q38_lm
 
 # Single Baseline 실행
-just run -c lmas/reprop/bs_q38_gsm8k
+just run -c benchmark/gsm8k_q38_bs
 
 # TextMAS 실행
-just run -c lmas/reprop/tm_q38_gsm8k
+just run -c benchmark/gsm8k_q38_tm
 ```
 
 ### 4.2 옵션 오버라이드 실행
 ```bash
 # 10개 샘플만 빠르게 테스트, 배치 크기 2
-just run -c lmas/reprop/lm_q38_gsm8k --max_samples 10 --generate_bs 2
+just run -c benchmark/gsm8k_q38_lm --max_samples 10 --generate_bs 2
 
 # 기존 완료 결과를 무시하고 강제 재실행
-just run -c lmas/reprop/lm_q38_gsm8k --overwrite
+just run -c benchmark/gsm8k_q38_lm --overwrite
 ```
 
 ### 4.3 전체 모델 스케일 순차 실행
@@ -126,7 +126,8 @@ just lmas reprop
 | `temperature` | `float` | `0.6` | 텍스트 생성 샘플링 온도 |
 | `top_p` | `float` | `0.95` | Nucleus 샘플링 확률 |
 | `use_vllm` | `bool` | `false` | vLLM 가속 백엔드 사용 여부 (LatentMAS transformers 기본 권장) |
-| `tracking_experiment_name` | `str` | `latentmas_benchmark` | MLflow 실험 이름 |
+
+* **MLflow 실험 이름**: `latentmas/benchmark` (`latentmas_reprop.domain.models.use_cases.MLFLOW_EXPERIMENT_NAMES[BENCHMARK]`에서 일원화 관리)
 
 ---
 

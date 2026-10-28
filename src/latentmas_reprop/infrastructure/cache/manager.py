@@ -82,8 +82,8 @@ class ExecutionCacheManager(CachePort):
             CacheLayer.MODELS_REALIGN,
             CacheLayer.EVALUATION_RUNS,
             CacheLayer.EVALUATION_INTERVENTIONS,
-            CacheLayer.EVALUATION_RECEIVER_ACQUISITION,
-            CacheLayer.LATENT_RECEIVER_ACQUISITION,
+            CacheLayer.EVALUATION_REPRESENTATION_ACQUISITION,
+            CacheLayer.LATENT_REPRESENTATION_ACQUISITION,
             CacheLayer.RUNTIME,
         ]
         for layer in volatile_layers:

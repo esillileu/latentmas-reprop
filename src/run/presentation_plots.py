@@ -2,7 +2,6 @@
 
 import argparse
 import csv
-import json
 from pathlib import Path
 
 import matplotlib
@@ -18,12 +17,6 @@ from latentmas_reprop.infrastructure.tracking.mlflow_tracker import (
 
 from .secret_digit_plots import create_digit_aspects_figure
 
-BUDGETS = (64, 128, 256, 512, 1024)
-CONDITIONS = (
-    ("matched", "Matched", "#0072B2", "o", "-"),
-    ("mismatched", "Mismatched", "#D55E00", "s", "--"),
-    ("no_handoff", "No Handoff", "#666666", "^", ":"),
-)
 STYLE = {
     "font.size": 20,
     "axes.titlesize": 26,
@@ -73,7 +66,7 @@ def digit_rows(path):
     ]
 
 
-def prepare_inputs(acquisition, compute):
+def prepare_inputs(acquisition):
     representations = ("hidden_pre_realign", "latent_post_realign")
     probe_path = acquisition / "sender_probe_cells.csv"
     probe = unique_grid(
@@ -90,25 +83,7 @@ def prepare_inputs(acquisition, compute):
         receiver_conditions,
         receiver_path,
     )
-    curves = {}
-    for model in ("4B", "14B"):
-        path = compute / f"Qwen_Qwen3-{model}" / "budget_curves.csv"
-        source = json.loads(path.with_name("source.json").read_text())
-        if source["model"] != f"Qwen/Qwen3-{model}":
-            raise ValueError(f"Unexpected model provenance in {path.parent}")
-        curves[model] = unique_grid(
-            [
-                r
-                for r in read_csv(path)
-                if r["upstream_steps"] == "20"
-                and r["receiver_budget"] in {str(b) for b in BUDGETS}
-                and r["handoff_condition"] in {c[0] for c in CONDITIONS}
-            ],
-            lambda r: (r["handoff_condition"], int(r["receiver_budget"])),
-            [(c[0], b) for c in CONDITIONS for b in BUDGETS],
-            path,
-        )
-    return probe, receiver, curves
+    return probe, receiver
 
 
 def save(fig, output, name):
@@ -181,64 +156,20 @@ def plot_receiver(receiver, output):
     save(fig, output, "secret_digit_receiver")
 
 
-def plot_budget(curves, output):
-    fig, axes = plt.subplots(1, 2, figsize=(16, 8), sharey=True)
-    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.16, top=0.80, wspace=0.16)
-    for ax, model in zip(axes, ("4B", "14B"), strict=True):
-        for condition, label, color, marker, linestyle in CONDITIONS:
-            rows = [curves[model][condition, budget] for budget in BUDGETS]
-            values = [percent(r, "accuracy") for r in rows]
-            ax.plot(
-                BUDGETS,
-                values,
-                color=color,
-                marker=marker,
-                markersize=11,
-                linewidth=4,
-                linestyle=linestyle,
-                label=label,
-            )
-        ax.axhline(50, color="#999999", linestyle="--", linewidth=1.8)
-        ax.set_xscale("log", base=2)
-        ax.set_xticks(BUDGETS, [str(b) for b in BUDGETS])
-        ax.set_yticks(range(0, 101, 20))
-        ax.set(title=model, xlabel="Receiver reasoning budget", ylim=(0, 100))
-        ax.tick_params(labelleft=True)
-        ax.grid(axis="y", alpha=0.18)
-    axes[0].set_ylabel("GSM8K accuracy (%)")
-    fig.suptitle("Receiver budget · 20 upstream steps", fontsize=28, y=0.98)
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(
-        handles,
-        labels,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 0.92),
-        ncol=3,
-        frameon=False,
-        prop={"size": 22, "weight": "bold"},
-        handlelength=3,
-    )
-    save(fig, output, "receiver_budget_4b_14b")
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--acquisition-dir", type=Path, default=Path("artifacts/receiver_acquisition")
-    )
-    parser.add_argument(
-        "--compute-dir", type=Path, default=Path("artifacts/receiver_compute_preflight")
+        "--acquisition-dir", type=Path, default=Path("artifacts/representation_acquisition")
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("artifacts/presentation")
     )
     args = parser.parse_args(argv)
-    probe, receiver, curves = prepare_inputs(args.acquisition_dir, args.compute_dir)
+    probe, receiver = prepare_inputs(args.acquisition_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     with plt.rc_context(STYLE):
         plot_probe(probe, args.output_dir)
         plot_receiver(receiver, args.output_dir)
-        plot_budget(curves, args.output_dir)
         save(create_digit_aspects_figure(), args.output_dir, "secret_digit_aspects")
     log_analysis_results_to_mlflow(MLflowTracker(), "presentation", args.output_dir)
 

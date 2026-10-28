@@ -131,12 +131,6 @@ class BenchmarkUseCase:
         self, model: ModelWrapper, args: Any
     ) -> tuple[BenchmarkMetrics, list[dict]]:
         """Evaluate one resolved configuration, resuming samples already stored."""
-        exp_name = getattr(args, "tracking_experiment_name", None)
-        if not exp_name:
-            raise ValueError(
-                "MLflow tracking experiment name must be specified (--tracking_experiment_name or via config) before running benchmark."
-            )
-
         dtype_name = str(
             getattr(model, "dtype_name", "")
         ) or resolve_experiment_dtype_name(args)

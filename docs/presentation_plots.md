@@ -12,21 +12,10 @@ are unchanged. Existing analysis and diagnostic plotting remain unchanged.
 
 Required local inputs:
 
-- `artifacts/receiver_acquisition/sender_probe_cells.csv`
-- `artifacts/receiver_acquisition/receiver_conditions.csv`
-- `artifacts/receiver_compute_preflight/Qwen_Qwen3-4B/budget_curves.csv`
-- `artifacts/receiver_compute_preflight/Qwen_Qwen3-14B/budget_curves.csv`
-- Each budget directory's `source.json`, identifying the corresponding model.
+- `artifacts/representation_acquisition/sender_probe_cells.csv`
+- `artifacts/representation_acquisition/receiver_conditions.csv`
 
-The acquisition inputs are the existing `just analyze-receiver` outputs. Budget
-inputs follow the layout of `just analyze-receiver-compute-preflight --model 4B`
-and `--model 14B`. For this presentation they were downloaded directly from
-existing MLflow `analysis/` artifacts without rerunning analysis or uploading:
-
-| Model | Source run ID |
-| --- | --- |
-| Qwen/Qwen3-4B | `8c3949d5499842b6a6052183c7ae769c` |
-| Qwen/Qwen3-14B | `ff70508e50d34bc3af4165bd99be63a4` |
+The acquisition inputs are the existing `just analyze-representation-acquisition` outputs.
 
 Outputs under `artifacts/presentation/`, each as PNG and PDF:
 
@@ -36,10 +25,6 @@ Outputs under `artifacts/presentation/`, each as PNG and PDF:
 - `secret_digit_receiver`: the same model/steps, with drop, latent-only own,
   and latent-only cross mapped to No Handoff, Matched, and Mismatched. The
   accuracy axis starts at zero and ends at 25%; chance is 10%.
-- `receiver_budget_4b_14b`: identical 4B/14B panels at 20 upstream steps,
-  budgets 64/128/256/512/1024 on a base-2 logarithmic axis, and matched,
-  mismatched, no-handoff lines and markers, without accuracy confidence intervals.
-  Both accuracy axes span 0–100%; the only reference is 50%.
 - `secret_digit_aspects`: nine supplied model × step coordinates comparing
   final post-realignment probe OOF accuracy minus permutation null mean (pp)
   against receiver argmax prediction changes for latent-only own versus matched
@@ -48,6 +33,6 @@ Outputs under `artifacts/presentation/`, each as PNG and PDF:
   not FWER-significant. These rounded coordinates are used exactly as supplied,
   without recomputing metrics; no regression or correlation is shown.
 
-Override directories with `--acquisition-dir`, `--compute-dir`, or `--output-dir`.
+Override directories with `--acquisition-dir` or `--output-dir`.
 The repository ignores `artifacts/`; generated figures and downloaded inputs
 remain local files, while the plotting entry point and instructions are tracked.

@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from latentmas_reprop.application.receiver_acquisition import trajectory
-from latentmas_reprop.application.receiver_acquisition.runner import (
+from latentmas_reprop.application.representation_acquisition import trajectory
+from latentmas_reprop.application.representation_acquisition.runner import (
     run_acquisition_loop,
 )
-from latentmas_reprop.application.receiver_acquisition.sampling import (
+from latentmas_reprop.application.representation_acquisition.sampling import (
     SecretDigitSample,
     generate_secret_digit_samples,
 )
@@ -45,7 +45,6 @@ def make_args(tmp_path, max_samples=2, **kwargs):
         "overwrite": False,
         "save_raw_cache": False,
         "save_hidden_states": False,
-        "tracking_experiment_name": "test_exp",
         "generate_bs": 1,
         "use_vllm": False,
     }
@@ -77,7 +76,7 @@ def test_scenario_10_missing_summary_synthesized_without_model(tmp_path):
     assert (exp_dir / "summary.json").is_file()
 
 
-def test_receiver_trajectory_sender_contexts_not_overwritten(tmp_path, monkeypatch):
+def test_representation_trajectory_sender_contexts_not_overwritten(tmp_path, monkeypatch):
     """Trajectory collection must not overwrite sender_contexts.jsonl."""
     samples = generate_secret_digit_samples(2, 42)
     full = ((torch.zeros(1, 1, 23, 1), torch.ones(1, 1, 23, 1)),)
@@ -157,7 +156,6 @@ def test_run_summary_scope_aggregation_10_100_10(tmp_path):
         overwrite=False,
         save_raw_cache=False,
         save_hidden_states=False,
-        tracking_experiment_name="test_exp",
         generate_bs=1,
         use_vllm=False,
     )
@@ -222,10 +220,10 @@ def test_acquisition_lazy_cache_build():
 
     with (
         patch(
-            "latentmas_reprop.application.receiver_acquisition.runner.build_sender_cache"
+            "latentmas_reprop.application.representation_acquisition.runner.build_sender_cache"
         ) as mock_build,
         patch(
-            "latentmas_reprop.application.receiver_acquisition.runner.forward_receiver_observation",
+            "latentmas_reprop.application.representation_acquisition.runner.forward_receiver_observation",
             return_value=(rec_mock, None),
         ),
     ):

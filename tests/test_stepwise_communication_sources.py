@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from latentmas_reprop.application.receiver_acquisition.sampling import (
+from latentmas_reprop.application.representation_acquisition.sampling import (
     generate_secret_digit_samples,
 )
 from src.run import stepwise_communication_analysis as analysis
@@ -17,9 +17,9 @@ class SavedClient:
     def __init__(self):
         self.runs, self.payloads, self.downloads = {}, {}, []
         self.names = {
-            "probe": "latentmas_receiver_trajectory",
-            "sweep": "latentmas_receiver_trajectory",
-            "independent": "latentmas_receiver_acquisition",
+            "probe": "latentmas/representation/trajectory",
+            "sweep": "latentmas/representation/trajectory",
+            "independent": "latentmas/representation/acquisition",
         }
         self.probe_ids, self.sweep_ids, self.independent_ids = [], [], []
         for index, model in enumerate(analysis.MODELS[:3]):
@@ -214,7 +214,7 @@ def test_probe_cannot_mix_sources(corruption):
     client = SavedClient()
     probe = client.runs["probe-0"]
     if corruption == "acquisition":
-        client.names["probe"] = "latentmas_sender_probe"
+        client.names["probe"] = "latentmas/representation/sender_probe"
         probe.data.params["source_run_id"] = "independent-0-20"
     elif corruption == "other_sweep":
         probe.data.params["source_run_id"] = "unselected-sweep"
