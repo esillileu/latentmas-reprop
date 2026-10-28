@@ -102,6 +102,15 @@ just analyze-sender-probe \
 
 The replacement is created and verified before the legacy run is soft-deleted.
 
+### Single Intervention Analysis (PLE, PLCE, PLPE)
+Run single intervention analysis decomposing explicit decoding from common latent representations:
+
+```bash
+CUDA_VISIBLE_DEVICES=3 just run-single-intervention -c lmas/single_intervention/gsm8k
+```
+
+This branches into `ple` (direct decoding), `plce` (control signal), and `plpe` (role/prompt) from the same $P_1 \to L_1 \dots \to L_T$ state, with 10-step automatic intermediate checkpointing and incremental resumption. See [Single Intervention Analysis](docs/single_intervention.md) for detailed specifications.
+
 ### 3. Developer Commands
 ```bash
 just test        # Run test suite
