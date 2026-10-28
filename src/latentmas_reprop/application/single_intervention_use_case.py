@@ -29,6 +29,10 @@ from .single_intervention.artifacts import (
     log_to_mlflow_tracker,
     save_experiment_summary,
 )
+from .single_intervention.checkpoint import (
+    find_latent_step_checkpoint,
+    make_step_checkpoint_saver,
+)
 from .single_intervention.runner import SingleInterventionRunner
 
 CONDITIONS = ["ple", "plce", "plpe"]
@@ -123,7 +127,25 @@ class SingleInterventionUseCase:
                     exp_relpath, skey, "shared", "hidden"
                 )
             else:
-                shared_kv, shared_hidden, meta = runner.compute_common_latent(item)
+                target_ls = int(getattr(args, "latent_steps", 10))
+                interval = int(getattr(args, "latent_step_checkpoint_interval", 10))
+                init_step, init_kv, init_hidden, init_meta = (
+                    (0, None, None, None)
+                    if overwrite
+                    else find_latent_step_checkpoint(
+                        self.storage, args, dtype_name, backend, skey, target_ls, interval
+                    )
+                )
+                ckpt_cb = make_step_checkpoint_saver(
+                    self.storage, args, dtype_name, backend, skey, idx, overwrite
+                )
+                shared_kv, shared_hidden, meta = runner.compute_common_latent(
+                    item=dict(item, **(init_meta or {})),
+                    initial_kv=init_kv,
+                    initial_hiddens=init_hidden,
+                    initial_step=init_step,
+                    checkpoint_callback=ckpt_cb,
+                )
                 shared_payload = {
                     "status": "complete",
                     "sample_index": idx,

@@ -65,6 +65,12 @@ def add_intervention_args(
         help="Custom prompt template for PLPE intervention (can contain {question}).",
     )
     parser.add_argument(
+        "--latent_step_checkpoint_interval",
+        type=int,
+        default=int(defaults.get("latent_step_checkpoint_interval", 10)),
+        help="Interval of latent steps at which to save intermediate KV cache checkpoints (default: 10).",
+    )
+    parser.add_argument(
         "--tracking_experiment_name",
         type=str,
         default=defaults.get("tracking_experiment_name"),

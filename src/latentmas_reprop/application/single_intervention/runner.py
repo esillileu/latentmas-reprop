@@ -27,38 +27,70 @@ class SingleInterventionRunner:
 
     @torch.no_grad()
     def compute_common_latent(
-        self, item: dict[str, Any]
+        self,
+        item: dict[str, Any],
+        initial_kv: Any = None,
+        initial_hiddens: torch.Tensor | None = None,
+        initial_step: int = 0,
+        checkpoint_callback: Any = None,
     ) -> tuple[Any, torch.Tensor, dict[str, Any]]:
         """UC-01: P_1 -> L_1 -> ... -> L_T common latent calculation."""
-        role = getattr(self.args, "sender_role", "planner")
-        messages = build_agent_message_sequential_latent_mas(
-            role=role, question=item["question"], method="latent_mas", args=self.args
-        )
-        prompts, ids, mask, tokens = self.model.prepare_chat_batch(
-            [messages], add_generation_prompt=True
-        )
-        outputs = self.model.model(
-            input_ids=ids,
-            attention_mask=mask,
-            use_cache=True,
-            output_hidden_states=True,
-            return_dict=True,
-        )
-        past = outputs.past_key_values
-        prompt_hidden = outputs.hidden_states[-1][0].detach().cpu()
-        last_hidden = prompt_hidden[-1:, :].to(self.model.device)
-
         latent_steps = int(getattr(self.args, "latent_steps", 10))
-        latent_hiddens: list[torch.Tensor] = []
+        interval = int(getattr(self.args, "latent_step_checkpoint_interval", 10))
         show_prog = not bool(getattr(self.args, "no_progress", False))
+
+        if initial_kv is not None and initial_hiddens is not None and initial_step > 0:
+            past = move_past_kv(clone_past_kv(initial_kv), self.model.device)
+            last_hidden = initial_hiddens[-1:, :].to(self.model.device)
+            prompt_len = int(
+                item.get("prompt_length", initial_hiddens.shape[0] - initial_step)
+            )
+            prompt_hidden = initial_hiddens[:prompt_len]
+            latent_hiddens = [
+                initial_hiddens[i] for i in range(prompt_len, initial_hiddens.shape[0])
+            ]
+            meta = {
+                "prompt": item.get("prompt", ""),
+                "prompt_token_ids": item.get("prompt_token_ids", []),
+                "prompt_tokens": item.get("prompt_tokens", []),
+                "prompt_length": prompt_len,
+            }
+        else:
+            role = getattr(self.args, "sender_role", "planner")
+            messages = build_agent_message_sequential_latent_mas(
+                role=role, question=item["question"], method="latent_mas", args=self.args
+            )
+            prompts, ids, mask, tokens = self.model.prepare_chat_batch(
+                [messages], add_generation_prompt=True
+            )
+            outputs = self.model.model(
+                input_ids=ids,
+                attention_mask=mask,
+                use_cache=True,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+            past = outputs.past_key_values
+            prompt_hidden = outputs.hidden_states[-1][0].detach().cpu()
+            last_hidden = prompt_hidden[-1:, :].to(self.model.device)
+            latent_hiddens = []
+            initial_step = 0
+            meta = {
+                "prompt": prompts[0],
+                "prompt_token_ids": ids[0].cpu().tolist(),
+                "prompt_tokens": tokens[0],
+                "prompt_length": int(prompt_hidden.shape[0]),
+            }
+
+        start_step = initial_step + 1
         latent_iter = tqdm(
-            range(latent_steps),
-            desc="Common latent steps",
+            range(start_step, latent_steps + 1),
+            desc=f"Common latent ({start_step}..{latent_steps})",
             unit="step",
             leave=False,
-            disable=not show_prog,
+            disable=not show_prog or start_step > latent_steps,
         )
-        for _ in latent_iter:
+        for step in latent_iter:
             latent_vec = self.model._apply_latent_realignment(
                 last_hidden, self.model.model
             )
@@ -80,6 +112,12 @@ class SingleInterventionRunner:
             latent_hiddens.append(step_hidden.detach().cpu())
             last_hidden = step_hidden.unsqueeze(0)
 
+            if checkpoint_callback and interval > 0 and (step % interval == 0) and step < latent_steps:
+                cur_stack = torch.stack(latent_hiddens, dim=0)
+                cur_common = torch.cat([prompt_hidden, cur_stack], dim=0)
+                cur_kv = move_past_kv(clone_past_kv(past), "cpu")
+                checkpoint_callback(step, cur_kv, cur_common, dict(meta, latent_steps=step))
+
         latent_stack = (
             torch.stack(latent_hiddens, dim=0)
             if latent_hiddens
@@ -87,13 +125,7 @@ class SingleInterventionRunner:
         )
         common_hidden = torch.cat([prompt_hidden, latent_stack], dim=0)
         kv_snapshot = move_past_kv(clone_past_kv(past), "cpu")
-        meta = {
-            "prompt": prompts[0],
-            "prompt_token_ids": ids[0].cpu().tolist(),
-            "prompt_tokens": tokens[0],
-            "prompt_length": int(prompt_hidden.shape[0]),
-            "latent_steps": latent_steps,
-        }
+        meta["latent_steps"] = latent_steps
         return kv_snapshot, common_hidden, meta
 
     @torch.no_grad()

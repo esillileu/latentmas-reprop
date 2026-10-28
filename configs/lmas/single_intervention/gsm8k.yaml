@@ -15,4 +15,5 @@ single_intervention: true
 #   plpe: P_1 -> L -> P_2 -> E (Judger 역할 지시 및 문제 재제시 프롬프트 개입 후 디코딩)
 intervention_conditions: "ple,plce,plpe"
 control_signal: "\nSolution:"
+latent_step_checkpoint_interval: 10
 tracking_experiment_name: latentmas_single_intervention
