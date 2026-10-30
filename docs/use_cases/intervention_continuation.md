@@ -1,19 +1,26 @@
-# LMAS Intervention Continuation Analysis (PE, PLE, PLCE, PLPE)
+# LMAS Intervention Continuation Analysis
 
-이 문서는 비학습 hidden-state feedback을 수행한 동일한 잠재 계산 상태($P_1 \to L_1 \to \dots \to L_T$)에서 네 가지 조건(`pe`, `ple`, `plce`, `plpe`)으로 독립 분기하여 명시적 계산 전환 및 프롬프트 개입 시 발생하는 계산적 현상을 관찰하는 **Intervention Continuation Analysis**의 실행, 설정, 저장 구조 및 증분 재개(Incremental Resumption) 명세를 설명합니다.
+R은 역할 지시, Q는 문제, L은 잠재 계산, C는 제어 신호, E는 명시적 생성입니다. 초기 역할 R₁과 후속 역할 R₂는 서로 다를 수 있으며 기본값은 각각 Planner와 Judger입니다. 실제 P1과 개입 프롬프트 및 토큰 ID가 기록됩니다.
+
+| 조건 | 순서 | 저장 식별자 |
+|---|---|---|
+| QE | Q → E | pe (question_only P1) |
+| RQE | R₁(Q) → E | pe |
+| QLE | Q → L → E | ple (question_only P1) |
+| RQLE | R₁(Q) → L → E | ple |
+| RQLCE | R₁(Q) → L → C → E | plce |
+| RQLRE | R₁(Q) → L → R₂ → E | rqlre |
+| RQLQE | R₁(Q) → L → Q → E | rqlqe |
+| RQLRQE | R₁(Q) → L → R₂(Q) → E | plpe |
+| RQRQE | R₁(Q) → R₂(Q) → E | rqrqe |
+
+기존 `pe`, `ple`, `plce`, `plpe` 별칭과 결과 경로는 유지됩니다. 역할이나 문제 구성으로 분류할 수 없는 커스텀 프롬프트는 기존 명칭으로 표시합니다.
 
 ---
 
 ## 1. 개요 및 연구 목적
 
-* **연구 목적**: 동일한 상위 잠재 상태($P_1 \to L$)에서 디코딩 조건에 변화를 주었을 때 모델의 내부 표상과 명시적 텍스트 생성 양상을 비교 관찰합니다.
-* **실행 조건**:
-  | 조건 | 계산 구조 | 개입 내용 | 설명 |
-  |---|---|---|---|
-  | `pe` | $P_1 \to E$ | 추가 입력 없음 | prompt prefill 상태에서 직접 디코딩 |
-  | `ple` | $P_1 \to L \to E$ | 추가 입력 없음 | $L_T$ 상태에서 추가 토큰 개입 없이 직접 명시적 디코딩 수행 |
-  | `plce` | $P_1 \to L \to C \to E$ | 제어 신호 ($C$) | 지정된 제어 신호(기본값: `\nSolution:`) 주입 후 디코딩 |
-  | `plpe` | $P_1 \to L \to P_2 \to E$ | 역할 및 문제 프롬프트 ($P_2$) | LatentMAS 원본 수신 에이전트(기본값: Judger) 역할 지시문 및 목표 문제 재제시 후 디코딩 |
+동일 P1의 저장된 공통 상태에서 분기해 개입과 명시적 생성의 영향을 비교합니다. `QE`, `RQE`, `RQRQE`는 ls0에서 분기하며 잠재 forward를 수행하지 않습니다. 다른 조건은 목표 lsN을 재사용합니다. 기본 Planner 조건은 RQE, RQLE, RQLCE, RQLRE, RQLQE, RQLRQE, RQRQE이며 question_only 기본 조건은 QE, QLE입니다.
 
 ---
 
@@ -21,7 +28,7 @@
 
 * **애플리케이션 클래스**: [`InterventionContinuationUseCase`](file:///home/user3/projects/latentmas-reprop/src/latentmas_reprop/application/intervention_continuation_use_case.py)
 * **세부 모듈**:
-  - `latentmas_reprop.application.intervention_continuation.runner`: 공통 잠재 연산 및 3개 분기 디코더 오케스트레이션
+  - `latentmas_reprop.application.intervention_continuation.runner`: 공통 잠재 연산 및 조건별 분기 디코더 오케스트레이션
   - `latentmas_reprop.application.intervention_continuation.checkpoint`: 10스텝 단위 중간 체크포인트 저장 및 증분 재개 탐색
   - `latentmas_reprop.application.intervention_continuation.artifacts`: 메트릭 집계 및 MLflow/디스크 원자적 저장
 * **실행 모듈 진입점**:
@@ -34,28 +41,21 @@
 
 ```mermaid
 flowchart TD
-    Prompt["입력 프롬프트 (P_1)"] --> Latent["공통 잠재 계산 (L_1 -> ... -> L_T)"]
-    Latent --> Shared["shared: kv.pt & hidden.pt 스냅샷"]
-
-    Shared --> ForkPLE["ple (P_1 -> L -> E)"]
-    Shared --> ForkPLCE["plce (P_1 -> L -> C -> E)"]
-    Shared --> ForkPLPE["plpe (P_1 -> L -> P_2 -> E)"]
-
-    ForkPLE --> SavePLE["ple/result.json & hidden.pt"]
-    ForkPLCE --> SavePLCE["plce/result.json & hidden.pt"]
-    ForkPLPE --> SavePLPE["plpe/result.json & hidden.pt"]
-
-    SavePLE --> FinalSummary["summary.json & MLflow 트래킹"]
-    SavePLCE --> FinalSummary
-    SavePLPE --> FinalSummary
+    P1["P1 prefill"] --> LS0["shared/ls0"]
+    LS0 --> Direct["QE / RQE / RQRQE"]
+    LS0 --> Latent["latent steps"] --> LSN["shared/lsN"]
+    LSN --> Branch["QLE / RQLE / RQLCE / RQLRE / RQLQE / RQLRQE"]
+    Direct --> Results["조건별 결과와 hidden"]
+    Branch --> Results
+    Results --> Trace["샘플별 통합 MLflow Trace"]
 ```
 
 ### UC-01. 공통 잠재 계산 (`shared`)
 * 상위 Planner 프롬프트($P_1$)로부터 $T$개의 잠재 스텝($L_1 \to \dots \to L_T$)을 수행합니다.
 * 샘플당 단 1회만 계산하며, 분기 직전 전체 KV 캐시 스냅샷(`kv.pt`)과 프롬프트 및 각 잠재 스텝의 최종 히든 벡터(`hidden.pt`)를 저장합니다.
 
-### UC-02. 네 조건으로 독립 분기
-* PE는 `ls0`의 prompt KV와 마지막 prompt hidden에서, 나머지 조건은 요청한 `lsN`에서 시작합니다. 각 분기는 KV를 복제합니다.
+### UC-02. 조건별 독립 분기
+* PE 및 RQRQE는 `ls0`에서, 잠재 조건은 요청한 `lsN`에서 시작합니다. 각 분기는 KV를 복제합니다.
 * 분기 이후 생성되는 토큰과 KV 상태는 서로 완전히 독립적으로 갱신됩니다.
 * 개입 토큰 및 생성 구간의 위치별 최종 히든 벡터를 1:1 대응하여 기록합니다.
 
@@ -90,7 +90,7 @@ flowchart TD
 샘플별 `shared/ls0`과 `shared/lsN` 구간을 저장합니다. `ls0`은 전체 prompt KV이고,
 각 `lsN`은 이전 저장 경계 이후의 KV 구간과 전체 hidden을 포함합니다.
 조건 결과는 `samples/<sample>/results/lsN/<result-hash>/<condition>/`에,
-조건별 요약과 reader 참조는 `runs/<run-hash>/`에 저장합니다. PE의 N은 항상 0입니다.
+조건별 요약과 reader 참조는 `runs/<run-hash>/`에 저장합니다. PE와 RQRQE의 N은 항상 0입니다.
 상태와 결과 식별 및 구간 조립 계약은 [리팩터링 설계](../intervention_continuation_refactor.md)를 참조하세요.
 
 디코딩 RNG는 결과 식별과 샘플 인덱스에서 고정하므로 조건 순서나 완료된 결과의
@@ -122,7 +122,7 @@ top_p: 0.95
 seed: 42
 intervention_continuation: true
 p1_variant: "planner"
-intervention_conditions: "pe,ple,plce,plpe"
+# intervention_conditions를 생략하면 P1별 기본 조건을 사용
 control_signal: "\nSolution:"
 receiver_role: "judger"
 latent_step_checkpoint_interval: 10
@@ -180,16 +180,12 @@ just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --dry-
 
 ---
 
-## 9. MLflow 실시간 트레이스 로깅 및 자동 백필 (Backfill)
+## 9. MLflow 샘플별 통합 Trace
 
-* **실시간 Run 및 샘플 트레이스 전송**:
-  - 실험 시작 시점에 즉시 MLflow Run을 생성하고 설정 파라미터를 기록합니다.
-  - 각 샘플이 완료될 때마다 루트 트레이스(`intervention_continuation_sample`) 아래에 다음 하위 스팬을 기록하고 즉시 플러시(`flush_traces()`)합니다:
-    - `common_latent` (`CHAIN`): 상위 프롬프트 원문, 프롬프트 토큰 길이, 잠재 스텝 수
-    - `decode_ple`, `decode_plce`, `decode_plpe` (`LLM`): 조건별 개입 입력 텍스트/토큰 수, 생성 텍스트, 생성 길이, 종료 사유(`finish_reason`), 예산 소진 여부(`budget_exhausted`), 예측값 및 정답 여부
-  - 각 샘플 트레이스에는 정답 기대값(`expected_answer`)과 조건별 평가 피드백(`ple_correct`, `plce_correct`, `plpe_correct`)이 함께 기록되며, 생성된 `trace_id`는 각 조건의 `result.json`에 저장됩니다.
-* **로컬 완료 샘플 자동 백필 (Zero-GPU Backfill)**:
-  - 이미 로컬 디스크에 완료된 샘플이라도 `result.json`에 `trace_id`가 없는 경우, 재실행(또는 전체 완료 후 `_reuse_completed_run` 빠른 경로 실행) 시 무거운 `.pt` 텐서나 모델을 다시 로드하지 않고 로컬 `result.json` 메타데이터만으로 누락된 MLflow 트레이스를 자동 백필(Backfill) 업로드합니다.
+`latentmas/intervention/continuation`의 Run은 P1 상태, 목표 latent step과 실행·디코딩 설정으로 구분합니다. 조건 목록과 샘플 수는 Run 식별에 영향을 주지 않습니다. 동일 Run의 각 샘플 Trace에는 `common_latent`와 완료된 조건별 `decode_<조건>` 스팬이 포함됩니다. 스팬 입력에는 실제 분기 step, 역할, 개입 원문과 토큰 ID가 기록됩니다.
+
+재실행은 저장된 결과를 읽어 변경이 없으면 Trace를 유지합니다. 조건이 추가되거나 Trace가 누락되면 저장된 결과로 새 Trace를 만들고 MLflow에서 필요한 스팬을 검증합니다. 성공 후에만 같은 Run과 샘플의 이전 Trace를 ID로 삭제합니다. 기록 또는 삭제 실패는 오류로 전달하며 로컬 계산 결과는 유지합니다.
+
 ## Legacy checkpoint migration
 
 `just migrate-intervention-continuation` inspects legacy cumulative checkpoints without writing; pass `--apply` to publish validated samples. Existing source files and MLflow runs are not changed.
