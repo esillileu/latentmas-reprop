@@ -196,7 +196,23 @@ def save_intervention_result(
         if is_condition_complete(directory):
             raise ValueError(f"Result already complete: {directory}")
         (directory / "result.json").unlink()
-    payload = dict(record, identity=identity, status="complete", files=["hidden.pt"])
+    files = record.get("files", ["hidden.pt"])
+    if (
+        not isinstance(files, list)
+        or "hidden.pt" not in files
+        or any(
+            not isinstance(name, str)
+            or not name
+            or Path(name).name != name
+            or name == "result.json"
+            for name in files
+        )
+        or any(
+            name != "hidden.pt" and not (directory / name).is_file() for name in files
+        )
+    ):
+        raise ValueError("Invalid condition result files")
+    payload = dict(record, identity=identity, status="complete", files=files)
     return save_condition_result(directory, payload, {"hidden": hidden})
 
 
@@ -211,7 +227,15 @@ def load_intervention_result(
     record = load_json(directory / "result.json")
     if (
         record.get("status") != "complete"
-        or record.get("files") != ["hidden.pt"]
+        or not isinstance(record.get("files"), list)
+        or "hidden.pt" not in record["files"]
+        or any(
+            not isinstance(name, str)
+            or not name
+            or Path(name).name != name
+            or name == "result.json"
+            for name in record["files"]
+        )
         or (identity is not None and record.get("identity") != identity)
     ):
         raise ValueError(f"Invalid result: {directory}")

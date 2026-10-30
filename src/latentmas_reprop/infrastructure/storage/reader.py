@@ -107,7 +107,21 @@ class ResearchDataReader:
     def _intervention_state_dir(
         self, run_or_state: str
     ) -> tuple[Path, dict[str, Any] | None]:
-        path = self.get_run_data_dir(run_or_state)
+        _validate_safe_path(run_or_state, "run_or_state")
+        link = (
+            self.resolver.experiments_dir
+            / "intervention_continuation"
+            / "migration_runs"
+            / f"{run_or_state}.json"
+        )
+        if "/" not in run_or_state and link.is_file():
+            reference = load_json(link)
+            if reference.get("run_id") != run_or_state:
+                raise ValueError("Invalid intervention migration run link")
+            relative = _validate_safe_relpath(reference["run_path"], "run_path")
+            path = self.resolver.experiments_dir / relative
+        else:
+            path = self.get_run_data_dir(run_or_state)
         config_path = path / "config.json"
         if config_path.is_file():
             config = load_json(config_path)

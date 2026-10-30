@@ -136,3 +136,11 @@ All analysis tools follow a unified workflow:
 4. **Persistence**:
    - Write figures and tables to `artifacts/<analysis_path>/`.
    - Record results and upload all outputs to the dedicated MLflow experiment `latentmas-analysis`.
+# Intervention continuation legacy data
+
+Legacy cumulative intervention continuation checkpoints are inspected and
+optionally migrated using `just migrate-intervention-continuation` (dry-run by
+default). The command keeps source files and MLflow runs untouched, and compares overlapping KV and hidden tensors before merging. Unknown
+historical provenance does not prevent conversion; current model reuse remains
+separate. The publication rules are documented in
+[Intervention Continuation Analysis](use_cases/intervention_continuation.md#legacy-checkpoint-migration).

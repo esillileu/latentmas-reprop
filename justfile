@@ -44,6 +44,10 @@ run-intervention-kv *args:
 run-intervention-continuation *args:
     uv run python -m src.run --intervention_continuation {{args}}
 
+# Inspect legacy intervention continuation data; pass --apply to publish
+migrate-intervention-continuation *args:
+    uv run python -m tools.migrations.intervention_continuation.migrate {{args}}
+
 # Run secret-digit representation acquisition
 run-representation-acquisition *args:
     uv run python -m src.run --representation_acquisition {{args}}

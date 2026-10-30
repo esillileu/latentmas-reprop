@@ -53,9 +53,9 @@ CPU 선행 로드는 `ThreadPoolExecutor(max_workers=1)`로 다음 샘플의 `as
 
 새 run의 `data_dir`/`rel_dir`은 `runs/<result-hash>`를 가리키고 config에 state 상대경로, step 및 조건별 결과 경로를 명시한다. reader는 이 참조를 통해 공통 상태를 조립한다. 각 새 run은 기존과 같이 요약과 trace를 기록하되 기존 run의 tag, artifact, trace 및 결과 파일을 수정하지 않는다. 기존 run ID는 이전 manifest의 출처로 보존한다. MLflow가 비활성화되어도 로컬 결과를 읽을 수 있다.
 
-이전은 별도 명시적 오프라인 명령으로 실행한다. 먼저 기존 `config.json`, 각 shared/조건 `result.json`, KV와 hidden, summary, samples, MLflow run 연결을 읽기 전용으로 목록화한다. 기존 경로명만으로 P₁이나 모델 revision을 추측하지 않는다. 실제 prompt token IDs, 설정, 모델/토크나이저 및 realignment의 증거가 충분하지 않거나 서로 충돌하면 해당 항목을 격리 보고하고 자동 병합하지 않는다. 누적 체크포인트 간 겹치는 KV와 hidden prefix를 레이어별 정확 비교한다. 동일 계산 식별인데 값이 다르면 어느 쪽도 선택하지 않고 충돌 보고한다. 독립 실행의 미세한 차이도 자동 병합하지 않는다.
+이전은 별도 명시적 오프라인 명령으로 실행한다. 먼저 기존 `config.json`, 각 shared/조건 `result.json`, KV와 hidden, summary, samples, MLflow run 연결을 읽기 전용으로 목록화한다. 기존 경로명만으로 P₁이나 모델 revision을 추측하지 않는다. 과거 모델 revision, 토크나이저 및 실행 환경을 확인할 수 없으면 unknown으로 보존하며 변환을 막지 않는다. 현재 모델의 자동 재사용 여부는 별도로 판단한다. 누적 체크포인트 간 겹치는 KV와 hidden prefix를 레이어별 정확 비교한다. 동일 계산 식별인데 값이 다르면 어느 쪽도 선택하지 않고 충돌 보고한다. 독립 실행의 미세한 차이도 자동 병합하지 않는다.
 
-각 검증된 누적 KV에서 `ls0`의 `[:p]`와 각 경계의 새 구간을 추출한다. 선행 체크포인트가 없더라도 더 긴 누적 KV를 10단위로 분할할 수 있고, 전체 hidden의 prefix로 각 체크포인트 hidden을 만든다. 부분 최종 step도 보존한다. 기존 조건의 result JSON과 hidden은 해당 step/조건/result hash로 복사하며 원래 trace_id, 모든 필드 및 파일을 보존한다. summary/config/samples 및 그 밖의 파일은 원본별로 새 run 디렉터리에 바이트 그대로 보존하고 출처 경로와 run ID를 manifest에 기록한다. 식별 정보가 불충분한 결과나 동일 hash에 서로 다른 결과가 있으면 자동 병합하지 않고 원본별 별도 보존 영역에 복사하여 보고한다. 현재 경로의 잘린 프롬프트 이름으로 동일성을 추정하지 않는다.
+각 검증된 누적 KV에서 `ls0`의 `[:p]`와 각 경계의 새 구간을 추출한다. 선행 체크포인트가 없더라도 더 긴 누적 KV를 10단위로 분할할 수 있고, 전체 hidden의 prefix로 각 체크포인트 hidden을 만든다. 부분 최종 step도 보존한다. 기존 조건의 result JSON과 hidden은 해당 step/조건/result hash로 복사하며 원래 trace_id, 모든 필드 및 파일을 보존한다. summary/config/samples 및 그 밖의 파일은 원본별로 새 run 디렉터리에 바이트 그대로 보존하고 출처 경로와 run ID를 manifest에 기록한다. 서로 다른 결과는 원본별 결과 식별자로 보존하고, 충돌하거나 실패한 샘플은 원본을 유지하며 보고한다. 현재 경로의 잘린 프롬프트 이름으로 동일성을 추정하지 않는다.
 
 임시 디렉터리에 작성 후 원본과 조립 KV 및 hidden을 `torch.equal`로 비교하고 JSON/기타 파일의 바이트 또는 내용과 파일 목록, 출처를 검증한다. 성공한 샘플만 완료 표식을 마지막에 기록하고 원자적으로 최종 위치에 게시한다. 대상이 이미 있으면 동일 내용만 재사용하고 차이는 충돌로 중단한다. 실패 및 재실행은 원본을 변경하지 않으며 임시 파일만 정리한다. 보고서는 이전 성공, 보류, 충돌을 나열한다. 이전에는 모델 로드나 추론이 필요 없다.
 
@@ -69,7 +69,7 @@ CPU 선행 로드는 `ThreadPoolExecutor(max_workers=1)`로 다음 샘플의 `as
 
 ## 사용자 결정이 필요한 미해결 사항
 
-없음. 불충분한 과거 provenance는 추정하지 않고 이전 보고서에서 보류한다. 보류 데이터의 출처를 확인할 자료가 이후 제공되면 그 항목만 다시 이전한다.
+없음. 불충분한 과거 provenance는 추정하지 않고 unknown으로 보존한다.
 
 ## 이번 세션 구현 및 다음 세션 인터페이스
 

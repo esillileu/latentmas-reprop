@@ -190,3 +190,10 @@ just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --dry-
   - 각 샘플 트레이스에는 정답 기대값(`expected_answer`)과 조건별 평가 피드백(`ple_correct`, `plce_correct`, `plpe_correct`)이 함께 기록되며, 생성된 `trace_id`는 각 조건의 `result.json`에 저장됩니다.
 * **로컬 완료 샘플 자동 백필 (Zero-GPU Backfill)**:
   - 이미 로컬 디스크에 완료된 샘플이라도 `result.json`에 `trace_id`가 없는 경우, 재실행(또는 전체 완료 후 `_reuse_completed_run` 빠른 경로 실행) 시 무거운 `.pt` 텐서나 모델을 다시 로드하지 않고 로컬 `result.json` 메타데이터만으로 누락된 MLflow 트레이스를 자동 백필(Backfill) 업로드합니다.
+## Legacy checkpoint migration
+
+`just migrate-intervention-continuation` inspects legacy cumulative checkpoints without writing; pass `--apply` to publish validated samples. Existing source files and MLflow runs are not changed.
+
+The tool groups candidates using recorded prompt tokens where available, compares every overlapping KV and hidden prefix exactly, and reports each sample as mergeable, conflicting, or failed. It reconstructs ls0 and segments at ten-step and original partial boundaries, then checks the assembled KV against every original checkpoint. Completed condition results and trace IDs are copied to the new result paths. Existing run IDs resolve to new run records without changing MLflow.
+
+Historical model and tokenizer revisions, execution environment and RNG validation are recorded as unknown when unavailable. Migrated trajectories have a separate legacy identity and are readable by the new reader, but are not automatically selected for new model inference. No duplicated quarantine copy is made for failed or conflicting samples; their original files are retained. Run configuration, summaries, samples and other result files are retained in the new run records.
