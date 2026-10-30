@@ -1,6 +1,7 @@
 """Persist and reuse intervention continuation states and condition results."""
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import torch
@@ -10,7 +11,7 @@ from ...infrastructure.storage.tensor_store import (
     load_json,
     save_json_atomic,
 )
-from .checkpoint import _check_sample, _sample_identity, prepare_state
+from .checkpoint import _available_steps, _check_sample, _sample_identity, prepare_state
 from .determinism import StochasticForwardError
 from .identity import (
     canonical_hash,
@@ -19,6 +20,32 @@ from .identity import (
     state_identity,
     state_path,
 )
+
+
+def _prepare_sample(
+    storage: Any, state: Any, sample: str, steps: set[int]
+) -> dict[int, Any]:
+    """Load only CPU states; unavailable states follow the normal resume path."""
+    if not is_condition_complete(state / "samples" / sample / "shared" / "ls0"):
+        return {}
+    prepared = {}
+    for step in steps:
+        try:
+            prepared[step] = storage.assemble_shared_state(state, sample, step)
+        except ValueError as exc:
+            prepared[step] = exc
+            for candidate in _available_steps(state, sample):
+                if candidate >= step or candidate in prepared:
+                    continue
+                try:
+                    storage.load_shared_segment(state, sample, candidate)
+                    prepared[candidate] = storage.assemble_shared_state(
+                        state, sample, candidate
+                    )
+                except ValueError:
+                    continue
+                break
+    return prepared
 
 
 def execute(
@@ -66,105 +93,142 @@ def execute(
     runner = InterventionContinuationRunner(model, args, use_case.evaluator_port)
     records = []
     paths = {condition: [] for condition in conditions}
-    for index, item in enumerate(dataset):
-        sample = f"{index:06d}"
-        base = state / "samples" / sample / "shared" / "ls0"
-        if is_condition_complete(base):
-            _, _, meta = use_case.storage.load_shared_segment(state, sample, 0)
-            _check_sample(meta, _sample_identity(model, args, item, index))
-        states = {}
-        if not is_condition_complete(base) and base.exists():
-            state_runner = copy.copy(runner)
-            state_runner.args = copy.copy(args)
-            state_runner.args.latent_steps = 0
-            try:
-                states[0] = prepare_state(
-                    use_case.storage, state_runner, state, item, index, can_extend
-                )
-            except StochasticForwardError:
-                save_json_atomic(invalid, {"reason": "stochastic_forward"})
-                raise
-        for condition in conditions:
-            condition_step = 0 if condition == "pe" else step
-            ident = result_identity(
-                state.name, condition_step, condition, item, args, model
-            )
-            result_hash = canonical_hash(ident)
-            directory = (
-                state
-                / "samples"
-                / sample
-                / "results"
-                / f"ls{condition_step}"
-                / result_hash
-                / condition
-            )
-            paths[condition].append(str(directory.relative_to(state)))
-            if is_condition_complete(directory):
-                _, record = use_case.storage.load_intervention_result(directory, ident)
-            else:
-                if condition_step not in states:
-                    state_runner = copy.copy(runner)
-                    state_runner.args = copy.copy(args)
-                    state_runner.args.latent_steps = condition_step
-                    try:
-                        states[condition_step] = prepare_state(
-                            use_case.storage,
-                            state_runner,
-                            state,
-                            item,
-                            index,
-                            can_extend,
-                        )
-                    except StochasticForwardError:
-                        save_json_atomic(invalid, {"reason": "stochastic_forward"})
-                        raise
-                kv, hidden, _ = states[condition_step]
-                seed = int(
-                    canonical_hash({"identity": ident, "sample_index": index})[:16], 16
-                )
-                device = torch.device(model.device)
-                devices = (
-                    [
-                        device.index
-                        if device.index is not None
-                        else torch.cuda.current_device()
-                    ]
-                    if device.type == "cuda"
-                    else []
-                )
-                with torch.random.fork_rng(devices=devices):
-                    torch.manual_seed(seed)
-                    if devices:
-                        torch.cuda.manual_seed_all(seed)
-                    rng = {"seed": seed, "sample_index": index, "condition": condition}
-                    if condition in {"pe", "ple"}:
-                        branch, record = runner.execute_ple(item, kv, hidden[-1])
-                        record["condition"] = condition
-                    else:
-                        branch, record = getattr(runner, f"execute_{condition}")(
-                            item, kv
-                        )
-                record = dict(
-                    record,
-                    status="complete",
-                    sample_index=index,
-                    identity=ident,
-                    files=["hidden.pt"],
-                    top_p_applied=False,
-                    rng_provenance=rng,
-                )
-                use_case.storage.save_intervention_result(
-                    directory, ident, record, branch
-                )
-                if (
-                    record.get("error") is not None
-                    or record.get("error_msg") is not None
-                ):
-                    raise ValueError(
-                        f"Condition {condition} failed: {record.get('error_msg') or record.get('error')}"
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = None
+        for index, item in enumerate(dataset):
+            prepared = future.result() if future is not None else {}
+            future = None
+            if index + 1 < len(dataset):
+                next_index = index + 1
+                next_item = dataset[next_index]
+                next_sample = f"{next_index:06d}"
+                needed = set()
+                for condition in conditions:
+                    condition_step = 0 if condition == "pe" else step
+                    ident = result_identity(
+                        state.name, condition_step, condition, next_item, args, model
                     )
-            records.append(record)
+                    directory = (
+                        state
+                        / "samples"
+                        / next_sample
+                        / "results"
+                        / f"ls{condition_step}"
+                        / canonical_hash(ident)
+                        / condition
+                    )
+                    if not is_condition_complete(directory):
+                        needed.add(condition_step)
+                if needed:
+                    future = executor.submit(
+                        _prepare_sample, use_case.storage, state, next_sample, needed
+                    )
+            sample = f"{index:06d}"
+            base = state / "samples" / sample / "shared" / "ls0"
+            if is_condition_complete(base):
+                _, _, meta = use_case.storage.load_shared_segment(state, sample, 0)
+                _check_sample(meta, _sample_identity(model, args, item, index))
+            states = {}
+            if not is_condition_complete(base) and base.exists():
+                state_runner = copy.copy(runner)
+                state_runner.args = copy.copy(args)
+                state_runner.args.latent_steps = 0
+                try:
+                    states[0] = prepare_state(
+                        use_case.storage, state_runner, state, item, index, can_extend
+                    )
+                except StochasticForwardError:
+                    save_json_atomic(invalid, {"reason": "stochastic_forward"})
+                    raise
+            for condition in conditions:
+                condition_step = 0 if condition == "pe" else step
+                ident = result_identity(
+                    state.name, condition_step, condition, item, args, model
+                )
+                result_hash = canonical_hash(ident)
+                directory = (
+                    state
+                    / "samples"
+                    / sample
+                    / "results"
+                    / f"ls{condition_step}"
+                    / result_hash
+                    / condition
+                )
+                paths[condition].append(str(directory.relative_to(state)))
+                if is_condition_complete(directory):
+                    _, record = use_case.storage.load_intervention_result(
+                        directory, ident
+                    )
+                else:
+                    if condition_step not in states:
+                        state_runner = copy.copy(runner)
+                        state_runner.args = copy.copy(args)
+                        state_runner.args.latent_steps = condition_step
+                        try:
+                            states[condition_step] = prepare_state(
+                                use_case.storage,
+                                state_runner,
+                                state,
+                                item,
+                                index,
+                                can_extend,
+                                prepared,
+                            )
+                        except StochasticForwardError:
+                            save_json_atomic(invalid, {"reason": "stochastic_forward"})
+                            raise
+                    kv, hidden, _ = states[condition_step]
+                    seed = int(
+                        canonical_hash({"identity": ident, "sample_index": index})[:16],
+                        16,
+                    )
+                    device = torch.device(model.device)
+                    devices = (
+                        [
+                            device.index
+                            if device.index is not None
+                            else torch.cuda.current_device()
+                        ]
+                        if device.type == "cuda"
+                        else []
+                    )
+                    with torch.random.fork_rng(devices=devices):
+                        torch.manual_seed(seed)
+                        if devices:
+                            torch.cuda.manual_seed_all(seed)
+                        rng = {
+                            "seed": seed,
+                            "sample_index": index,
+                            "condition": condition,
+                        }
+                        if condition in {"pe", "ple"}:
+                            branch, record = runner.execute_ple(item, kv, hidden[-1])
+                            record["condition"] = condition
+                        else:
+                            branch, record = getattr(runner, f"execute_{condition}")(
+                                item, kv
+                            )
+                    record = dict(
+                        record,
+                        status="complete",
+                        sample_index=index,
+                        identity=ident,
+                        files=["hidden.pt"],
+                        top_p_applied=False,
+                        rng_provenance=rng,
+                    )
+                    use_case.storage.save_intervention_result(
+                        directory, ident, record, branch
+                    )
+                    if (
+                        record.get("error") is not None
+                        or record.get("error_msg") is not None
+                    ):
+                        raise ValueError(
+                            f"Condition {condition} failed: {record.get('error_msg') or record.get('error')}"
+                        )
+                records.append(record)
     for condition in conditions:
         subset = [record for record in records if record["condition"] == condition]
         condition_step = 0 if condition == "pe" else step

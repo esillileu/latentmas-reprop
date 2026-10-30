@@ -49,8 +49,18 @@ def prepare_state(
     item: dict[str, Any],
     index: int,
     can_extend: bool,
+    prepared: dict[int, Any] | None = None,
 ) -> tuple[Any, Any, dict[str, Any]]:
     args, model = runner.args, runner.model
+
+    def assemble(step: int) -> Any:
+        if prepared is not None and step in prepared:
+            result = prepared.pop(step)
+            if isinstance(result, Exception):
+                raise result
+            return result
+        return storage.assemble_shared_state(state, sample, step)
+
     sample, target = f"{index:06d}", int(getattr(args, "latent_steps", 10))
     expected = _sample_identity(model, args, item, index)
     steps = _available_steps(state, sample)
@@ -93,7 +103,7 @@ def prepare_state(
             )
 
         prefill_runner.compute_common_latent(item, checkpoint_callback=save_prefill)
-        return prepare_state(storage, runner, state, item, index, can_extend)
+        return prepare_state(storage, runner, state, item, index, can_extend, prepared)
     if (
         0 in steps
         and (state / "samples" / sample / "shared" / "ls0" / "result.json").is_file()
@@ -104,7 +114,7 @@ def prepare_state(
         base = None
     if base is not None:
         try:
-            kv, hidden, meta = storage.assemble_shared_state(state, sample, target)
+            kv, hidden, meta = assemble(target)
         except ValueError:
             pass
         else:
@@ -120,7 +130,7 @@ def prepare_state(
                         continue
                     try:
                         storage.load_shared_segment(state, sample, candidate)
-                        storage.assemble_shared_state(state, sample, candidate)
+                        assemble(candidate)
                     except ValueError:
                         continue
                     prior = candidate
@@ -146,9 +156,7 @@ def prepare_state(
             continue
         try:
             storage.load_shared_segment(state, sample, candidate)
-            initial_kv, initial_hidden, initial_meta = storage.assemble_shared_state(
-                state, sample, candidate
-            )
+            initial_kv, initial_hidden, initial_meta = assemble(candidate)
         except ValueError:
             continue
         initial_step = candidate
