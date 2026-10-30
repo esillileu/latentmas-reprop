@@ -1,4 +1,4 @@
-"""Application use case for LMAS Intervention Continuation Analysis (PLE, PLCE, PLPE)."""
+"""Application use case for intervention continuation analysis."""
 
 from typing import Any
 
@@ -14,11 +14,9 @@ from ..infrastructure.evaluators.evaluator import DEFAULT_EVALUATOR
 from ..infrastructure.models.model_wrapper import ModelWrapper
 from ..infrastructure.storage import FileStorage, get_file_storage
 
-CONDITIONS = ["ple", "plce", "plpe"]
-
 
 class InterventionContinuationUseCase:
-    """Orchestrates Common Latent calculation and branching across PLE, PLCE, PLPE."""
+    """Orchestrates shared latent calculation and intervention branches."""
 
     def __init__(
         self,

@@ -210,7 +210,7 @@ def validate_intervention_and_acquisition_args(
         if not getattr(
             parsed, "intervention_conditions", None
         ) or parsed.intervention_conditions == ["own", "cross", "zero"]:
-            parsed.intervention_conditions = ["pe", "ple", "plce", "plpe"]
+            parsed.intervention_conditions = None
     if parsed.representation_acquisition:
         if parsed.method != "latent_mas" or parsed.task != "secret_digit":
             parser.error(

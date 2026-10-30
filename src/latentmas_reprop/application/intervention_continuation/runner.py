@@ -11,13 +11,12 @@ from ...domain.services.kv_cache import (
     move_past_kv,
 )
 from ...domain.services.prompts import (
-    build_agent_message_hierarchical_latent_mas,
-    build_agent_message_sequential_latent_mas,
     build_intervention_p1_messages,
     resolve_p1_variant_id,
 )
 from .decoder import forward_intervention_prefix, run_explicit_generation
 from .determinism import deterministic_forward
+from .identity import intervention_messages
 
 
 class InterventionContinuationRunner:
@@ -170,6 +169,7 @@ class InterventionContinuationRunner:
         return hidden_tensor, {
             "condition": "ple",
             "intervention_type": "none",
+            "intervention_prompt": "",
             "intervention_length": 0,
             "intervention_token_ids": [],
             "intervention_tokens": [],
@@ -216,6 +216,7 @@ class InterventionContinuationRunner:
             "condition": "plce",
             "intervention_type": "control",
             "intervention_signal": sig,
+            "intervention_prompt": sig,
             "intervention_token_ids": c_ids[0].cpu().tolist(),
             "intervention_tokens": self.model.tokenizer.convert_ids_to_tokens(
                 c_ids[0].cpu().tolist()
@@ -235,27 +236,10 @@ class InterventionContinuationRunner:
 
     @torch.no_grad()
     def execute_plpe(
-        self, item: dict[str, Any], kv_snapshot: Any
+        self, item: dict[str, Any], kv_snapshot: Any, condition: str = "plpe"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """UC-02 condition plpe: P_1 -> L -> P_2 -> E (role/problem prompt intervention)."""
-        custom_p = getattr(self.args, "plpe_prompt", None)
-        if custom_p:
-            q_text = custom_p.format(question=item["question"])
-            messages = [{"role": "user", "content": q_text}]
-        else:
-            role = getattr(self.args, "receiver_role", "judger")
-            prompt_style = getattr(self.args, "prompt", "sequential")
-            builder = (
-                build_agent_message_hierarchical_latent_mas
-                if prompt_style == "hierarchical"
-                else build_agent_message_sequential_latent_mas
-            )
-            messages = builder(
-                role=role,
-                question=item["question"],
-                method="latent_mas",
-                args=self.args,
-            )
+        messages = intervention_messages(condition, item, self.args)
         prompts, p2_ids, p2_mask, p2_tokens = self.model.prepare_chat_batch(
             [messages], add_generation_prompt=True
         )
@@ -279,7 +263,11 @@ class InterventionContinuationRunner:
             else p2_hidden
         )
         return full_hidden, {
-            "condition": "plpe",
+            "condition": condition,
+            "receiver_role": getattr(self.args, "receiver_role", "judger")
+            if condition != "rqlqe"
+            and not (condition == "plpe" and getattr(self.args, "plpe_prompt", None))
+            else None,
             "intervention_type": "prompt",
             "intervention_prompt": prompts[0],
             "intervention_token_ids": p2_ids[0].cpu().tolist(),

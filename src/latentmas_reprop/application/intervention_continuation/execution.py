@@ -15,7 +15,9 @@ from .checkpoint import _available_steps, _check_sample, _sample_identity, prepa
 from .determinism import StochasticForwardError
 from .identity import (
     canonical_hash,
+    condition_name,
     ensure_state,
+    resolve_conditions,
     result_identity,
     state_identity,
     state_path,
@@ -51,13 +53,9 @@ def _prepare_sample(
 def execute(
     use_case: Any, model: Any, args: Any
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    from ...infrastructure.paths.resolver import get_git_commit_hash
     from .artifacts import (
         build_summary_dict,
-        log_to_mlflow_tracker,
         save_experiment_summary,
-        start_intervention_continuation_tracker,
-        trace_intervention_continuation_sample,
     )
     from .runner import InterventionContinuationRunner
 
@@ -78,17 +76,7 @@ def execute(
     limit = int(getattr(args, "max_samples", 0))
     if limit > 0:
         dataset = dataset[:limit]
-    raw = getattr(args, "intervention_conditions", None) or [
-        "pe",
-        "ple",
-        "plce",
-        "plpe",
-    ]
-    conditions = (
-        [c.strip() for c in raw.split(",")] if isinstance(raw, str) else list(raw)
-    )
-    if set(conditions) - {"pe", "ple", "plce", "plpe"}:
-        raise ValueError("Unknown intervention condition")
+    conditions = resolve_conditions(args)
     step = int(getattr(args, "latent_steps", 10))
     runner = InterventionContinuationRunner(model, args, use_case.evaluator_port)
     records = []
@@ -104,7 +92,7 @@ def execute(
                 next_sample = f"{next_index:06d}"
                 needed = set()
                 for condition in conditions:
-                    condition_step = 0 if condition == "pe" else step
+                    condition_step = 0 if condition in {"pe", "rqrqe"} else step
                     ident = result_identity(
                         state.name, condition_step, condition, next_item, args, model
                     )
@@ -141,7 +129,7 @@ def execute(
                     save_json_atomic(invalid, {"reason": "stochastic_forward"})
                     raise
             for condition in conditions:
-                condition_step = 0 if condition == "pe" else step
+                condition_step = 0 if condition in {"pe", "rqrqe"} else step
                 ident = result_identity(
                     state.name, condition_step, condition, item, args, model
                 )
@@ -205,12 +193,22 @@ def execute(
                         if condition in {"pe", "ple"}:
                             branch, record = runner.execute_ple(item, kv, hidden[-1])
                             record["condition"] = condition
+                        elif condition in {"plpe", "rqlre", "rqlqe", "rqrqe"}:
+                            branch, record = runner.execute_plpe(item, kv, condition)
                         else:
-                            branch, record = getattr(runner, f"execute_{condition}")(
-                                item, kv
-                            )
+                            branch, record = runner.execute_plce(item, kv)
+                    from ...domain.services.prompts import resolve_p1_variant_id
+
+                    variant = resolve_p1_variant_id(args)
+                    base_meta = load_json(base / "result.json")
                     record = dict(
                         record,
+                        condition_name=condition_name(condition, args),
+                        initial_role=variant
+                        if variant in {"planner", "critic", "refiner", "judger"}
+                        else None,
+                        initial_prompt=base_meta.get("prompt", ""),
+                        initial_prompt_token_ids=base_meta.get("prompt_token_ids", []),
                         status="complete",
                         sample_index=index,
                         identity=ident,
@@ -231,7 +229,7 @@ def execute(
                 records.append(record)
     for condition in conditions:
         subset = [record for record in records if record["condition"] == condition]
-        condition_step = 0 if condition == "pe" else step
+        condition_step = 0 if condition in {"pe", "rqrqe"} else step
         run_id = canonical_hash(
             {
                 "state": state.name,
@@ -241,7 +239,6 @@ def execute(
             }
         )
         run_dir = state / "runs" / run_id
-        new_run = not (run_dir / "summary.json").is_file()
         run_dir.mkdir(parents=True, exist_ok=True)
         config = {
             "state_path": str(state.relative_to(use_case.storage.base_dir)),
@@ -256,33 +253,17 @@ def execute(
             save_json_atomic(config_path, config)
         summary = build_summary_dict(subset, [condition], len(dataset), config)
         save_experiment_summary(run_dir, summary, subset)
-        if new_run and use_case.tracker_port:
-            relative = str(run_dir.relative_to(use_case.storage.base_dir))
-            git_hash = get_git_commit_hash()
-            started = start_intervention_continuation_tracker(
-                use_case.tracker_port, run_dir, relative, git_hash, args
-            )
-            for index, (item, record) in enumerate(zip(dataset, subset, strict=True)):
-                _, _, meta = use_case.storage.assemble_shared_state(
-                    state, f"{index:06d}", condition_step
-                )
-                trace_intervention_continuation_sample(
-                    use_case.tracker_port,
-                    args,
-                    index,
-                    f"{index:06d}",
-                    item,
-                    meta,
-                    {condition: record},
-                    git_hash,
-                )
-            log_to_mlflow_tracker(
-                use_case.tracker_port,
-                run_dir,
-                relative,
-                git_hash,
-                args,
-                summary,
-                run_already_started=started,
-            )
-    return build_summary_dict(records, conditions, len(dataset), vars(args)), records
+    summary = build_summary_dict(records, conditions, len(dataset), vars(args))
+    if use_case.tracker_port:
+        from .tracking import track_results
+
+        track_results(
+            use_case.tracker_port,
+            use_case.storage.base_dir,
+            state,
+            dataset,
+            args,
+            model,
+            summary["metrics"],
+        )
+    return summary, records

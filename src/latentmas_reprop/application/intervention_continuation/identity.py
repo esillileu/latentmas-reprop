@@ -120,6 +120,35 @@ def ensure_state(
     return True
 
 
+def intervention_messages(
+    condition: str, item: dict[str, Any], args: Any
+) -> list[dict[str, str]]:
+    if condition == "rqlqe":
+        return [{"role": "user", "content": f"Question: {item['question']}\n"}]
+    if condition == "rqlre":
+        role = getattr(args, "receiver_role", "judger")
+        return [
+            {
+                "role": "user",
+                "content": f"You are a {role.capitalize()} Agent. Continue using the preceding information.",
+            }
+        ]
+    custom = getattr(args, "plpe_prompt", None)
+    if custom:
+        return [{"role": "user", "content": custom.format(question=item["question"])}]
+    builder = (
+        build_agent_message_hierarchical_latent_mas
+        if getattr(args, "prompt", "sequential") == "hierarchical"
+        else build_agent_message_sequential_latent_mas
+    )
+    return builder(
+        role=getattr(args, "receiver_role", "judger"),
+        question=item["question"],
+        method="latent_mas",
+        args=args,
+    )
+
+
 def result_identity(
     state_hash: str,
     step: int,
@@ -149,24 +178,8 @@ def result_identity(
         payload["intervention_token_ids"] = model.tokenizer(
             payload["control_signal"], return_tensors="pt", add_special_tokens=False
         )["input_ids"][0].tolist()
-    if condition == "plpe":
-        custom = getattr(args, "plpe_prompt", None)
-        if custom:
-            messages = [
-                {"role": "user", "content": custom.format(question=item["question"])}
-            ]
-        else:
-            builder = (
-                build_agent_message_hierarchical_latent_mas
-                if getattr(args, "prompt", "sequential") == "hierarchical"
-                else build_agent_message_sequential_latent_mas
-            )
-            messages = builder(
-                role=getattr(args, "receiver_role", "judger"),
-                question=item["question"],
-                method="latent_mas",
-                args=args,
-            )
+    if condition in {"plpe", "rqlre", "rqlqe", "rqrqe"}:
+        messages = intervention_messages(condition, item, args)
         prompts, ids, _, _ = model.prepare_chat_batch(
             [messages], add_generation_prompt=True
         )
@@ -179,3 +192,59 @@ def result_identity(
             }
         )
     return payload
+
+
+def resolve_conditions(args: Any) -> list[str]:
+    variant = resolve_p1_variant_id(args)
+    defaults = (
+        ["qe", "qle"]
+        if variant == "question_only"
+        else ["rqe", "rqle", "rqlce", "rqlre", "rqlqe", "rqlrqe", "rqrqe"]
+        if variant in {"planner", "critic", "refiner", "judger"}
+        else ["pe", "ple", "plce", "plpe"]
+    )
+    if getattr(args, "plpe_prompt", None) and variant != "question_only":
+        defaults = [c for c in defaults if c not in {"rqlrqe", "rqrqe"}]
+        if "plpe" not in defaults:
+            defaults.append("plpe")
+    raw = getattr(args, "intervention_conditions", None) or defaults
+    conditions = (
+        [c.strip() for c in raw.split(",")] if isinstance(raw, str) else list(raw)
+    )
+    conditions = [str(c).strip().lower() for c in conditions]
+    aliases = {
+        "qe": "pe",
+        "rqe": "pe",
+        "qle": "ple",
+        "rqle": "ple",
+        "rqlce": "plce",
+        "rqlrqe": "plpe",
+    }
+    permitted = (
+        {"qe", "qle"}
+        if variant == "question_only"
+        else {"rqe", "rqle", "rqlce", "rqlre", "rqlqe", "rqlrqe", "rqrqe"}
+        if variant in {"planner", "critic", "refiner", "judger"}
+        else set()
+    )
+    if (set(conditions) - {"pe", "ple", "plce", "plpe"}) - permitted:
+        raise ValueError("Condition does not match P1 variant")
+    if getattr(args, "plpe_prompt", None) and {"rqlrqe", "rqrqe"} & set(conditions):
+        raise ValueError("Custom P2 cannot be classified as a role and question prompt")
+    conditions = list(dict.fromkeys(aliases.get(c, c) for c in conditions))
+    if set(conditions) - {"pe", "ple", "plce", "plpe", "rqlre", "rqlqe", "rqrqe"}:
+        raise ValueError("Unknown intervention condition")
+    return conditions
+
+
+def condition_name(condition: str, args: Any) -> str:
+    """Describe only conditions whose prompt structure is known."""
+    variant = resolve_p1_variant_id(args)
+    if variant == "question_only":
+        return {"pe": "QE", "ple": "QLE"}.get(condition, condition.upper())
+    if variant not in {"planner", "critic", "refiner", "judger"}:
+        return condition.upper()
+    names = {"pe": "RQE", "ple": "RQLE", "plce": "RQLCE", "plpe": "RQLRQE"}
+    if condition == "plpe" and getattr(args, "plpe_prompt", None):
+        return "PLPE"
+    return names.get(condition, condition.upper())
