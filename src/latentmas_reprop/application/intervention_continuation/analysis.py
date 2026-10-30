@@ -22,27 +22,18 @@ class SingleInterventionAnalyzer:
         self._lm_head = get_lm_head(model_module) if model_module else None
 
     def load_common_state(
-        self, run_id: str, sample_key: str
+        self, run_id: str, sample_key: str, step: int | None = None
     ) -> tuple[torch.Tensor, Any, dict[str, Any]]:
-        """Load common hidden trajectory, KV snapshot, and metadata."""
-        hidden = self.reader.load_tensor(run_id, "hidden", sample_key=sample_key)
-        kv = self.reader.load_tensor(run_id, "kv", sample_key=sample_key)
-        meta = self.reader.load_artifact(
-            run_id, f"samples/{sample_key}/shared/result.json"
-        )
+        """Load the assembled KV and full hidden trajectory."""
+        kv, hidden, meta = self.reader.load_intervention_state(run_id, sample_key, step)
         return hidden, kv, meta
 
     def load_condition_state(
-        self, run_id: str, sample_key: str, condition: str
+        self, run_id: str, sample_key: str, step: int, result_hash: str, condition: str
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """Load condition hidden trajectory and result record."""
-        hidden = self.reader.load_tensor(
-            run_id, "hidden", sample_key=sample_key, condition=condition
+        return self.reader.load_intervention_result(
+            run_id, sample_key, step, result_hash, condition
         )
-        meta = self.reader.load_artifact(
-            run_id, f"samples/{sample_key}/{condition}/result.json"
-        )
-        return hidden, meta
 
     def compute_latent_step_logits_and_entropy(
         self,

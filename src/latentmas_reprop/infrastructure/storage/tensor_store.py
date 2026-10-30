@@ -150,9 +150,6 @@ def save_condition_result(
     return save_json_atomic(cdir / "result.json", payload)
 
 
-
-
-
 class FileStorage:
     """File-based experiment storage rooted at PathResolver.experiments_dir."""
 
@@ -162,6 +159,14 @@ class FileStorage:
     @property
     def base_dir(self) -> Path:
         return self._resolver.experiments_dir
+
+    from .shared_segments import (
+        assemble_shared_state,
+        load_intervention_result,
+        load_shared_segment,
+        save_intervention_result,
+        save_shared_segment,
+    )
 
     def get_run_dir(self, run_id: str) -> Path:
         return self._resolver.get_experiment_dir(run_id)

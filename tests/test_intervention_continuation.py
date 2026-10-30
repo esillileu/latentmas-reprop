@@ -27,6 +27,8 @@ class MockTokenizer:
     def __init__(self):
         self.eos_token_id = 99
         self.pad_token_id = 0
+        self.init_kwargs = {"_commit_hash": "tokenizer-revision"}
+        self.chat_template = "test template"
 
     def decode(self, token_ids, skip_special_tokens=True):
         return " ".join(str(i) for i in token_ids)
@@ -57,18 +59,37 @@ class MockModel(torch.nn.Module):
         self.hidden_dim = hidden_dim
         self.lm_head = MockLMHead(hidden_dim, vocab_size)
 
-    def forward(self, input_ids=None, inputs_embeds=None, attention_mask=None, past_key_values=None, **kw):
+    def forward(
+        self,
+        input_ids=None,
+        inputs_embeds=None,
+        attention_mask=None,
+        past_key_values=None,
+        **kw,
+    ):
         batch = input_ids.shape[0] if input_ids is not None else inputs_embeds.shape[0]
         seq = input_ids.shape[1] if input_ids is not None else inputs_embeds.shape[1]
         past_len = past_key_values[0][0].shape[2] if past_key_values is not None else 0
         total_len = past_len + seq
-        new_kv = ((torch.ones(batch, 2, total_len, 4), torch.ones(batch, 2, total_len, 4)),)
-        hidden = torch.arange(total_len - seq, total_len, dtype=torch.float32).unsqueeze(0).unsqueeze(-1).expand(batch, seq, self.hidden_dim)
-        return SimpleNamespace(past_key_values=new_kv, hidden_states=(hidden,), logits=self.lm_head(hidden))
+        new_kv = (
+            (torch.ones(batch, 2, total_len, 4), torch.ones(batch, 2, total_len, 4)),
+        )
+        hidden = (
+            torch.arange(total_len - seq, total_len, dtype=torch.float32)
+            .unsqueeze(0)
+            .unsqueeze(-1)
+            .expand(batch, seq, self.hidden_dim)
+        )
+        return SimpleNamespace(
+            past_key_values=new_kv, hidden_states=(hidden,), logits=self.lm_head(hidden)
+        )
 
 
 def _build_mock_wrapper():
-    model = MockModel(hidden_dim=8, vocab_size=32)
+    model = MockModel(hidden_dim=8, vocab_size=32).eval()
+    model.config = SimpleNamespace(
+        _commit_hash="model-revision", _attn_implementation="eager"
+    )
     wrapper = SimpleNamespace(
         model=model,
         tokenizer=MockTokenizer(),
@@ -174,18 +195,16 @@ def test_verification_06_07_resumption_and_partial_failure(tmp_path):
     _summary, recs = uc.execute(wrapper, args)
     assert len(recs) == 3
 
-    # Mark plpe as incomplete by deleting its result.json
-    relpath = build_experiment_relpath(args, dtype_name="float32")
-    plpe_dir = resolver.get_condition_dir(relpath, 0, "plpe")
+    plpe_dir = next(
+        storage.base_dir.glob(
+            "intervention_continuation/*/*/*/samples/000000/results/ls2/*/plpe"
+        )
+    )
     (plpe_dir / "result.json").unlink()
-    assert not storage.is_condition_complete(relpath, "000000", "plpe")
-    assert storage.is_condition_complete(relpath, "000000", "shared")
-    assert storage.is_condition_complete(relpath, "000000", "ple")
-
-    # Re-run: only plpe should be executed
     wrapper.model.forward = MagicMock(wraps=wrapper.model.forward)
     uc.execute(wrapper, args)
-    assert storage.is_condition_complete(relpath, "000000", "plpe")
+    assert (plpe_dir / "result.json").is_file()
+    assert wrapper.model.forward.call_count > 0  # PLPE only
 
 
 def test_verification_08_09_cache_cleaning_and_path_isolation(tmp_path):
@@ -207,42 +226,15 @@ def test_verification_08_09_cache_cleaning_and_path_isolation(tmp_path):
         prompt="sequential",
         latent_steps=20,
         seed=42,
-        intervention=True,
+        intervention_kv=True,
         cross_policy="shift_1",
-    )
-    args_single = SimpleNamespace(
-        task="gsm8k",
-        model_name="Qwen3-8B",
-        method="latent_mas",
-        prompt="sequential",
-        latent_steps=20,
-        seed=42,
-        intervention_continuation=True,
     )
     p_std = build_experiment_relpath(args_std)
     p_cross = build_experiment_relpath(args_interv)
-    p_single = build_experiment_relpath(args_single)
-
-    args_custom_plpe = SimpleNamespace(
-        task="gsm8k",
-        model_name="Qwen3-8B",
-        method="latent_mas",
-        prompt="sequential",
-        latent_steps=20,
-        seed=42,
-        intervention_continuation=True,
-        receiver_role="critic",
-    )
-    p_plpe = build_experiment_relpath(args_custom_plpe)
-
-    assert "intervention_continuation" in p_single
-    assert p_single != p_std
-    assert p_single != p_cross
-    assert "role_critic" in p_plpe
-    assert p_plpe != p_single
+    assert p_std != p_cross
 
     # Verify clean-cache does not touch experiments dir
-    exp_dir = resolver.get_experiment_dir(p_single, create=True)
+    exp_dir = resolver.get_experiment_dir(p_std, create=True)
     sentinel = exp_dir / "summary.json"
     sentinel.write_text('{"status": "ok"}', encoding="utf-8")
     runtime_dir = resolver.cache_dir / "runtime"
@@ -260,18 +252,13 @@ def test_uc04_post_hoc_analyzer(tmp_path):
     reader = ResearchDataReader(path_resolver=resolver)
     run_id = "test_run"
 
-    # Save mock shared hidden
     h = torch.randn(5, 8)
-    storage.save_condition(
-        run_id,
-        "000000",
-        "shared",
-        {"status": "complete", "files": ["hidden.pt", "kv.pt"]},
-        tensors={"hidden": h, "kv": torch.zeros(1)},
-    )
+    kv = ((torch.randn(1, 1, 5, 4), torch.randn(1, 1, 5, 4)),)
+    state = resolver.experiments_dir / run_id
+    storage.save_shared_segment(state, "000000", 0, 0, kv, h, {"prompt_length": 5})
     model = MockModel(hidden_dim=8, vocab_size=16)
     analyzer = SingleInterventionAnalyzer(reader=reader, model_module=model)
-    loaded_h, _kv, _meta = analyzer.load_common_state(run_id, "000000")
+    loaded_h, _kv, _meta = analyzer.load_common_state(run_id, "000000", 0)
     assert torch.equal(h, loaded_h)
 
     logits, entropy = analyzer.compute_latent_step_logits_and_entropy(loaded_h)

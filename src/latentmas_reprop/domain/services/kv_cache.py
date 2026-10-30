@@ -58,13 +58,22 @@ def clone_past_kv(past_kv: Any) -> Any:
         for layer in past_kv.layers:
             if torch.is_tensor(getattr(layer, "keys", None)) and not layer.keys.is_leaf:
                 layer.keys = layer.keys.detach()
-            if torch.is_tensor(getattr(layer, "values", None)) and not layer.values.is_leaf:
+            if (
+                torch.is_tensor(getattr(layer, "values", None))
+                and not layer.values.is_leaf
+            ):
                 layer.values = layer.values.detach()
     elif isinstance(past_kv, (list, tuple)):
         past_kv = tuple(
-            tuple(t.detach() if torch.is_tensor(t) and not t.is_leaf else t for t in layer)
+            tuple(
+                t.detach() if torch.is_tensor(t) and not t.is_leaf else t for t in layer
+            )
             if isinstance(layer, (list, tuple))
-            else (layer.detach() if torch.is_tensor(layer) and not layer.is_leaf else layer)
+            else (
+                layer.detach()
+                if torch.is_tensor(layer) and not layer.is_leaf
+                else layer
+            )
             for layer in past_kv
         )
     return copy.deepcopy(past_kv)
@@ -157,4 +166,93 @@ def create_zero_past_kv(past_kv: Any) -> Any:
         if isinstance(layer, (list, tuple))
         else (torch.zeros_like(layer) if torch.is_tensor(layer) else layer)
         for layer in cloned
+    )
+
+
+def _dense_layers(cache: Any) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], bool]:
+    """Extract only cache types whose complete state is represented by dense K/V."""
+    from transformers.cache_utils import DynamicCache, DynamicLayer
+
+    dynamic = type(cache) is DynamicCache
+    if dynamic:
+        if getattr(cache, "offloading", False) or any(
+            type(layer) is not DynamicLayer for layer in cache.layers
+        ):
+            raise ValueError("Unsupported DynamicCache layer or offloading")
+        layers = [(layer.keys, layer.values) for layer in cache.layers]
+    elif isinstance(cache, tuple):
+        layers = list(cache)
+    else:
+        raise ValueError("Unsupported KV cache type")
+    if not layers:
+        raise ValueError("Empty KV cache")
+    length = None
+    for layer in layers:
+        if not isinstance(layer, (tuple, list)) or len(layer) != 2:
+            raise ValueError("Expected key and value per layer")
+        for tensor in layer:
+            if not torch.is_tensor(tensor) or tensor.ndim < 2:
+                raise ValueError("Expected dense KV tensors")
+            if length is None:
+                length = tensor.shape[-2]
+            if tensor.shape[-2] != length:
+                raise ValueError("Inconsistent KV sequence lengths")
+    return layers, dynamic
+
+
+def _build_dense_cache(
+    layers: list[tuple[torch.Tensor, torch.Tensor]], dynamic: bool
+) -> Any:
+    if dynamic:
+        from transformers.cache_utils import DynamicCache
+
+        return DynamicCache(ddp_cache_data=layers)
+    return tuple(layers)
+
+
+def slice_past_kv(cache: Any, start: int, end: int) -> Any:
+    """Return an independent CPU slice on the sequence axis."""
+    layers, dynamic = _dense_layers(cache)
+    length = layers[0][0].shape[-2]
+    if not 0 <= start <= end <= length:
+        raise ValueError("Invalid KV slice bounds")
+    return _build_dense_cache(
+        [
+            (
+                k[..., start:end, :].detach().cpu().clone(),
+                v[..., start:end, :].detach().cpu().clone(),
+            )
+            for k, v in layers
+        ],
+        dynamic,
+    )
+
+
+def concat_past_kv(segments: list[Any]) -> Any:
+    """Concatenate compatible dense cache segments without mutating them."""
+    if not segments:
+        raise ValueError("No KV segments")
+    extracted = [_dense_layers(segment) for segment in segments]
+    first, dynamic = extracted[0]
+    for layers, kind in extracted[1:]:
+        if kind != dynamic or len(layers) != len(first):
+            raise ValueError("Incompatible KV cache types or layer counts")
+        for reference, current in zip(first, layers, strict=True):
+            for a, b in zip(reference, current, strict=True):
+                if (
+                    a.dtype != b.dtype
+                    or a.shape[:-2] + a.shape[-1:] != b.shape[:-2] + b.shape[-1:]
+                ):
+                    raise ValueError("Incompatible KV tensor shape or dtype")
+    return _build_dense_cache(
+        [
+            tuple(
+                torch.cat(
+                    [layers[i][j].detach().cpu() for layers, _ in extracted], dim=-2
+                )
+                for j in range(2)
+            )
+            for i in range(len(first))
+        ],
+        dynamic,
     )

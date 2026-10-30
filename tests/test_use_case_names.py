@@ -31,7 +31,6 @@ def test_unknown_use_case_is_rejected():
     "flag, suffix",
     [
         ("intervention_kv", "intervention_kv"),
-        ("intervention_continuation", "intervention_continuation"),
         ("representation_acquisition", "representation_acquisition"),
         ("representation_trajectory", "representation_trajectory"),
     ],

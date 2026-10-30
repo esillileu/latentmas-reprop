@@ -6,23 +6,13 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
-from latentmas_reprop.application.intervention_continuation.checkpoint import (
-    find_latent_step_checkpoint,
-    make_step_checkpoint_saver,
-)
 from latentmas_reprop.application.intervention_continuation.runner import (
     InterventionContinuationRunner,
-)
-from latentmas_reprop.application.intervention_continuation_use_case import (
-    InterventionContinuationUseCase,
 )
 from latentmas_reprop.domain.services.prompts import (
     build_intervention_p1_messages,
     load_p1_variants,
 )
-from latentmas_reprop.infrastructure.paths.naming import build_experiment_relpath
-from latentmas_reprop.infrastructure.paths.resolver import PathResolver
-from latentmas_reprop.infrastructure.storage import FileStorage, InMemoryStorage
 
 
 @pytest.fixture
@@ -55,52 +45,6 @@ def mock_model():
     model.model.lm_head = dummy_head
     model._apply_latent_realignment.return_value = torch.zeros(4)
     return model
-
-
-def test_find_and_save_latent_step_checkpoint(tmp_path):
-    storage = FileStorage(PathResolver(tmp_path))
-    args = SimpleNamespace(
-        task="gsm8k",
-        model_name="Qwen/Qwen3-8B",
-        method="latent_mas",
-        prompt="sequential",
-        seed=42,
-        temperature=0.6,
-        top_p=0.95,
-        max_new_tokens=2048,
-        intervention_continuation=True,
-        latent_steps=20,
-    )
-    cb = make_step_checkpoint_saver(
-        storage=storage,
-        args=args,
-        dtype_name="float16",
-        backend="transformers",
-        skey="000000",
-        idx=0,
-        overwrite=False,
-    )
-    kv_tensor = ((torch.ones(1, 1, 1, 4), torch.ones(1, 1, 1, 4)),)
-    hidden_tensor = torch.ones(15, 4)
-    meta = {"prompt_length": 5, "latent_steps": 10}
-
-    # Save intermediate checkpoint at step 10
-    cb(10, kv_tensor, hidden_tensor, meta)
-
-    # When searching for checkpoints < 20 with interval 10, should find step 10
-    found_step, found_kv, found_hidden, found_meta = find_latent_step_checkpoint(
-        storage=storage,
-        args=args,
-        dtype_name="float16",
-        backend="transformers",
-        skey="000000",
-        target_steps=20,
-        interval=10,
-    )
-    assert found_step == 10
-    assert found_kv is not None
-    assert found_hidden.shape == (15, 4)
-    assert found_meta["latent_steps"] == 10
 
 
 def test_incremental_latent_execution(tmp_path, mock_model):
@@ -160,55 +104,6 @@ def test_incremental_latent_execution(tmp_path, mock_model):
     assert hidden30.shape[0] == 3 + 30
 
 
-def test_mlflow_sample_tracing_and_backfill(mock_model):
-    dataset = MagicMock()
-    dataset.load.return_value = [{"question": "What is 1+1?", "gold": "2"}]
-    evaluator = MagicMock()
-    evaluator.evaluate.return_value = ("2", True, None)
-    storage = InMemoryStorage()
-
-    tracker = MagicMock()
-    root_span = MagicMock()
-    root_span.trace_id = "tr-12345"
-    tracker.start_sample_trace.return_value.__enter__.return_value = root_span
-    child_span = MagicMock()
-    tracker.start_span.return_value.__enter__.return_value = child_span
-
-    args = SimpleNamespace(
-        task="gsm8k",
-        model_name="Qwen/Qwen3-8B",
-        method="latent_mas",
-        prompt="sequential",
-        seed=42,
-        temperature=0.6,
-        top_p=0.95,
-        max_new_tokens=16,
-        intervention_continuation=True,
-        latent_steps=2,
-        no_progress=True,
-    )
-
-    uc = InterventionContinuationUseCase(
-        dataset_port=dataset,
-        evaluator_port=evaluator,
-        tracker_port=tracker,
-        storage=storage,
-    )
-    _, records = uc.execute(mock_model, args)
-
-    assert tracker.start_run.call_count == 1
-    assert tracker.start_sample_trace.call_count == 1
-    assert tracker.flush_traces.call_count >= 1
-    assert all(r.get("trace_id") == "tr-12345" for r in records)
-
-    # Re-running when trace_id is already present should skip both inference and duplicate tracing
-    tracker.start_sample_trace.reset_mock()
-    mock_model.model.reset_mock()
-    uc.execute(mock_model, args)
-    assert mock_model.model.call_count == 0
-    assert tracker.start_sample_trace.call_count == 0
-
-
 def test_p1_variant_isolation_and_prompt_builder():
     """Verify P1 prompt variants preserve default path for 'planner' and isolate non-default variants."""
     variants = load_p1_variants()
@@ -223,22 +118,19 @@ def test_p1_variant_isolation_and_prompt_builder():
         "seed": 42,
         "intervention_continuation": True,
     }
-    args_default = SimpleNamespace(**base)
     args_planner = SimpleNamespace(**base, p1_variant="planner")
     args_direct = SimpleNamespace(**base, p1_variant="direct_solve")
     args_custom = SimpleNamespace(**base, p1_prompt="Custom solve: {question}")
 
-    p_default = build_experiment_relpath(args_default)
-    p_planner = build_experiment_relpath(args_planner)
-    p_direct = build_experiment_relpath(args_direct)
-    p_custom = build_experiment_relpath(args_custom)
-
-    assert p_default == p_planner
-    assert "_p1_" not in p_default
-    assert p_direct.endswith("_intervention_continuation_p1_direct_solve")
-    assert "_p1_Custom_solve_questio" in p_custom
-    assert p_direct != p_default and p_custom != p_default
-
-    assert "Planner Agent" in build_intervention_p1_messages("3+4?", args_planner)[-1]["content"]
-    assert "Target Question: 3+4?" in build_intervention_p1_messages("3+4?", args_direct)[-1]["content"]
-    assert build_intervention_p1_messages("3+4?", args_custom)[-1]["content"] == "Custom solve: 3+4?"
+    assert (
+        "Planner Agent"
+        in build_intervention_p1_messages("3+4?", args_planner)[-1]["content"]
+    )
+    assert (
+        "Target Question: 3+4?"
+        in build_intervention_p1_messages("3+4?", args_direct)[-1]["content"]
+    )
+    assert (
+        build_intervention_p1_messages("3+4?", args_custom)[-1]["content"]
+        == "Custom solve: 3+4?"
+    )

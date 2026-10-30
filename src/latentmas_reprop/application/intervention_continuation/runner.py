@@ -41,7 +41,7 @@ class InterventionContinuationRunner:
         interval = int(getattr(self.args, "latent_step_checkpoint_interval", 10))
         show_prog = not bool(getattr(self.args, "no_progress", False))
 
-        if initial_kv is not None and initial_hiddens is not None and initial_step > 0:
+        if initial_kv is not None and initial_hiddens is not None:
             past = move_past_kv(clone_past_kv(initial_kv), self.model.device)
             last_hidden = initial_hiddens[-1:, :].to(self.model.device)
             prompt_len = int(
@@ -85,6 +85,14 @@ class InterventionContinuationRunner:
                 "prompt_length": int(prompt_hidden.shape[0]),
             }
 
+        if checkpoint_callback and initial_kv is None:
+            checkpoint_callback(
+                0,
+                move_past_kv(clone_past_kv(past), "cpu"),
+                prompt_hidden,
+                dict(meta, latent_steps=0),
+            )
+
         start_step = initial_step + 1
         latent_iter = tqdm(
             range(start_step, latent_steps + 1),
@@ -115,11 +123,18 @@ class InterventionContinuationRunner:
             latent_hiddens.append(step_hidden.detach().cpu())
             last_hidden = step_hidden.unsqueeze(0)
 
-            if checkpoint_callback and interval > 0 and (step % interval == 0) and step < latent_steps:
+            if (
+                checkpoint_callback
+                and interval > 0
+                and (step % interval == 0)
+                and step < latent_steps
+            ):
                 cur_stack = torch.stack(latent_hiddens, dim=0)
                 cur_common = torch.cat([prompt_hidden, cur_stack], dim=0)
                 cur_kv = move_past_kv(clone_past_kv(past), "cpu")
-                checkpoint_callback(step, cur_kv, cur_common, dict(meta, latent_steps=step))
+                checkpoint_callback(
+                    step, cur_kv, cur_common, dict(meta, latent_steps=step)
+                )
 
         latent_stack = (
             torch.stack(latent_hiddens, dim=0)
@@ -232,7 +247,10 @@ class InterventionContinuationRunner:
                 else build_agent_message_sequential_latent_mas
             )
             messages = builder(
-                role=role, question=item["question"], method="latent_mas", args=self.args
+                role=role,
+                question=item["question"],
+                method="latent_mas",
+                args=self.args,
             )
         prompts, p2_ids, p2_mask, p2_tokens = self.model.prepare_chat_batch(
             [messages], add_generation_prompt=True

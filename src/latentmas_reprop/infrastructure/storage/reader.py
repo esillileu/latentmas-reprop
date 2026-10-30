@@ -82,9 +82,8 @@ class ResearchDataReader:
                 tag_dir = run.data.tags.get("data_dir")
                 if tag_dir:
                     return Path(tag_dir)
-                alt_id = (
-                    run.data.tags.get("rel_dir")
-                    or run.data.tags.get("resumed_from_run_id")
+                alt_id = run.data.tags.get("rel_dir") or run.data.tags.get(
+                    "resumed_from_run_id"
                 )
                 if alt_id:
                     _validate_safe_path(alt_id, "rel_dir")
@@ -104,6 +103,54 @@ class ResearchDataReader:
 
         clean_rel = str(run_id).strip("/\\")
         return self.resolver.experiments_dir / clean_rel
+
+    def _intervention_state_dir(
+        self, run_or_state: str
+    ) -> tuple[Path, dict[str, Any] | None]:
+        path = self.get_run_data_dir(run_or_state)
+        config_path = path / "config.json"
+        if config_path.is_file():
+            config = load_json(config_path)
+            relative = _validate_safe_relpath(config["state_path"], "state_path")
+            return self.resolver.experiments_dir / relative, config
+        return path, None
+
+    def load_intervention_state(
+        self, run_or_state: str, sample: str, step: int | None = None
+    ) -> tuple[Any, torch.Tensor, dict[str, Any]]:
+        _validate_safe_name(sample, "sample")
+        state, config = self._intervention_state_dir(run_or_state)
+        if step is None:
+            if config is None:
+                raise ValueError("A step is required for a state path")
+            step = int(config["step"])
+        return self.tensor_store.assemble_shared_state(state, sample, step)
+
+    def load_intervention_result(
+        self,
+        run_or_state: str,
+        sample: str,
+        step: int,
+        result_hash: str,
+        condition: str,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        for value, name in (
+            (sample, "sample"),
+            (result_hash, "result_hash"),
+            (condition, "condition"),
+        ):
+            _validate_safe_name(value, name)
+        state, _ = self._intervention_state_dir(run_or_state)
+        directory = (
+            state
+            / "samples"
+            / sample
+            / "results"
+            / f"ls{step}"
+            / result_hash
+            / condition
+        )
+        return self.tensor_store.load_intervention_result(directory)
 
     def load_artifact(self, run_id: str, artifact_path: str) -> Any:
         """Load an artifact (JSON, JSONL, YAML) from MLflow or local run storage."""
