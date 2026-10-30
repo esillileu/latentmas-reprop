@@ -1,6 +1,6 @@
-# LMAS Intervention Continuation Analysis (PLE, PLCE, PLPE)
+# LMAS Intervention Continuation Analysis (PE, PLE, PLCE, PLPE)
 
-이 문서는 비학습 hidden-state feedback을 수행한 동일한 잠재 계산 상태($P_1 \to L_1 \to \dots \to L_T$)에서 세 가지 조건(`ple`, `plce`, `plpe`)으로 독립 분기하여 명시적 계산 전환 및 프롬프트 개입 시 발생하는 계산적 현상을 관찰하는 **Intervention Continuation Analysis**의 실행, 설정, 저장 구조 및 증분 재개(Incremental Resumption) 명세를 설명합니다.
+이 문서는 비학습 hidden-state feedback을 수행한 동일한 잠재 계산 상태($P_1 \to L_1 \to \dots \to L_T$)에서 네 가지 조건(`pe`, `ple`, `plce`, `plpe`)으로 독립 분기하여 명시적 계산 전환 및 프롬프트 개입 시 발생하는 계산적 현상을 관찰하는 **Intervention Continuation Analysis**의 실행, 설정, 저장 구조 및 증분 재개(Incremental Resumption) 명세를 설명합니다.
 
 ---
 
@@ -10,6 +10,7 @@
 * **실행 조건**:
   | 조건 | 계산 구조 | 개입 내용 | 설명 |
   |---|---|---|---|
+  | `pe` | $P_1 \to E$ | 추가 입력 없음 | prompt prefill 상태에서 직접 디코딩 |
   | `ple` | $P_1 \to L \to E$ | 추가 입력 없음 | $L_T$ 상태에서 추가 토큰 개입 없이 직접 명시적 디코딩 수행 |
   | `plce` | $P_1 \to L \to C \to E$ | 제어 신호 ($C$) | 지정된 제어 신호(기본값: `\nSolution:`) 주입 후 디코딩 |
   | `plpe` | $P_1 \to L \to P_2 \to E$ | 역할 및 문제 프롬프트 ($P_2$) | LatentMAS 원본 수신 에이전트(기본값: Judger) 역할 지시문 및 목표 문제 재제시 후 디코딩 |
@@ -53,15 +54,15 @@ flowchart TD
 * 상위 Planner 프롬프트($P_1$)로부터 $T$개의 잠재 스텝($L_1 \to \dots \to L_T$)을 수행합니다.
 * 샘플당 단 1회만 계산하며, 분기 직전 전체 KV 캐시 스냅샷(`kv.pt`)과 프롬프트 및 각 잠재 스텝의 최종 히든 벡터(`hidden.pt`)를 저장합니다.
 
-### UC-02. 세 조건으로 독립 분기
-* 모든 조건은 `shared`에서 저장된 동일한 분기 직전 상태를 복제(`clone_past_kv`)하여 시작합니다.
+### UC-02. 네 조건으로 독립 분기
+* PE는 `ls0`의 prompt KV와 마지막 prompt hidden에서, 나머지 조건은 요청한 `lsN`에서 시작합니다. 각 분기는 KV를 복제합니다.
 * 분기 이후 생성되는 토큰과 KV 상태는 서로 완전히 독립적으로 갱신됩니다.
 * 개입 토큰 및 생성 구간의 위치별 최종 히든 벡터를 1:1 대응하여 기록합니다.
 
 ### UC-03. 완료 판정 및 재실행 정책
-* 조건별 `result.json`과 필수 파일(`hidden.pt`, `kv.pt`)의 존재 여부가 완료 판정의 유일한 진실 공급원(Source of Truth)입니다.
+* 조건별 `result.json`과 필수 파일(`hidden.pt`)의 존재 여부가 완료 판정의 유일한 진실 공급원(Source of Truth)입니다.
 * 중단 후 재실행 시 완료된 조건은 건너뛰고 미완료된 조건만 계산합니다.
-* `--overwrite` 플래그가 지정된 경우에만 해당 샘플/조건을 재계산합니다.
+* `--overwrite`는 지원하지 않습니다. 다른 결과가 필요하면 별도 저장 루트를 사용합니다.
 
 ### UC-04. 사후 분석
 * 원본 추론을 재실행하지 않고, `ResearchDataReader`를 통해 저장된 `hidden.pt`와 `kv.pt`를 직접 로드하여 로짓/엔트로피 복원, 상태 변화 분석, 추가 개입 실험을 수행합니다.
@@ -83,42 +84,18 @@ flowchart TD
 
 ---
 
-## 5. 영구 저장 구조 (저장 정책 v2.1)
+## 5. 영구 저장 구조
 
-결정론적 5단계 경로 구조(`storage/experiments/<task>/<model>/<method>/<prompt>/<params>/`)를 엄격히 준수합니다:
+`storage/experiments/intervention_continuation/<task>/<model>/<state-hash>/` 아래에
+샘플별 `shared/ls0`과 `shared/lsN` 구간을 저장합니다. `ls0`은 전체 prompt KV이고,
+각 `lsN`은 이전 저장 경계 이후의 KV 구간과 전체 hidden을 포함합니다.
+조건 결과는 `samples/<sample>/results/lsN/<result-hash>/<condition>/`에,
+조건별 요약과 reader 참조는 `runs/<run-hash>/`에 저장합니다. PE의 N은 항상 0입니다.
+상태와 결과 식별 및 구간 조립 계약은 [리팩터링 설계](../intervention_continuation_refactor.md)를 참조하세요.
 
-```text
-storage/experiments/gsm8k/Qwen3-8B/latent_mas/sequential/ls20_seed42_temp0.6_top0.95_mt2048_float16_intervention_continuation/
-  ├── config.json
-  ├── summary.json
-  ├── samples.jsonl
-  └── samples/
-        ├── 000000/
-        │     ├── shared/
-        │     │     ├── hidden.pt     # 프롬프트 + 20스텝 잠재 히든 궤적
-        │     │     ├── kv.pt         # 분기점 직전 전체 KV 캐시 스냅샷
-        │     │     └── result.json   # 공통 구간 메타데이터
-        │     ├── ple/
-        │     │     ├── hidden.pt     # 생성 토큰별 히든 벡터
-        │     │     └── result.json   # 생성 텍스트, 정답 여부, 평가 메타데이터
-        │     ├── plce/
-        │     │     ├── hidden.pt     # 제어 신호 + 생성 토큰 히든 벡터
-        │     │     └── result.json
-        │     └── plpe/
-        │           ├── hidden.pt     # Judger 프롬프트 + 생성 토큰 히든 벡터
-        │           └── result.json
-        └── 000001/
-              └── ...
-```
-
-### 경로 격리 규칙
-바리언트 옵션 변경 시 서로 다른 계산 결과가 덮어써지지 않도록 경로 파라미터가 자동으로 격리됩니다:
-* 기본 (`p1_variant: "planner"`): `..._intervention_continuation` (기존 실행 결과와 완벽히 호환)
-* 첫 번째 프롬프트($P_1$) 바리언트 변경 시 (`--p1_variant`): `..._intervention_continuation_p1_<variant>`
-* 커스텀 첫 번째 프롬프트($P_1$) 지정 시 (`--p1_prompt`): `..._intervention_continuation_p1_<clean_prompt>`
-* 제어 신호 변경 시 (`--control_signal`): `..._intervention_continuation_sig_<clean_sig>`
-* 수신자 역할 변경 시 (`--receiver_role`): `..._intervention_continuation_role_<role>`
-* 커스텀 수신자 프롬프트($P_2$) 지정 시 (`--plpe_prompt`): `..._intervention_continuation_plpe_<clean_prompt>`
+디코딩 RNG는 결과 식별과 샘플 인덱스에서 고정하므로 조건 순서나 완료된 결과의
+건너뛰기에 영향을 받지 않습니다. 요청한 `top_p`는 결과 식별에 포함되지만 현재
+디코더의 샘플링에는 적용되지 않습니다.
 
 ---
 
@@ -145,7 +122,7 @@ top_p: 0.95
 seed: 42
 intervention_continuation: true
 p1_variant: "planner"
-intervention_conditions: "ple,plce,plpe"
+intervention_conditions: "pe,ple,plce,plpe"
 control_signal: "\nSolution:"
 receiver_role: "judger"
 latent_step_checkpoint_interval: 10

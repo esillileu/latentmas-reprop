@@ -193,7 +193,7 @@ def test_verification_06_07_resumption_and_partial_failure(tmp_path):
         evaluator_port=evaluator,
     )
     _summary, recs = uc.execute(wrapper, args)
-    assert len(recs) == 3
+    assert len(recs) == 4
 
     plpe_dir = next(
         storage.base_dir.glob(

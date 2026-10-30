@@ -1,5 +1,6 @@
 """Persist and reuse intervention continuation states and condition results."""
 
+import copy
 from typing import Any
 
 import torch
@@ -9,7 +10,7 @@ from ...infrastructure.storage.tensor_store import (
     load_json,
     save_json_atomic,
 )
-from .checkpoint import prepare_state
+from .checkpoint import _check_sample, _sample_identity, prepare_state
 from .determinism import StochasticForwardError
 from .identity import (
     canonical_hash,
@@ -50,11 +51,16 @@ def execute(
     limit = int(getattr(args, "max_samples", 0))
     if limit > 0:
         dataset = dataset[:limit]
-    raw = getattr(args, "intervention_conditions", None) or ["ple", "plce", "plpe"]
+    raw = getattr(args, "intervention_conditions", None) or [
+        "pe",
+        "ple",
+        "plce",
+        "plpe",
+    ]
     conditions = (
         [c.strip() for c in raw.split(",")] if isinstance(raw, str) else list(raw)
     )
-    if set(conditions) - {"ple", "plce", "plpe"}:
+    if set(conditions) - {"pe", "ple", "plce", "plpe"}:
         raise ValueError("Unknown intervention condition")
     step = int(getattr(args, "latent_steps", 10))
     runner = InterventionContinuationRunner(model, args, use_case.evaluator_port)
@@ -62,22 +68,34 @@ def execute(
     paths = {condition: [] for condition in conditions}
     for index, item in enumerate(dataset):
         sample = f"{index:06d}"
-        try:
-            kv, hidden, _ = prepare_state(
-                use_case.storage, runner, state, item, index, can_extend
-            )
-        except StochasticForwardError:
-            save_json_atomic(invalid, {"reason": "stochastic_forward"})
-            raise
+        base = state / "samples" / sample / "shared" / "ls0"
+        if is_condition_complete(base):
+            _, _, meta = use_case.storage.load_shared_segment(state, sample, 0)
+            _check_sample(meta, _sample_identity(model, args, item, index))
+        states = {}
+        if not is_condition_complete(base) and base.exists():
+            state_runner = copy.copy(runner)
+            state_runner.args = copy.copy(args)
+            state_runner.args.latent_steps = 0
+            try:
+                states[0] = prepare_state(
+                    use_case.storage, state_runner, state, item, index, can_extend
+                )
+            except StochasticForwardError:
+                save_json_atomic(invalid, {"reason": "stochastic_forward"})
+                raise
         for condition in conditions:
-            ident = result_identity(state.name, step, condition, item, args, model)
+            condition_step = 0 if condition == "pe" else step
+            ident = result_identity(
+                state.name, condition_step, condition, item, args, model
+            )
             result_hash = canonical_hash(ident)
             directory = (
                 state
                 / "samples"
                 / sample
                 / "results"
-                / f"ls{step}"
+                / f"ls{condition_step}"
                 / result_hash
                 / condition
             )
@@ -85,20 +103,48 @@ def execute(
             if is_condition_complete(directory):
                 _, record = use_case.storage.load_intervention_result(directory, ident)
             else:
-                rng = {
-                    "cpu": torch.get_rng_state().tolist(),
-                    "order": {
-                        "sample_index": index,
-                        "condition": condition,
-                        "conditions": conditions,
-                    },
-                }
-                if torch.device(model.device).type == "cuda":
-                    rng["cuda"] = torch.cuda.get_rng_state(model.device).tolist()
-                if condition == "ple":
-                    branch, record = runner.execute_ple(item, kv, hidden[-1])
-                else:
-                    branch, record = getattr(runner, f"execute_{condition}")(item, kv)
+                if condition_step not in states:
+                    state_runner = copy.copy(runner)
+                    state_runner.args = copy.copy(args)
+                    state_runner.args.latent_steps = condition_step
+                    try:
+                        states[condition_step] = prepare_state(
+                            use_case.storage,
+                            state_runner,
+                            state,
+                            item,
+                            index,
+                            can_extend,
+                        )
+                    except StochasticForwardError:
+                        save_json_atomic(invalid, {"reason": "stochastic_forward"})
+                        raise
+                kv, hidden, _ = states[condition_step]
+                seed = int(
+                    canonical_hash({"identity": ident, "sample_index": index})[:16], 16
+                )
+                device = torch.device(model.device)
+                devices = (
+                    [
+                        device.index
+                        if device.index is not None
+                        else torch.cuda.current_device()
+                    ]
+                    if device.type == "cuda"
+                    else []
+                )
+                with torch.random.fork_rng(devices=devices):
+                    torch.manual_seed(seed)
+                    if devices:
+                        torch.cuda.manual_seed_all(seed)
+                    rng = {"seed": seed, "sample_index": index, "condition": condition}
+                    if condition in {"pe", "ple"}:
+                        branch, record = runner.execute_ple(item, kv, hidden[-1])
+                        record["condition"] = condition
+                    else:
+                        branch, record = getattr(runner, f"execute_{condition}")(
+                            item, kv
+                        )
                 record = dict(
                     record,
                     status="complete",
@@ -121,10 +167,11 @@ def execute(
             records.append(record)
     for condition in conditions:
         subset = [record for record in records if record["condition"] == condition]
+        condition_step = 0 if condition == "pe" else step
         run_id = canonical_hash(
             {
                 "state": state.name,
-                "step": step,
+                "step": condition_step,
                 "condition": condition,
                 "results": paths[condition],
             }
@@ -134,7 +181,7 @@ def execute(
         run_dir.mkdir(parents=True, exist_ok=True)
         config = {
             "state_path": str(state.relative_to(use_case.storage.base_dir)),
-            "step": step,
+            "step": condition_step,
             "condition": condition,
             "result_paths": paths[condition],
         }
@@ -153,7 +200,7 @@ def execute(
             )
             for index, (item, record) in enumerate(zip(dataset, subset, strict=True)):
                 _, _, meta = use_case.storage.assemble_shared_state(
-                    state, f"{index:06d}", step
+                    state, f"{index:06d}", condition_step
                 )
                 trace_intervention_continuation_sample(
                     use_case.tracker_port,

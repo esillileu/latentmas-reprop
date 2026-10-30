@@ -138,6 +138,7 @@ def result_identity(
         "max_new_tokens": int(getattr(args, "max_new_tokens", 2048)),
         "temperature": float(getattr(args, "temperature", 0.6)),
         "top_p": float(getattr(args, "top_p", 0.95)),
+        "rng_policy": "sample_condition_v1",
         "decoder": hashlib.sha256(
             (Path(__file__).parent / "decoder.py").read_bytes()
         ).hexdigest(),

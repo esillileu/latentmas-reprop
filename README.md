@@ -103,14 +103,14 @@ just analyze-representation-sender-probe \
 
 The replacement is created and verified before the legacy run is soft-deleted.
 
-### Intervention Continuation Analysis (PLE, PLCE, PLPE)
+### Intervention Continuation Analysis (PE, PLE, PLCE, PLPE)
 Run single intervention analysis decomposing explicit decoding from common latent representations:
 
 ```bash
 CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38
 ```
 
-This branches into `ple` (direct decoding), `plce` (control signal), and `plpe` (role/prompt) from the same $P_1 \to L_1 \dots \to L_T$ state, with 10-step automatic intermediate checkpointing and incremental resumption. See [Intervention Continuation Analysis](docs/use_cases/intervention_continuation.md) for detailed specifications.
+This decodes `pe` directly from the prompt state and branches into `ple` (direct decoding), `plce` (control signal), and `plpe` (role/prompt) from the same $P_1 \to L_1 \dots \to L_T$ state, with 10-step automatic intermediate checkpointing and incremental resumption. See [Intervention Continuation Analysis](docs/use_cases/intervention_continuation.md) for detailed specifications.
 
 ### 3. Developer Commands
 ```bash

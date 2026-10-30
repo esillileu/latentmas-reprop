@@ -204,16 +204,22 @@ def validate_intervention_and_acquisition_args(
         )
     if getattr(parsed, "intervention_continuation", False):
         if parsed.representation_acquisition or parsed.intervention_kv:
-            parser.error("--intervention_continuation is mutually exclusive with other harnesses")
-        if not getattr(parsed, "intervention_conditions", None) or parsed.intervention_conditions == ["own", "cross", "zero"]:
-            parsed.intervention_conditions = ["ple", "plce", "plpe"]
+            parser.error(
+                "--intervention_continuation is mutually exclusive with other harnesses"
+            )
+        if not getattr(
+            parsed, "intervention_conditions", None
+        ) or parsed.intervention_conditions == ["own", "cross", "zero"]:
+            parsed.intervention_conditions = ["pe", "ple", "plce", "plpe"]
     if parsed.representation_acquisition:
         if parsed.method != "latent_mas" or parsed.task != "secret_digit":
             parser.error(
                 "--representation_acquisition requires --method latent_mas --task secret_digit"
             )
         if parsed.use_vllm or parsed.latent_steps <= 0:
-            parser.error("--representation_acquisition requires transformers and --latent_steps > 0")
+            parser.error(
+                "--representation_acquisition requires transformers and --latent_steps > 0"
+            )
         if parsed.acquisition_cross_policy != "different_digit_shift_v1":
             parser.error("unsupported --acquisition_cross_policy")
         if "cross" in parsed.acquisition_conditions and parsed.max_samples < 2:
