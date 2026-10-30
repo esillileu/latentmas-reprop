@@ -166,3 +166,28 @@ def test_prefetch_overlaps_decode_and_propagates_errors(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="prefetch failed"):
         uc.execute(wrapper, args)
     assert calls == ["Q1"]
+
+
+def test_condition_aliases_and_intervention_content():
+    from latentmas_reprop.application.intervention_continuation.identity import (
+        intervention_messages,
+        resolve_conditions,
+    )
+
+    args = SimpleNamespace(model_name="Qwen/mock", task="gsm8k")
+    assert resolve_conditions(args) == [
+        "pe",
+        "ple",
+        "plce",
+        "rqlre",
+        "rqlqe",
+        "plpe",
+        "rqrqe",
+    ]
+    args.p1_variant = "question_only"
+    assert resolve_conditions(args) == ["pe", "ple"]
+    item = {"question": "Distinct question text"}
+    role = intervention_messages("rqlre", item, args)[0]["content"]
+    question = intervention_messages("rqlqe", item, args)[0]["content"]
+    assert "Judger" in role and item["question"] not in role
+    assert item["question"] in question and "Judger" not in question

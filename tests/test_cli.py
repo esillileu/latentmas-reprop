@@ -158,3 +158,36 @@ def test_cli_override_collapses_sweep_dimension(matrix_config_path):
 def test_parse_args_rejects_multiple_runs(matrix_config_path):
     with pytest.raises(ValueError, match="expands to 6 runs"):
         parse_args(["--config", matrix_config_path])
+
+
+def test_continuation_uses_p1_specific_default_conditions():
+    from latentmas_reprop.application.intervention_continuation.identity import (
+        resolve_conditions,
+    )
+
+    args = parse_args(
+        [
+            "--method",
+            "latent_mas",
+            "--model_name",
+            "Qwen/Qwen3-0.6B",
+            "--task",
+            "gsm8k",
+            "--intervention_continuation",
+        ]
+    )
+    assert "rqrqe" in resolve_conditions(args)
+    args = parse_args(
+        [
+            "--method",
+            "latent_mas",
+            "--model_name",
+            "Qwen/Qwen3-0.6B",
+            "--task",
+            "gsm8k",
+            "--intervention_continuation",
+            "--p1_variant",
+            "question_only",
+        ]
+    )
+    assert resolve_conditions(args) == ["pe", "ple"]

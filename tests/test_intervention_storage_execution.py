@@ -18,12 +18,10 @@ def test_execution_reuses_shared_state_and_isolates_results(tmp_path):
     dataset.load.return_value = [{"question": "question", "gold": "answer"}]
     evaluator = MagicMock()
     evaluator.evaluate.return_value = ("answer", True, None)
-    tracker = MagicMock()
     uc = InterventionContinuationUseCase(
         dataset_port=dataset,
         evaluator_port=evaluator,
         storage=store,
-        tracker_port=tracker,
     )
     model = _build_mock_wrapper()
     args = SimpleNamespace(
@@ -63,7 +61,6 @@ def test_execution_reuses_shared_state_and_isolates_results(tmp_path):
     relative = str(run.relative_to(store.base_dir))
     _, hidden, _ = reader.load_intervention_state(relative, "000000")
     assert hidden.shape[0] in (18, 23)
-    assert tracker.start_run.call_count == 3
     dataset.load.return_value = [{"question": "different", "gold": "answer"}]
     with pytest.raises(ValueError, match="sample identity"):
         uc.execute(model, args)
