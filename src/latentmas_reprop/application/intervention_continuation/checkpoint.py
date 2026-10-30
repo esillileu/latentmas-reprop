@@ -150,6 +150,17 @@ def prepare_state(
         raise ValueError(
             "Cannot extend shared state in a different execution environment"
         )
+    if target > 0:
+        from .legacy import reuse_migrated_state
+
+        reused = reuse_migrated_state(
+            storage, runner, state, item, sample, target, expected
+        )
+        if reused:
+            return prepare_state(storage, runner, state, item, index, can_extend)
+        if base is None and is_condition_complete(base_dir):
+            _, _, base = storage.load_shared_segment(state, sample, 0)
+            steps = [0]
     initial_step, initial_kv, initial_hidden, initial_meta = 0, None, None, None
     for candidate in steps:
         if candidate >= target:

@@ -138,6 +138,18 @@ class ResearchDataReader:
             if config is None:
                 raise ValueError("A step is required for a state path")
             step = int(config["step"])
+            paths = [
+                Path(path).parts
+                for path in config.get("result_paths", [])
+                if isinstance(path, str)
+            ]
+            sample_steps = [
+                parts[3]
+                for parts in paths
+                if len(parts) >= 4 and parts[:3] == ("samples", sample, "results")
+            ]
+            if sample_steps and all(value == "ls0" for value in sample_steps):
+                step = 0
         return self.tensor_store.assemble_shared_state(state, sample, step)
 
     def load_intervention_result(

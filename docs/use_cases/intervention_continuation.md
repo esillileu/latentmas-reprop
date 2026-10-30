@@ -182,7 +182,7 @@ just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --dry-
 
 ## 9. MLflow 샘플별 통합 Trace
 
-`latentmas/intervention/continuation`의 Run은 P1 상태, 목표 latent step과 실행·디코딩 설정으로 구분합니다. 조건 목록과 샘플 수는 Run 식별에 영향을 주지 않습니다. 동일 Run의 각 샘플 Trace에는 `common_latent`와 완료된 조건별 `decode_<조건>` 스팬이 포함됩니다. 스팬 입력에는 실제 분기 step, 역할, 개입 원문과 토큰 ID가 기록됩니다.
+`latentmas/intervention/continuation`의 Run은 P1 상태, 목표 latent step과 실행·디코딩 설정으로 구분합니다. 조건 목록과 샘플 수는 Run 식별에 영향을 주지 않습니다. Run의 `config.json`은 공통 상태와 완료된 결과 경로를 연결하므로 MLflow Run ID로 `ResearchDataReader`에서 읽을 수 있습니다. 동일 Run의 각 샘플 Trace에는 `common_latent`와 완료된 조건별 `decode_<조건>` 스팬이 포함됩니다. 스팬 입력에는 실제 분기 step, 역할, 개입 원문과 토큰 ID가 기록됩니다.
 
 재실행은 저장된 결과를 읽어 변경이 없으면 Trace를 유지합니다. 조건이 추가되거나 Trace가 누락되면 저장된 결과로 새 Trace를 만들고 MLflow에서 필요한 스팬을 검증합니다. 성공 후에만 같은 Run과 샘플의 이전 Trace를 ID로 삭제합니다. 기록 또는 삭제 실패는 오류로 전달하며 로컬 계산 결과는 유지합니다.
 
@@ -192,4 +192,4 @@ just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --dry-
 
 The tool groups candidates using recorded prompt tokens where available, compares every overlapping KV and hidden prefix exactly, and reports each sample as mergeable, conflicting, or failed. It reconstructs ls0 and segments at ten-step and original partial boundaries, then checks the assembled KV against every original checkpoint. Completed condition results and trace IDs are copied to the new result paths. Existing run IDs resolve to new run records without changing MLflow.
 
-Historical model and tokenizer revisions, execution environment and RNG validation are recorded as unknown when unavailable. Migrated trajectories have a separate legacy identity and are readable by the new reader, but are not automatically selected for new model inference. No duplicated quarantine copy is made for failed or conflicting samples; their original files are retained. Run configuration, summaries, samples and other result files are retained in the new run records.
+Historical model and tokenizer revisions, execution environment and RNG validation remain unknown when unavailable. New inference can reuse a migrated trajectory after comparing the current prefill and the saved checkpoint boundary KV and hidden states; only the validation forward and subsequent missing steps are computed. No duplicated quarantine copy is made for failed or conflicting samples; their original files are retained. Run configuration, summaries, samples and other result files are retained in the new run records.

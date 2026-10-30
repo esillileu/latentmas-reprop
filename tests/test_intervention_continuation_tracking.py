@@ -63,6 +63,34 @@ def test_incremental_trace_reuse_and_backfill(setup_run):
     assert len(first) == 1
     old_id = first[0].info.trace_id
     run_id = tracker.client.search_runs([first[0].info.experiment_id])[0].info.run_id
+    import json
+    from pathlib import Path
+
+    import torch
+
+    from latentmas_reprop.infrastructure.storage.reader import ResearchDataReader
+
+    run_dir = Path(tracker.client.get_run(run_id).data.tags["data_dir"])
+    config = json.loads((run_dir / "config.json").read_text())
+    assert config["step"] == 2 and len(config["result_paths"]) == 1
+    reader = ResearchDataReader(
+        mlflow_client=tracker.client,
+        tensor_store=case.storage,
+        path_resolver=tracker.resolver,
+    )
+    kv, hidden, _ = reader.load_intervention_state(run_id, "000000")
+    state = case.storage.base_dir / config["state_path"]
+    expected_kv, expected_hidden, _ = case.storage.assemble_shared_state(
+        state, "000000", 2
+    )
+    assert torch.equal(hidden, expected_hidden)
+    assert torch.equal(kv[0][0], expected_kv[0][0])
+    path = Path(config["result_paths"][0])
+    result_hidden, record = reader.load_intervention_result(
+        run_id, "000000", 2, path.parts[-2], path.parts[-1]
+    )
+    direct_hidden, direct_record = case.storage.load_intervention_result(state / path)
+    assert torch.equal(result_hidden, direct_hidden) and record == direct_record
     wrapper.model.forward.reset_mock()
     case.execute(wrapper, args)
     assert wrapper.model.forward.call_count == 0
@@ -82,6 +110,8 @@ def test_incremental_trace_reuse_and_backfill(setup_run):
     args.intervention_conditions = ["rqlqe", "rqlrqe"]
     case.execute(wrapper, args)
     assert wrapper.model.forward.call_count == 2
+    config = json.loads((run_dir / "config.json").read_text())
+    assert len(config["result_paths"]) == 3
     all_traces = traces(tracker)
     assert unrelated_id in {trace.info.trace_id for trace in all_traces}
     updated = [trace for trace in all_traces if trace.info.trace_id != unrelated_id]

@@ -214,3 +214,49 @@ def test_stochastic_forward_does_not_commit_prefill(tmp_path):
     model.model.forward = forward
     with pytest.raises(ValueError, match="invalidated"):
         uc.execute(model, args)
+
+
+def test_reader_uses_prefill_for_baseline_only_run(tmp_path):
+    resolver = PathResolver(tmp_path)
+    storage = FileStorage(resolver)
+    dataset = MagicMock()
+    dataset.load.return_value = [{"question": "Q", "gold": "1"}]
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("1", True, None)
+    args = SimpleNamespace(
+        task="gsm8k",
+        model_name="Qwen/mock",
+        latent_steps=4,
+        max_new_tokens=1,
+        temperature=0.0,
+        top_p=1.0,
+        seed=42,
+        max_samples=1,
+        no_progress=True,
+        intervention_conditions=["rqe"],
+    )
+    uc = InterventionContinuationUseCase(
+        dataset_port=dataset, evaluator_port=evaluator, storage=storage
+    )
+    uc.execute(_build_mock_wrapper(), args)
+    state = next(storage.base_dir.glob("intervention_continuation/*/*/*"))
+    result = next(state.glob("samples/000000/results/ls0/*/pe/result.json")).parent
+    run = state / "runs" / "comparison"
+    run.mkdir()
+    from latentmas_reprop.infrastructure.storage.tensor_store import save_json_atomic
+
+    save_json_atomic(
+        run / "config.json",
+        {
+            "state_path": str(state.relative_to(storage.base_dir)),
+            "step": 4,
+            "result_paths": [str(result.relative_to(state))],
+        },
+    )
+    client = MagicMock()
+    client.get_run.return_value.data.tags = {"data_dir": str(run)}
+    reader = ResearchDataReader(
+        mlflow_client=client, tensor_store=storage, path_resolver=resolver
+    )
+    kv, hidden, _ = reader.load_intervention_state("run_id", "000000")
+    assert hidden.shape[0] == 3 and kv[0][0].shape[-2] == 3

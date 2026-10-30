@@ -175,6 +175,20 @@ def track_results(
     group = canonical_hash(_group(state, args, model))
     run_dir = state / "runs" / group
     relative = str(run_dir.relative_to(base))
+    config_path = run_dir / "config.json"
+    config = {
+        "state_path": str(state.relative_to(base)),
+        "step": int(getattr(args, "latent_steps", 10)),
+        "result_paths": [],
+    }
+    if config_path.is_file():
+        config = load_json(config_path)
+        if config.get("state_path") != str(state.relative_to(base)) or config.get(
+            "step"
+        ) != int(getattr(args, "latent_steps", 10)):
+            raise ValueError("Run identity mismatch")
+    else:
+        save_json_atomic(config_path, config)
     run = tracker.start_run(
         experiment_name=mlflow_experiment_name(INTERVENTION_CONTINUATION),
         run_name=relative,
@@ -196,6 +210,21 @@ def track_results(
             records = _records(state, sample, item, args, model)
             if not records:
                 continue
+            paths = set(config["result_paths"])
+            for record in records.values():
+                identity = record["identity"]
+                path = (
+                    Path("samples")
+                    / sample
+                    / "results"
+                    / f"ls{identity['step']}"
+                    / canonical_hash(identity)
+                    / identity["condition"]
+                )
+                paths.add(path.as_posix())
+            if paths != set(config["result_paths"]):
+                config["result_paths"] = sorted(paths)
+                save_json_atomic(config_path, config)
             meta = load_json(
                 state / "samples" / sample / "shared" / "ls0" / "result.json"
             )
