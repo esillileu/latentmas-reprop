@@ -17,6 +17,7 @@ from ...domain.services.prompts import (
     resolve_p1_variant_id,
 )
 from .decoder import forward_intervention_prefix, run_explicit_generation
+from .determinism import deterministic_forward
 
 
 class InterventionContinuationRunner:
@@ -65,13 +66,14 @@ class InterventionContinuationRunner:
             prompts, ids, mask, tokens = self.model.prepare_chat_batch(
                 [messages], add_generation_prompt=True
             )
-            outputs = self.model.model(
-                input_ids=ids,
-                attention_mask=mask,
-                use_cache=True,
-                output_hidden_states=True,
-                return_dict=True,
-            )
+            with deterministic_forward(torch.device(self.model.device)):
+                outputs = self.model.model(
+                    input_ids=ids,
+                    attention_mask=mask,
+                    use_cache=True,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
             past = outputs.past_key_values
             prompt_hidden = outputs.hidden_states[-1][0].detach().cpu()
             last_hidden = prompt_hidden[-1:, :].to(self.model.device)
@@ -102,22 +104,24 @@ class InterventionContinuationRunner:
             disable=not show_prog or start_step > latent_steps,
         )
         for step in latent_iter:
-            latent_vec = self.model._apply_latent_realignment(
-                last_hidden, self.model.model
-            )
+            with deterministic_forward(torch.device(self.model.device)):
+                latent_vec = self.model._apply_latent_realignment(
+                    last_hidden, self.model.model
+                )
             latent_embed = latent_vec.unsqueeze(1)
             past_len = get_past_kv_sequence_length(past)
             latent_mask = torch.ones(
                 (1, past_len + 1), dtype=torch.long, device=self.model.device
             )
-            step_outputs = self.model.model(
-                inputs_embeds=latent_embed,
-                attention_mask=latent_mask,
-                past_key_values=past,
-                use_cache=True,
-                output_hidden_states=True,
-                return_dict=True,
-            )
+            with deterministic_forward(torch.device(self.model.device)):
+                step_outputs = self.model.model(
+                    inputs_embeds=latent_embed,
+                    attention_mask=latent_mask,
+                    past_key_values=past,
+                    use_cache=True,
+                    output_hidden_states=True,
+                    return_dict=True,
+                )
             past = step_outputs.past_key_values
             step_hidden = step_outputs.hidden_states[-1][0, -1, :]
             latent_hiddens.append(step_hidden.detach().cpu())

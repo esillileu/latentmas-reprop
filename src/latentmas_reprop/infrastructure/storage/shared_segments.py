@@ -110,6 +110,8 @@ def assemble_shared_state(
     """Assemble an exact prefix, including from a segment ending after step."""
     from ...domain.services.kv_cache import concat_past_kv, slice_past_kv
 
+    if (Path(state) / "invalid.json").exists():
+        raise ValueError("Shared state was invalidated by stochastic forward")
     if step < 0:
         raise ValueError("Negative step")
     kv, hidden, meta = self.load_shared_segment(state, sample, 0)

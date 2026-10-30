@@ -142,3 +142,78 @@ def test_identity_separates_state_and_condition_settings():
     args.p1_prompt = "different {question}"
     state3, _ = state_identity(model, args, "transformers")
     assert state3 != state1
+
+
+def test_partial_prefill_is_repaired_and_existing_segments_reused(tmp_path):
+    store = FileStorage(PathResolver(tmp_path))
+    dataset = MagicMock()
+    dataset.load.return_value = [{"question": "question", "gold": "answer"}]
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("answer", True, None)
+    uc = InterventionContinuationUseCase(
+        dataset_port=dataset, evaluator_port=evaluator, storage=store
+    )
+    model = _build_mock_wrapper()
+    args = SimpleNamespace(
+        task="gsm8k",
+        model_name="Qwen/model",
+        latent_steps=20,
+        latent_step_checkpoint_interval=10,
+        intervention_conditions=["ple"],
+        temperature=0.0,
+        max_new_tokens=1,
+        seed=42,
+        no_progress=True,
+    )
+    uc.execute(model, args)
+    state = next(store.base_dir.glob("intervention_continuation/*/*/*"))
+    shared = state / "samples/000000/shared"
+    original20 = (shared / "ls20/kv.pt").read_bytes()
+    args.latent_steps = 15
+    model.model.forward = MagicMock(wraps=model.model.forward)
+    uc.execute(model, args)
+    assert (shared / "ls15/result.json").is_file()
+    assert model.model.forward.call_count == 0
+    assert (shared / "ls20/kv.pt").read_bytes() == original20
+    (shared / "ls0/kv.pt").unlink()
+    dataset.load.return_value = [{"question": "other", "gold": "answer"}]
+    with pytest.raises(ValueError, match="sample identity"):
+        uc.execute(model, args)
+    assert not (shared / "ls0/kv.pt").exists()
+    dataset.load.return_value = [{"question": "question", "gold": "answer"}]
+    args.latent_steps = 20
+    model.model.forward.reset_mock()
+    uc.execute(model, args)
+    assert (shared / "ls0/kv.pt").is_file()
+    assert model.model.forward.call_count == 1
+    assert (shared / "ls20/kv.pt").read_bytes() == original20
+
+
+def test_stochastic_forward_does_not_commit_prefill(tmp_path):
+    store = FileStorage(PathResolver(tmp_path))
+    dataset = MagicMock()
+    dataset.load.return_value = [{"question": "question", "gold": "answer"}]
+    model = _build_mock_wrapper()
+    forward = model.model.forward
+
+    def stochastic(*args, **kwargs):
+        torch.rand(1)
+        return forward(*args, **kwargs)
+
+    model.model.forward = stochastic
+    args = SimpleNamespace(
+        task="gsm8k",
+        model_name="Qwen/model",
+        latent_steps=1,
+        intervention_conditions=["ple"],
+        temperature=0.0,
+        max_new_tokens=1,
+        no_progress=True,
+    )
+    uc = InterventionContinuationUseCase(dataset_port=dataset, storage=store)
+    with pytest.raises(ValueError, match="Stochastic forward"):
+        uc.execute(model, args)
+    assert not list(store.base_dir.glob("**/shared/ls0/result.json"))
+    model.model.forward = forward
+    with pytest.raises(ValueError, match="invalidated"):
+        uc.execute(model, args)

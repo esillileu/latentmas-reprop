@@ -45,7 +45,7 @@ def state_identity(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Identify loaded weights and tokenizer; reject stochastic model execution."""
     module = model.model
-    if module.training:
+    if any(child.training for child in module.modules()):
         raise ValueError("Cannot reuse state with a model in training mode")
     config = module.config
     revision = getattr(config, "_commit_hash", None)
@@ -73,6 +73,7 @@ def state_identity(
     variant = resolve_p1_variant_id(args)
     identity = {
         "model": str(args.model_name),
+        "forward_validation": "process_rng_v1",
         "weights": weights,
         "tokenizer": token_revision,
         "chat_template": tokenizer.chat_template,
