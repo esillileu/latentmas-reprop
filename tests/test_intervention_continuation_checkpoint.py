@@ -10,8 +10,8 @@ from latentmas_reprop.application.intervention_continuation.runner import (
     InterventionContinuationRunner,
 )
 from latentmas_reprop.domain.services.prompts import (
-    build_intervention_p1_messages,
-    load_p1_variants,
+    build_initial_messages,
+    load_intervention_config,
 )
 
 
@@ -104,10 +104,10 @@ def test_incremental_latent_execution(tmp_path, mock_model):
     assert hidden30.shape[0] == 3 + 30
 
 
-def test_p1_variant_isolation_and_prompt_builder():
-    """Verify P1 prompt variants preserve default path for 'planner' and isolate non-default variants."""
-    variants = load_p1_variants()
-    assert {"planner", "direct_solve", "question_only", "latent_think"} <= set(variants)
+def test_initial_input_and_role_prompt_builder():
+    """Verify initial input and role prompt construction."""
+    variants = load_intervention_config()["roles"]
+    assert {"planner", "direct_solve", "latent_think"} <= set(variants)
 
     base = {
         "task": "gsm8k",
@@ -118,19 +118,18 @@ def test_p1_variant_isolation_and_prompt_builder():
         "seed": 42,
         "intervention_continuation": True,
     }
-    args_planner = SimpleNamespace(**base, p1_variant="planner")
-    args_direct = SimpleNamespace(**base, p1_variant="direct_solve")
-    args_custom = SimpleNamespace(**base, p1_prompt="Custom solve: {question}")
+    args_planner = SimpleNamespace(**base, initial_role="planner")
+    args_direct = SimpleNamespace(**base, initial_role="direct_solve")
+    args_question = SimpleNamespace(**base, initial_input="q")
 
     assert (
-        "Planner Agent"
-        in build_intervention_p1_messages("3+4?", args_planner)[-1]["content"]
+        "Planner Agent" in build_initial_messages("3+4?", args_planner)[-1]["content"]
     )
     assert (
         "Target Question: 3+4?"
-        in build_intervention_p1_messages("3+4?", args_direct)[-1]["content"]
+        in build_initial_messages("3+4?", args_direct)[-1]["content"]
     )
     assert (
-        build_intervention_p1_messages("3+4?", args_custom)[-1]["content"]
-        == "Custom solve: 3+4?"
+        build_initial_messages("3+4?", args_question)[-1]["content"]
+        == "Question: 3+4?\n"
     )

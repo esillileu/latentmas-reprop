@@ -47,7 +47,7 @@ def test_migrated_state_is_checked_and_resumed(
         seed=42,
         max_samples=1,
         no_progress=True,
-        intervention_conditions=["ple"],
+        intervention_conditions=["rqle"],
     )
     item = {"question": "Q", "gold": "1"}
     evaluator = MagicMock()

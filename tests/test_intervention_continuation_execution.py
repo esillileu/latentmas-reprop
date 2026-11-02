@@ -25,7 +25,7 @@ def test_pe_uses_prefill_and_resume_matches_continuous(tmp_path):
         seed=42,
         max_samples=1,
         no_progress=True,
-        intervention_conditions=["pe"],
+        intervention_conditions=["rqe"],
     )
     dataset = MagicMock()
     dataset.load.return_value = [{"question": "Q", "gold": "1"}]
@@ -37,13 +37,13 @@ def test_pe_uses_prefill_and_resume_matches_continuous(tmp_path):
     )
     _, pe = uc.execute(wrapper, args)
     assert wrapper.model.forward.call_count == 1
-    assert pe[0]["condition"] == "pe"
+    assert pe[0]["condition"] == "rqe"
     assert list(
         storage.base_dir.glob(
-            "intervention_continuation/*/*/*/samples/000000/results/ls0/*/pe/result.json"
+            "intervention_continuation/*/*/*/samples/000000/results/ls0/*/rqe/result.json"
         )
     )
-    args.intervention_conditions = ["ple"]
+    args.intervention_conditions = ["rqle"]
     wrapper.model.forward.reset_mock()
     uc.execute(wrapper, args)
     assert wrapper.model.forward.call_count == 20
@@ -83,7 +83,7 @@ def test_prefetch_overlaps_decode_and_propagates_errors(tmp_path, monkeypatch):
         seed=42,
         max_samples=2,
         no_progress=True,
-        intervention_conditions=["pe"],
+        intervention_conditions=["rqe"],
     )
     dataset = MagicMock()
     dataset.load.return_value = [
@@ -101,7 +101,7 @@ def test_prefetch_overlaps_decode_and_propagates_errors(tmp_path, monkeypatch):
     started = threading.Event()
     decoding = threading.Event()
     original_assemble = storage.assemble_shared_state
-    original_decode = InterventionContinuationRunner.execute_ple
+    original_decode = InterventionContinuationRunner.execute_unprompted
 
     def assemble(state, sample, step):
         if (
@@ -118,7 +118,7 @@ def test_prefetch_overlaps_decode_and_propagates_errors(tmp_path, monkeypatch):
         return original_decode(self, *a)
 
     monkeypatch.setattr(storage, "assemble_shared_state", assemble)
-    monkeypatch.setattr(InterventionContinuationRunner, "execute_ple", decode)
+    monkeypatch.setattr(InterventionContinuationRunner, "execute_unprompted", decode)
     _, pipelined = uc.execute(wrapper, args)
     from latentmas_reprop.application.intervention_continuation import execution
 
@@ -134,7 +134,7 @@ def test_prefetch_overlaps_decode_and_propagates_errors(tmp_path, monkeypatch):
 
     for record in pipelined:
         sample = f"{record['sample_index']:06d}"
-        pattern = f"intervention_continuation/*/*/*/samples/{sample}/results/ls0/*/pe/hidden.pt"
+        pattern = f"intervention_continuation/*/*/*/samples/{sample}/results/ls0/*/rqe/hidden.pt"
         pipelined_files = list(storage.base_dir.glob(pattern))
         sequential_file = next(sequential_storage.base_dir.glob(pattern))
         assert any(
@@ -162,7 +162,9 @@ def test_prefetch_overlaps_decode_and_propagates_errors(tmp_path, monkeypatch):
         return original_decode(self, *a)
 
     monkeypatch.setattr(storage, "assemble_shared_state", fail)
-    monkeypatch.setattr(InterventionContinuationRunner, "execute_ple", record_decode)
+    monkeypatch.setattr(
+        InterventionContinuationRunner, "execute_unprompted", record_decode
+    )
     with pytest.raises(OSError, match="prefetch failed"):
         uc.execute(wrapper, args)
     assert calls == ["Q1"]
@@ -176,16 +178,13 @@ def test_condition_aliases_and_intervention_content():
 
     args = SimpleNamespace(model_name="Qwen/mock", task="gsm8k")
     assert resolve_conditions(args) == [
-        "pe",
-        "ple",
-        "plce",
-        "rqlre",
-        "rqlqe",
-        "plpe",
+        "rqe",
+        "rqle",
         "rqrqe",
+        "rqlrqe",
     ]
-    args.p1_variant = "question_only"
-    assert resolve_conditions(args) == ["pe", "ple"]
+    args.initial_input = "q"
+    assert resolve_conditions(args) == ["qe", "qle"]
     item = {"question": "Distinct question text"}
     role = intervention_messages("rqlre", item, args)[0]["content"]
     question = intervention_messages("rqlqe", item, args)[0]["content"]

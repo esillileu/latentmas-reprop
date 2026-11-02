@@ -159,7 +159,7 @@ def test_trace_failures_preserve_previous_result(setup_run, monkeypatch):
 
     record_path = next(
         case.storage.base_dir.glob(
-            "intervention_continuation/*/*/*/samples/000000/results/ls2/*/ple/result.json"
+            "intervention_continuation/*/*/*/samples/000000/results/ls2/*/rqle/result.json"
         )
     )
     saved = load_json(record_path)
@@ -202,7 +202,7 @@ def test_trace_failures_preserve_previous_result(setup_run, monkeypatch):
         assert old_id not in summary.read_text()
 
 
-def test_different_steps_and_p1_use_different_runs(setup_run):
+def test_different_steps_and_initial_inputs_use_different_runs(setup_run):
     case, wrapper, args, tracker = setup_run
     case.execute(wrapper, args)
     first_id = traces(tracker)[0].info.trace_id
@@ -214,7 +214,7 @@ def test_different_steps_and_p1_use_different_runs(setup_run):
     args.max_samples = 1
     args.latent_steps = 3
     case.execute(wrapper, args)
-    args.p1_variant = "question_only"
+    args.initial_input = "q"
     args.intervention_conditions = ["qle"]
     case.execute(wrapper, args)
     found = traces(tracker)

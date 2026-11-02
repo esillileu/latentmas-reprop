@@ -110,7 +110,7 @@ Run single intervention analysis decomposing explicit decoding from common laten
 CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38
 ```
 
-The default Planner P1 supports `RQE`, `RQLE`, `RQLCE`, `RQLRE`, `RQLQE`, `RQLRQE`, and `RQRQE`; question-only P1 supports `QE` and `QLE`. Shared states are checkpointed and resumed incrementally, and each MLflow run contains one consolidated trace per sample. See [Intervention Continuation Analysis](docs/use_cases/intervention_continuation.md) for detailed specifications.
+The default preset uses `rq` with the `direct_solve` role with `RQE`, `RQLE`, `RQRQE`, and `RQLRQE`. Initial roles and available and default conditions are configured in `configs/prompts/intervention.yaml`; `q` uses `QE` and `QLE`. Shared states are checkpointed and resumed incrementally, and each MLflow run contains one consolidated trace per sample. See [Intervention Continuation Analysis](docs/use_cases/intervention_continuation.md) for detailed specifications.
 
 ### 3. Developer Commands
 ```bash

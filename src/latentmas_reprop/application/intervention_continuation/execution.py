@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import torch
+from tqdm import tqdm
 
 from ...infrastructure.storage.tensor_store import (
     is_condition_complete,
@@ -19,6 +20,7 @@ from .identity import (
     ensure_state,
     resolve_conditions,
     result_identity,
+    sample_seed,
     state_identity,
     state_path,
 )
@@ -83,7 +85,14 @@ def execute(
     paths = {condition: [] for condition in conditions}
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = None
-        for index, item in enumerate(dataset):
+        for index, item in enumerate(
+            tqdm(
+                dataset,
+                desc="Intervention continuation",
+                unit="sample",
+                disable=bool(getattr(args, "no_progress", False)),
+            )
+        ):
             prepared = future.result() if future is not None else {}
             future = None
             if index + 1 < len(dataset):
@@ -92,7 +101,7 @@ def execute(
                 next_sample = f"{next_index:06d}"
                 needed = set()
                 for condition in conditions:
-                    condition_step = 0 if condition in {"pe", "rqrqe"} else step
+                    condition_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
                     ident = result_identity(
                         state.name, condition_step, condition, next_item, args, model
                     )
@@ -129,7 +138,7 @@ def execute(
                     save_json_atomic(invalid, {"reason": "stochastic_forward"})
                     raise
             for condition in conditions:
-                condition_step = 0 if condition in {"pe", "rqrqe"} else step
+                condition_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
                 ident = result_identity(
                     state.name, condition_step, condition, item, args, model
                 )
@@ -167,9 +176,12 @@ def execute(
                             save_json_atomic(invalid, {"reason": "stochastic_forward"})
                             raise
                     kv, hidden, _ = states[condition_step]
-                    seed = int(
-                        canonical_hash({"identity": ident, "sample_index": index})[:16],
-                        16,
+                    seed = sample_seed(
+                        int(getattr(args, "seed", 42)),
+                        identity["task"],
+                        identity["split"],
+                        index,
+                        item["question"],
                     )
                     device = torch.device(model.device)
                     devices = (
@@ -182,31 +194,33 @@ def execute(
                         else []
                     )
                     with torch.random.fork_rng(devices=devices):
-                        torch.manual_seed(seed)
+                        torch.random.default_generator.manual_seed(seed)
                         if devices:
-                            torch.cuda.manual_seed_all(seed)
+                            with torch.cuda.device(device):
+                                torch.cuda.manual_seed(seed)
                         rng = {
                             "seed": seed,
+                            "policy": "sample_v2",
                             "sample_index": index,
                             "condition": condition,
                         }
-                        if condition in {"pe", "ple"}:
-                            branch, record = runner.execute_ple(item, kv, hidden[-1])
+                        if condition in {"qe", "rqe", "qle", "rqle"}:
+                            branch, record = runner.execute_unprompted(
+                                item, kv, hidden[-1]
+                            )
                             record["condition"] = condition
-                        elif condition in {"plpe", "rqlre", "rqlqe", "rqrqe"}:
-                            branch, record = runner.execute_plpe(item, kv, condition)
+                        elif condition in {"rqlrqe", "rqlre", "rqlqe", "rqrqe"}:
+                            branch, record = runner.execute_prompt(item, kv, condition)
                         else:
-                            branch, record = runner.execute_plce(item, kv)
-                    from ...domain.services.prompts import resolve_p1_variant_id
+                            branch, record = runner.execute_control(item, kv)
+                            record["condition"] = condition
+                    from ...domain.services.prompts import initial_role
 
-                    variant = resolve_p1_variant_id(args)
                     base_meta = load_json(base / "result.json")
                     record = dict(
                         record,
                         condition_name=condition_name(condition, args),
-                        initial_role=variant
-                        if variant in {"planner", "critic", "refiner", "judger"}
-                        else None,
+                        initial_role=initial_role(args),
                         initial_prompt=base_meta.get("prompt", ""),
                         initial_prompt_token_ids=base_meta.get("prompt_token_ids", []),
                         status="complete",
@@ -229,7 +243,7 @@ def execute(
                 records.append(record)
     for condition in conditions:
         subset = [record for record in records if record["condition"] == condition]
-        condition_step = 0 if condition in {"pe", "rqrqe"} else step
+        condition_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
         run_id = canonical_hash(
             {
                 "state": state.name,

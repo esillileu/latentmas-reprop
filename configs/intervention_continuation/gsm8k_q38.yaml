@@ -9,11 +9,8 @@ temperature: 0.6
 top_p: 0.95
 seed: 42
 intervention_continuation: true
-# P_1 (첫 번째 프롬프트) 바리언트 설정 (configs/prompts/intervention_p1.yaml 참조):
-# 기본값 "planner"는 기존 실행 경로(..._intervention_continuation)를 그대로 유지합니다.
-# 다른 바리언트("direct_solve", "question_only", "latent_think" 등) 지정 시 경로가 ..._p1_<variant> 로 자동 분리됩니다.
-p1_variant: "planner"
-# 기본 조건은 P1에 따라 자동 선택됩니다: planner는 RQE, RQLE, RQLCE,
-# RQLRE, RQLQE, RQLRQE, RQRQE; question_only는 QE, QLE.
+initial_input: rq
+initial_role: direct_solve
+# Initial-input condition defaults are defined in configs/prompts/intervention.yaml.
 control_signal: "\nSolution:"
 latent_step_checkpoint_interval: 10

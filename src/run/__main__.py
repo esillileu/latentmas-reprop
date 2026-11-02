@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> None:
             if getattr(run, "intervention_continuation", False):
                 details = (
                     f"model={run.model_name}, task={run.task}, "
-                    f"latent_steps={run.latent_steps}, conditions=ple/plce/plpe, "
+                    f"latent_steps={run.latent_steps}, conditions=rqe/rqle/rqlce/rqlre/rqlqe/rqlrqe/rqrqe, "
                     f"samples={run.max_samples}"
                 )
             print(f"[{index}/{len(runs)}] {details or 'single configuration'}")

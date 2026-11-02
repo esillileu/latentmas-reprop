@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ...domain.services.prompts import resolve_p1_variant_id
+from ...domain.services.prompts import initial_input
 from ...infrastructure.storage import save_json_atomic
 
 
@@ -112,9 +112,7 @@ def trace_intervention_continuation_sample(
             "task": str(getattr(args, "task", "gsm8k")),
             "model": str(getattr(args, "model_name", "")),
             "method": str(getattr(args, "method", "latent_mas")),
-            "p1_variant": str(
-                shared_meta.get("p1_variant", resolve_p1_variant_id(args))
-            ),
+            "initial_input": str(shared_meta.get("initial_input", initial_input(args))),
             "sample_id": sample_id,
             "sample_key": skey,
             "comparison_id": comparison_id,
@@ -130,9 +128,7 @@ def trace_intervention_continuation_sample(
             span_type="CHAIN",
             inputs={
                 "sample_key": skey,
-                "p1_variant": shared_meta.get(
-                    "p1_variant", resolve_p1_variant_id(args)
-                ),
+                "initial_input": shared_meta.get("initial_input", initial_input(args)),
                 "prompt": shared_meta.get("prompt", shared_meta.get("prompt_text", "")),
                 "prompt_token_ids": shared_meta.get("prompt_token_ids", []),
                 "initial_role": shared_meta.get("initial_role"),

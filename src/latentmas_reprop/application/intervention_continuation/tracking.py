@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ...domain.models.use_cases import INTERVENTION_CONTINUATION, mlflow_experiment_name
-from ...domain.services.prompts import resolve_p1_variant_id
+from ...domain.services.prompts import initial_input, initial_role
 from ...infrastructure.paths.resolver import get_git_commit_hash
 from ...infrastructure.storage.tensor_store import (
     is_condition_complete,
@@ -20,7 +20,7 @@ from .identity import canonical_hash, condition_name, result_identity
 def _group(state: Path, args: Any, model: Any) -> dict[str, Any]:
     # The result identity already defines all decoder settings and decoder version.
     probe = result_identity(
-        state.name, 0, "pe", {"question": "", "gold": ""}, args, model
+        state.name, 0, "qe", {"question": "", "gold": ""}, args, model
     )
     probe.pop("condition")
     probe.pop("gold")
@@ -41,15 +41,12 @@ def _records(
     state: Path, sample: str, item: dict[str, Any], args: Any, model: Any
 ) -> dict[str, dict[str, Any]]:
     step = int(getattr(args, "latent_steps", 10))
-    variant = resolve_p1_variant_id(args)
-    conditions = ["pe", "ple", "plce", "plpe"]
-    if variant in {"planner", "critic", "refiner", "judger"}:
-        conditions += ["rqlre", "rqlqe"]
-        if not getattr(args, "plpe_prompt", None):
-            conditions += ["rqrqe"]
+    from ...domain.services.prompts.intervention import initial_conditions
+
+    conditions = initial_conditions(args)
     records = {}
     for condition in conditions:
-        branch_step = 0 if condition in {"pe", "rqrqe"} else step
+        branch_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
         identity = result_identity(
             state.name, branch_step, condition, item, args, model
         )
@@ -73,11 +70,9 @@ def _records(
             raise ValueError(f"Invalid completed result: {directory}")
         record.pop("trace_id", None)
         record["condition_name"] = condition_name(condition, args)
-        record["initial_role"] = (
-            variant if variant in {"planner", "critic", "refiner", "judger"} else None
-        )
-        if condition in {"plpe", "rqlre", "rqrqe"} and not (
-            condition == "plpe" and getattr(args, "plpe_prompt", None)
+        record["initial_role"] = initial_role(args)
+        if condition in {"rqlrqe", "rqlre", "rqrqe"} and not (
+            condition == "rqlrqe" and getattr(args, "plpe_prompt", None)
         ):
             record["receiver_role"] = getattr(args, "receiver_role", "judger")
         records[record["condition_name"]] = record
@@ -197,7 +192,7 @@ def track_results(
             "data_dir": str(run_dir.resolve()),
             "comparison_id": group,
             "experiment_type": INTERVENTION_CONTINUATION,
-            "p1_variant": resolve_p1_variant_id(args),
+            "initial_input": initial_input(args),
         },
     )
     run_id, experiment_id = run.info.run_id, run.info.experiment_id

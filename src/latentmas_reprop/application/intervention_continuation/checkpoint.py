@@ -5,14 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from ...domain.services.kv_cache import slice_past_kv
-from ...domain.services.prompts import build_intervention_p1_messages
+from ...domain.services.prompts import build_initial_messages
 from ...infrastructure.storage.tensor_store import is_condition_complete, load_json
 
 
 def _sample_identity(
     model: Any, args: Any, item: dict[str, Any], index: int
 ) -> dict[str, Any]:
-    messages = build_intervention_p1_messages(item["question"], args)
+    messages = build_initial_messages(item["question"], args)
     prompts, ids, _, _ = model.prepare_chat_batch(
         [messages], add_generation_prompt=True
     )

@@ -1,4 +1,4 @@
-"""Execution logic for Common Latent computation and PLE/PLCE/PLPE branching."""
+"""Execution logic for common latent computation and intervention decoding."""
 
 from typing import Any
 
@@ -11,8 +11,8 @@ from ...domain.services.kv_cache import (
     move_past_kv,
 )
 from ...domain.services.prompts import (
-    build_intervention_p1_messages,
-    resolve_p1_variant_id,
+    build_initial_messages,
+    initial_input,
 )
 from .decoder import forward_intervention_prefix, run_explicit_generation
 from .determinism import deterministic_forward
@@ -20,7 +20,7 @@ from .identity import intervention_messages
 
 
 class InterventionContinuationRunner:
-    """Executes UC-01 common latent calculation and UC-02 three branch conditions."""
+    """Executes common latent calculation and intervention decoding."""
 
     def __init__(self, model: Any, args: Any, evaluator: Any) -> None:
         self.model = model
@@ -36,7 +36,7 @@ class InterventionContinuationRunner:
         initial_step: int = 0,
         checkpoint_callback: Any = None,
     ) -> tuple[Any, torch.Tensor, dict[str, Any]]:
-        """UC-01: P_1 -> L_1 -> ... -> L_T common latent calculation."""
+        """Calculate the shared initial-input and latent states."""
         latent_steps = int(getattr(self.args, "latent_steps", 10))
         interval = int(getattr(self.args, "latent_step_checkpoint_interval", 10))
         show_prog = not bool(getattr(self.args, "no_progress", False))
@@ -52,16 +52,14 @@ class InterventionContinuationRunner:
                 initial_hiddens[i] for i in range(prompt_len, initial_hiddens.shape[0])
             ]
             meta = {
-                "p1_variant": item.get("p1_variant", resolve_p1_variant_id(self.args)),
+                "initial_input": item.get("initial_input", initial_input(self.args)),
                 "prompt": item.get("prompt", ""),
                 "prompt_token_ids": item.get("prompt_token_ids", []),
                 "prompt_tokens": item.get("prompt_tokens", []),
                 "prompt_length": prompt_len,
             }
         else:
-            messages = build_intervention_p1_messages(
-                question=item["question"], args=self.args
-            )
+            messages = build_initial_messages(question=item["question"], args=self.args)
             prompts, ids, mask, tokens = self.model.prepare_chat_batch(
                 [messages], add_generation_prompt=True
             )
@@ -79,7 +77,7 @@ class InterventionContinuationRunner:
             latent_hiddens = []
             initial_step = 0
             meta = {
-                "p1_variant": resolve_p1_variant_id(self.args),
+                "initial_input": initial_input(self.args),
                 "prompt": prompts[0],
                 "prompt_token_ids": ids[0].cpu().tolist(),
                 "prompt_tokens": tokens[0],
@@ -150,13 +148,13 @@ class InterventionContinuationRunner:
         return kv_snapshot, common_hidden, meta
 
     @torch.no_grad()
-    def execute_ple(
+    def execute_unprompted(
         self, item: dict[str, Any], kv_snapshot: Any, last_hidden: torch.Tensor
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """UC-02 condition ple: P_1 -> L -> E (no additional intervention input)."""
+        """Decode without an intervention."""
         kv = move_past_kv(clone_past_kv(kv_snapshot), self.model.device)
         ids, hiddens, reason, exh, text = run_explicit_generation(
-            self.model, kv, last_hidden, self.args, desc="Decoding · PLE"
+            self.model, kv, last_hidden, self.args, desc="Decoding"
         )
         pred, ok, err = self.evaluator.evaluate(
             getattr(self.args, "task", "gsm8k"), text, item.get("gold", "")
@@ -167,7 +165,7 @@ class InterventionContinuationRunner:
             else last_hidden.new_empty((0, last_hidden.shape[-1]))
         )
         return hidden_tensor, {
-            "condition": "ple",
+            "condition": "rqle",
             "intervention_type": "none",
             "intervention_prompt": "",
             "intervention_length": 0,
@@ -186,10 +184,10 @@ class InterventionContinuationRunner:
         }
 
     @torch.no_grad()
-    def execute_plce(
+    def execute_control(
         self, item: dict[str, Any], kv_snapshot: Any
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """UC-02 condition plce: P_1 -> L -> C -> E (control signal intervention)."""
+        """Decode after a control signal."""
         sig = str(getattr(self.args, "control_signal", "\nSolution:"))
         enc = self.model.tokenizer(sig, return_tensors="pt", add_special_tokens=False)
         c_ids, c_mask = enc["input_ids"], enc["attention_mask"]
@@ -197,7 +195,7 @@ class InterventionContinuationRunner:
             self.model, kv_snapshot, c_ids, c_mask
         )
         ids, hiddens, reason, exh, text = run_explicit_generation(
-            self.model, kv, c_hidden[-1], self.args, desc="Decoding · PLCE"
+            self.model, kv, c_hidden[-1], self.args, desc="Decoding · control"
         )
         pred, ok, err = self.evaluator.evaluate(
             getattr(self.args, "task", "gsm8k"), text, item.get("gold", "")
@@ -213,7 +211,7 @@ class InterventionContinuationRunner:
             else c_hidden
         )
         return full_hidden, {
-            "condition": "plce",
+            "condition": "rqlce",
             "intervention_type": "control",
             "intervention_signal": sig,
             "intervention_prompt": sig,
@@ -235,10 +233,10 @@ class InterventionContinuationRunner:
         }
 
     @torch.no_grad()
-    def execute_plpe(
-        self, item: dict[str, Any], kv_snapshot: Any, condition: str = "plpe"
+    def execute_prompt(
+        self, item: dict[str, Any], kv_snapshot: Any, condition: str = "rqlrqe"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """UC-02 condition plpe: P_1 -> L -> P_2 -> E (role/problem prompt intervention)."""
+        """Decode after an intervention prompt."""
         messages = intervention_messages(condition, item, self.args)
         prompts, p2_ids, p2_mask, p2_tokens = self.model.prepare_chat_batch(
             [messages], add_generation_prompt=True
@@ -247,7 +245,7 @@ class InterventionContinuationRunner:
             self.model, kv_snapshot, p2_ids, p2_mask
         )
         ids, hiddens, reason, exh, text = run_explicit_generation(
-            self.model, kv, p2_hidden[-1], self.args, desc="Decoding · PLPE"
+            self.model, kv, p2_hidden[-1], self.args, desc="Decoding · prompt"
         )
         pred, ok, err = self.evaluator.evaluate(
             getattr(self.args, "task", "gsm8k"), text, item.get("gold", "")
@@ -266,7 +264,7 @@ class InterventionContinuationRunner:
             "condition": condition,
             "receiver_role": getattr(self.args, "receiver_role", "judger")
             if condition != "rqlqe"
-            and not (condition == "plpe" and getattr(self.args, "plpe_prompt", None))
+            and not (condition == "rqlrqe" and getattr(self.args, "plpe_prompt", None))
             else None,
             "intervention_type": "prompt",
             "intervention_prompt": prompts[0],

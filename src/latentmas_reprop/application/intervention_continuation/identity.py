@@ -11,8 +11,9 @@ import transformers
 from ...domain.services.prompts import (
     build_agent_message_hierarchical_latent_mas,
     build_agent_message_sequential_latent_mas,
-    build_intervention_p1_messages,
-    resolve_p1_variant_id,
+    build_initial_messages,
+    initial_input,
+    initial_role,
 )
 from ...infrastructure.paths.naming import clean_model_name
 from ...infrastructure.storage.tensor_store import load_json, save_json_atomic
@@ -70,7 +71,7 @@ def state_identity(
         transform = _tensor_digest(tensors)
     elif realignment:
         raise ValueError("Cannot identify realignment matrix")
-    variant = resolve_p1_variant_id(args)
+    input_kind = initial_input(args)
     identity = {
         "model": str(args.model_name),
         "forward_validation": "process_rng_v1",
@@ -83,8 +84,9 @@ def state_identity(
         "realignment_digest": transform,
         "task": str(getattr(args, "task", "gsm8k")),
         "split": str(getattr(args, "split", "test")),
-        "p1_variant": variant,
-        "p1_messages": build_intervention_p1_messages("{question}", args),
+        "initial_input": input_kind,
+        "initial_role": initial_role(args),
+        "initial_messages": build_initial_messages("{question}", args),
     }
     provenance = {
         "torch": torch.__version__,
@@ -167,18 +169,18 @@ def result_identity(
         "max_new_tokens": int(getattr(args, "max_new_tokens", 2048)),
         "temperature": float(getattr(args, "temperature", 0.6)),
         "top_p": float(getattr(args, "top_p", 0.95)),
-        "rng_policy": "sample_condition_v1",
+        "rng_policy": "sample_v2",
         "decoder": hashlib.sha256(
             (Path(__file__).parent / "decoder.py").read_bytes()
         ).hexdigest(),
     }
-    if condition == "plce":
+    if condition == "rqlce":
         payload["control_signal"] = getattr(args, "control_signal", "\nSolution:")
-    if condition == "plce":
+    if condition == "rqlce":
         payload["intervention_token_ids"] = model.tokenizer(
             payload["control_signal"], return_tensors="pt", add_special_tokens=False
         )["input_ids"][0].tolist()
-    if condition in {"plpe", "rqlre", "rqlqe", "rqrqe"}:
+    if condition in {"rqlrqe", "rqlre", "rqlqe", "rqrqe"}:
         messages = intervention_messages(condition, item, args)
         prompts, ids, _, _ = model.prepare_chat_batch(
             [messages], add_generation_prompt=True
@@ -194,57 +196,55 @@ def result_identity(
     return payload
 
 
+def sample_seed(
+    base_seed: int, task: str, split: str, index: int, question: str
+) -> int:
+    """Derive a stable seed from dataset identity, independently of experiment settings."""
+    return int(
+        canonical_hash(
+            {
+                "seed": base_seed,
+                "task": task,
+                "split": split,
+                "sample_index": index,
+                "question": question,
+            }
+        )[:16],
+        16,
+    )
+
+
 def resolve_conditions(args: Any) -> list[str]:
-    variant = resolve_p1_variant_id(args)
-    defaults = (
-        ["qe", "qle"]
-        if variant == "question_only"
-        else ["rqe", "rqle", "rqlce", "rqlre", "rqlqe", "rqlrqe", "rqrqe"]
-        if variant in {"planner", "critic", "refiner", "judger"}
-        else ["pe", "ple", "plce", "plpe"]
-    )
-    if getattr(args, "plpe_prompt", None) and variant != "question_only":
-        defaults = [c for c in defaults if c not in {"rqlrqe", "rqrqe"}]
-        if "plpe" not in defaults:
-            defaults.append("plpe")
-    raw = getattr(args, "intervention_conditions", None) or defaults
-    conditions = (
-        [c.strip() for c in raw.split(",")] if isinstance(raw, str) else list(raw)
-    )
-    conditions = [str(c).strip().lower() for c in conditions]
-    aliases = {
-        "qe": "pe",
-        "rqe": "pe",
-        "qle": "ple",
-        "rqle": "ple",
-        "rqlce": "plce",
-        "rqlrqe": "plpe",
+    from ...domain.services.prompts.intervention import initial_conditions
+
+    permitted = initial_conditions(args)
+    supported = {
+        "qe",
+        "qle",
+        "rqe",
+        "rqle",
+        "rqlce",
+        "rqlre",
+        "rqlqe",
+        "rqlrqe",
+        "rqrqe",
     }
-    permitted = (
-        {"qe", "qle"}
-        if variant == "question_only"
-        else {"rqe", "rqle", "rqlce", "rqlre", "rqlqe", "rqlrqe", "rqrqe"}
-        if variant in {"planner", "critic", "refiner", "judger"}
-        else set()
+    if set(permitted) - supported:
+        raise ValueError(
+            "Initial-input configuration contains unsupported intervention conditions"
+        )
+    if getattr(args, "plpe_prompt", None):
+        raise ValueError("Cannot classify a custom intervention prompt")
+    raw = getattr(args, "intervention_conditions", None) or initial_conditions(
+        args, defaults=True
     )
-    if (set(conditions) - {"pe", "ple", "plce", "plpe"}) - permitted:
-        raise ValueError("Condition does not match P1 variant")
-    if getattr(args, "plpe_prompt", None) and {"rqlrqe", "rqrqe"} & set(conditions):
-        raise ValueError("Custom P2 cannot be classified as a role and question prompt")
-    conditions = list(dict.fromkeys(aliases.get(c, c) for c in conditions))
-    if set(conditions) - {"pe", "ple", "plce", "plpe", "rqlre", "rqlqe", "rqrqe"}:
-        raise ValueError("Unknown intervention condition")
-    return conditions
+    conditions = [
+        c.strip().lower() for c in (raw.split(",") if isinstance(raw, str) else raw)
+    ]
+    if set(conditions) - set(permitted):
+        raise ValueError("Condition does not match initial input")
+    return list(dict.fromkeys(conditions))
 
 
 def condition_name(condition: str, args: Any) -> str:
-    """Describe only conditions whose prompt structure is known."""
-    variant = resolve_p1_variant_id(args)
-    if variant == "question_only":
-        return {"pe": "QE", "ple": "QLE"}.get(condition, condition.upper())
-    if variant not in {"planner", "critic", "refiner", "judger"}:
-        return condition.upper()
-    names = {"pe": "RQE", "ple": "RQLE", "plce": "RQLCE", "plpe": "RQLRQE"}
-    if condition == "plpe" and getattr(args, "plpe_prompt", None):
-        return "PLPE"
-    return names.get(condition, condition.upper())
+    return condition.upper()

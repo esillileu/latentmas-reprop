@@ -30,7 +30,7 @@ def test_execution_reuses_shared_state_and_isolates_results(tmp_path):
         model_name="Qwen/model",
         latent_steps=15,
         latent_step_checkpoint_interval=10,
-        intervention_conditions=["ple"],
+        intervention_conditions=["rqle"],
         temperature=0.0,
         max_new_tokens=1,
         seed=42,
@@ -50,7 +50,7 @@ def test_execution_reuses_shared_state_and_isolates_results(tmp_path):
     args.temperature = 0.5
     uc.execute(model, args)
     assert (
-        len(list((state / "samples/000000/results/ls20").glob("*/ple/result.json")))
+        len(list((state / "samples/000000/results/ls20").glob("*/rqle/result.json")))
         == 2
     )
     assert len(list(store.base_dir.glob("intervention_continuation/*/*/*"))) == 1
@@ -118,7 +118,7 @@ def test_identity_separates_state_and_condition_settings():
         model_name="Qwen/test",
         task="gsm8k",
         split="test",
-        p1_prompt="{question}",
+        initial_role="direct_solve",
         latent_steps=10,
         seed=1,
         temperature=0.0,
@@ -126,17 +126,19 @@ def test_identity_separates_state_and_condition_settings():
     )
     state1, _ = state_identity(model, args, "transformers")
     item = {"question": "Q", "gold": "1"}
-    ple1 = result_identity(canonical_hash(state1), 10, "ple", item, args, model)
-    plce1 = result_identity(canonical_hash(state1), 10, "plce", item, args, model)
+    ple1 = result_identity(canonical_hash(state1), 10, "rqle", item, args, model)
+    plce1 = result_identity(canonical_hash(state1), 10, "rqlce", item, args, model)
     args.control_signal = "B"
     args.latent_steps = 20
     state2, _ = state_identity(model, args, "transformers")
     assert state1 == state2
-    assert result_identity(canonical_hash(state2), 10, "ple", item, args, model) == ple1
     assert (
-        result_identity(canonical_hash(state2), 10, "plce", item, args, model) != plce1
+        result_identity(canonical_hash(state2), 10, "rqle", item, args, model) == ple1
     )
-    args.p1_prompt = "different {question}"
+    assert (
+        result_identity(canonical_hash(state2), 10, "rqlce", item, args, model) != plce1
+    )
+    args.initial_role = "latent_think"
     state3, _ = state_identity(model, args, "transformers")
     assert state3 != state1
 
@@ -156,7 +158,7 @@ def test_partial_prefill_is_repaired_and_existing_segments_reused(tmp_path):
         model_name="Qwen/model",
         latent_steps=20,
         latent_step_checkpoint_interval=10,
-        intervention_conditions=["ple"],
+        intervention_conditions=["rqle"],
         temperature=0.0,
         max_new_tokens=1,
         seed=42,
@@ -202,7 +204,7 @@ def test_stochastic_forward_does_not_commit_prefill(tmp_path):
         task="gsm8k",
         model_name="Qwen/model",
         latent_steps=1,
-        intervention_conditions=["ple"],
+        intervention_conditions=["rqle"],
         temperature=0.0,
         max_new_tokens=1,
         no_progress=True,
@@ -240,7 +242,7 @@ def test_reader_uses_prefill_for_baseline_only_run(tmp_path):
     )
     uc.execute(_build_mock_wrapper(), args)
     state = next(storage.base_dir.glob("intervention_continuation/*/*/*"))
-    result = next(state.glob("samples/000000/results/ls0/*/pe/result.json")).parent
+    result = next(state.glob("samples/000000/results/ls0/*/rqe/result.json")).parent
     run = state / "runs" / "comparison"
     run.mkdir()
     from latentmas_reprop.infrastructure.storage.tensor_store import save_json_atomic

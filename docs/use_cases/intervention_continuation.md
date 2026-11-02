@@ -1,26 +1,26 @@
 # LMAS Intervention Continuation Analysis
 
-R은 역할 지시, Q는 문제, L은 잠재 계산, C는 제어 신호, E는 명시적 생성입니다. 초기 역할 R₁과 후속 역할 R₂는 서로 다를 수 있으며 기본값은 각각 Planner와 Judger입니다. 실제 P1과 개입 프롬프트 및 토큰 ID가 기록됩니다.
+R은 역할 또는 풀이 지시 프롬프트, Q는 문제, L은 잠재 계산, C는 제어 신호, E는 명시적 생성입니다. 초기 역할 R₁과 후속 역할 R₂는 서로 다를 수 있으며 기본값은 각각 Planner와 Judger입니다. 실제 초기 입력과 개입 프롬프트 및 토큰 ID가 기록됩니다.
 
 | 조건 | 순서 | 저장 식별자 |
 |---|---|---|
-| QE | Q → E | pe (question_only P1) |
-| RQE | R₁(Q) → E | pe |
-| QLE | Q → L → E | ple (question_only P1) |
-| RQLE | R₁(Q) → L → E | ple |
-| RQLCE | R₁(Q) → L → C → E | plce |
+| QE | Q → E | qe |
+| RQE | R₁(Q) → E | rqe |
+| QLE | Q → L → E | qle |
+| RQLE | R₁(Q) → L → E | rqle |
+| RQLCE | R₁(Q) → L → C → E | rqlce |
 | RQLRE | R₁(Q) → L → R₂ → E | rqlre |
 | RQLQE | R₁(Q) → L → Q → E | rqlqe |
-| RQLRQE | R₁(Q) → L → R₂(Q) → E | plpe |
+| RQLRQE | R₁(Q) → L → R₂(Q) → E | rqlrqe |
 | RQRQE | R₁(Q) → R₂(Q) → E | rqrqe |
 
-기존 `pe`, `ple`, `plce`, `plpe` 별칭과 결과 경로는 유지됩니다. 역할이나 문제 구성으로 분류할 수 없는 커스텀 프롬프트는 기존 명칭으로 표시합니다.
+조건 식별자는 소문자 공식 명칭을 사용합니다. 초기 지시 프롬프트를 R로 표현하며, 사용된 초기 역할과 실제 프롬프트를 함께 기록합니다. 커스텀 개입 프롬프트는 허용하지 않습니다. 기존 결과는 원본 정책으로 보존되며 새 `sample_v2` RNG 정책과 별도 결과로 취급합니다. 시드는 base seed와 데이터셋 샘플 식별자로 결정됩니다.
 
 ---
 
 ## 1. 개요 및 연구 목적
 
-동일 P1의 저장된 공통 상태에서 분기해 개입과 명시적 생성의 영향을 비교합니다. `QE`, `RQE`, `RQRQE`는 ls0에서 분기하며 잠재 forward를 수행하지 않습니다. 다른 조건은 목표 lsN을 재사용합니다. 기본 Planner 조건은 RQE, RQLE, RQLCE, RQLRE, RQLQE, RQLRQE, RQRQE이며 question_only 기본 조건은 QE, QLE입니다.
+동일 초기 입력의 저장된 공통 상태에서 분기해 개입과 명시적 생성의 영향을 비교합니다. `QE`, `RQE`, `RQRQE`는 ls0에서 분기하며 잠재 forward를 수행하지 않습니다. 다른 조건은 목표 lsN을 재사용합니다. 기본 프리셋은 direct_solve 역할의 RQ에서 RQE, RQLE, RQRQE, RQLRQE를 실행하며 Q 기본 조건은 QE, QLE입니다. RQ는 RQLCE, RQLRE, RQLQE도 선택할 수 있습니다.
 
 ---
 
@@ -41,7 +41,7 @@ R은 역할 지시, Q는 문제, L은 잠재 계산, C는 제어 신호, E는 �
 
 ```mermaid
 flowchart TD
-    P1["P1 prefill"] --> LS0["shared/ls0"]
+    Initial["RQ / Q prefill"] --> LS0["shared/ls0"]
     LS0 --> Direct["QE / RQE / RQRQE"]
     LS0 --> Latent["latent steps"] --> LSN["shared/lsN"]
     LSN --> Branch["QLE / RQLE / RQLCE / RQLRE / RQLQE / RQLRQE"]
@@ -51,11 +51,11 @@ flowchart TD
 ```
 
 ### UC-01. 공통 잠재 계산 (`shared`)
-* 상위 Planner 프롬프트($P_1$)로부터 $T$개의 잠재 스텝($L_1 \to \dots \to L_T$)을 수행합니다.
+* 초기 입력 RQ 또는 Q로부터 $T$개의 잠재 스텝($L_1 \to \dots \to L_T$)을 수행합니다.
 * 샘플당 단 1회만 계산하며, 분기 직전 전체 KV 캐시 스냅샷(`kv.pt`)과 프롬프트 및 각 잠재 스텝의 최종 히든 벡터(`hidden.pt`)를 저장합니다.
 
 ### UC-02. 조건별 독립 분기
-* PE 및 RQRQE는 `ls0`에서, 잠재 조건은 요청한 `lsN`에서 시작합니다. 각 분기는 KV를 복제합니다.
+* QE, RQE 및 RQRQE는 `ls0`에서, 잠재 조건은 요청한 `lsN`에서 시작합니다. 각 분기는 KV를 복제합니다.
 * 분기 이후 생성되는 토큰과 KV 상태는 서로 완전히 독립적으로 갱신됩니다.
 * 개입 토큰 및 생성 구간의 위치별 최종 히든 벡터를 1:1 대응하여 기록합니다.
 
@@ -90,10 +90,10 @@ flowchart TD
 샘플별 `shared/ls0`과 `shared/lsN` 구간을 저장합니다. `ls0`은 전체 prompt KV이고,
 각 `lsN`은 이전 저장 경계 이후의 KV 구간과 전체 hidden을 포함합니다.
 조건 결과는 `samples/<sample>/results/lsN/<result-hash>/<condition>/`에,
-조건별 요약과 reader 참조는 `runs/<run-hash>/`에 저장합니다. PE와 RQRQE의 N은 항상 0입니다.
+조건별 요약과 reader 참조는 `runs/<run-hash>/`에 저장합니다. QE, RQE와 RQRQE의 N은 항상 0입니다.
 상태와 결과 식별 및 구간 조립 계약은 [리팩터링 설계](../intervention_continuation_refactor.md)를 참조하세요.
 
-디코딩 RNG는 결과 식별과 샘플 인덱스에서 고정하므로 조건 순서나 완료된 결과의
+디코딩 RNG는 base seed와 샘플 식별자로 고정하므로 조건 순서나 완료된 결과의
 건너뛰기에 영향을 받지 않습니다. 요청한 `top_p`는 결과 식별에 포함되지만 현재
 디코더의 샘플링에는 적용되지 않습니다.
 
@@ -102,10 +102,9 @@ flowchart TD
 ## 6. 실행 설정 및 프리셋
 
 * **기본 프리셋 파일**: [`configs/intervention_continuation/gsm8k_q38.yaml`](file:///home/user3/projects/latentmas-reprop/configs/intervention_continuation/gsm8k_q38.yaml)
-* **$P_1$ 프롬프트 바리언트 정의 파일**: [`configs/prompts/intervention_p1.yaml`](file:///home/user3/projects/latentmas-reprop/configs/prompts/intervention_p1.yaml)
-  - `planner` (기본값): 기존 LatentMAS Sequential Planner 프롬프트 (최종 답 없이 단계별 계획만 작성 지시)
+* **초기 역할과 조건 정의 파일**: [`configs/prompts/intervention.yaml`](../../configs/prompts/intervention.yaml)
+  - `planner`: 기존 LatentMAS Sequential Planner 프롬프트 (최종 답 없이 단계별 계획만 작성 지시)
   - `direct_solve`: Single-agent 스타일로 즉시 단계별 추론 및 `\boxed{}` 최종 정답 도출 지시
-  - `question_only`: 역할이나 지시문 없이 `Question: {question}`만 제시
   - `latent_think`: 내부 잠재 상태에서 단계별로 깊이 생각한 뒤 답을 내도록 지시
   - `math_agent`: Hierarchical LatentMAS 스타일의 Math Agent 프롬프트
 
@@ -121,8 +120,9 @@ temperature: 0.6
 top_p: 0.95
 seed: 42
 intervention_continuation: true
-p1_variant: "planner"
-# intervention_conditions를 생략하면 P1별 기본 조건을 사용
+initial_input: rq
+initial_role: direct_solve
+# intervention_conditions를 생략하면 초기 입력별 기본 조건을 사용
 control_signal: "\nSolution:"
 receiver_role: "judger"
 latent_step_checkpoint_interval: 10
@@ -153,13 +153,13 @@ CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_contin
   --control_signal "\nAnswer:" \
   --receiver_role critic
 
-# 첫 번째 프롬프트(P_1) 바리언트 변경 (경로 및 MLflow Run 자동 격리)
+# 초기 RQ 역할 변경
 CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38 \
-  --p1_variant direct_solve
+  --initial_role latent_think
 
-# 첫 번째 프롬프트(P_1) 커스텀 템플릿 직접 지정
+# 질문만 초기 입력으로 사용
 CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q38 \
-  --p1_prompt "Solve this math problem carefully:\n{question}"
+  --initial_input q
 ```
 
 ### 3) 드라이런 (설정 검증)
@@ -182,7 +182,7 @@ just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --dry-
 
 ## 9. MLflow 샘플별 통합 Trace
 
-`latentmas/intervention/continuation`의 Run은 P1 상태, 목표 latent step과 실행·디코딩 설정으로 구분합니다. 조건 목록과 샘플 수는 Run 식별에 영향을 주지 않습니다. Run의 `config.json`은 공통 상태와 완료된 결과 경로를 연결하므로 MLflow Run ID로 `ResearchDataReader`에서 읽을 수 있습니다. 동일 Run의 각 샘플 Trace에는 `common_latent`와 완료된 조건별 `decode_<조건>` 스팬이 포함됩니다. 스팬 입력에는 실제 분기 step, 역할, 개입 원문과 토큰 ID가 기록됩니다.
+`latentmas/intervention/continuation`의 Run은 초기 입력 상태, 목표 latent step과 실행·디코딩 설정으로 구분합니다. 조건 목록과 샘플 수는 Run 식별에 영향을 주지 않습니다. Run의 `config.json`은 공통 상태와 완료된 결과 경로를 연결하므로 MLflow Run ID로 `ResearchDataReader`에서 읽을 수 있습니다. 동일 Run의 각 샘플 Trace에는 `common_latent`와 완료된 조건별 `decode_<조건>` 스팬이 포함됩니다. 스팬 입력에는 실제 분기 step, 역할, 개입 원문과 토큰 ID가 기록됩니다.
 
 재실행은 저장된 결과를 읽어 변경이 없으면 Trace를 유지합니다. 조건이 추가되거나 Trace가 누락되면 저장된 결과로 새 Trace를 만들고 MLflow에서 필요한 스팬을 검증합니다. 성공 후에만 같은 Run과 샘플의 이전 Trace를 ID로 삭제합니다. 기록 또는 삭제 실패는 오류로 전달하며 로컬 계산 결과는 유지합니다.
 
@@ -193,3 +193,5 @@ just run-intervention-continuation -c intervention_continuation/gsm8k_q38 --dry-
 The tool groups candidates using recorded prompt tokens where available, compares every overlapping KV and hidden prefix exactly, and reports each sample as mergeable, conflicting, or failed. It reconstructs ls0 and segments at ten-step and original partial boundaries, then checks the assembled KV against every original checkpoint. Completed condition results and trace IDs are copied to the new result paths. Existing run IDs resolve to new run records without changing MLflow.
 
 Historical model and tokenizer revisions, execution environment and RNG validation remain unknown when unavailable. New inference can reuse a migrated trajectory after comparing the current prefill and the saved checkpoint boundary KV and hidden states; only the validation forward and subsequent missing steps are computed. No duplicated quarantine copy is made for failed or conflicting samples; their original files are retained. Run configuration, summaries, samples and other result files are retained in the new run records.
+
+초기 역할과 입력별 허용 조건은 `configs/prompts/intervention.yaml`에서 관리합니다. 새 역할은 `roles`에 `template`을 추가해 사용합니다. `initial_input: q`는 역할 없이 질문만 사용합니다. 프리셋의 조건 목록은 CLI `--intervention_conditions`로 변경할 수 있습니다.

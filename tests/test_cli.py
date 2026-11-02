@@ -160,7 +160,7 @@ def test_parse_args_rejects_multiple_runs(matrix_config_path):
         parse_args(["--config", matrix_config_path])
 
 
-def test_continuation_uses_p1_specific_default_conditions():
+def test_continuation_uses_initial_input_default_conditions():
     from latentmas_reprop.application.intervention_continuation.identity import (
         resolve_conditions,
     )
@@ -186,8 +186,8 @@ def test_continuation_uses_p1_specific_default_conditions():
             "--task",
             "gsm8k",
             "--intervention_continuation",
-            "--p1_variant",
-            "question_only",
+            "--initial_input",
+            "q",
         ]
     )
-    assert resolve_conditions(args) == ["pe", "ple"]
+    assert resolve_conditions(args) == ["qe", "qle"]

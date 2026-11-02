@@ -8,8 +8,8 @@ import pytest
 import torch
 
 from latentmas_reprop.domain.services.prompts import (
-    build_intervention_p1_messages,
-    resolve_p1_variant_id,
+    build_initial_messages,
+    initial_input,
 )
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage.reader import ResearchDataReader
@@ -40,8 +40,9 @@ def inputs(tmp_path, monkeypatch):
         "realignment_digest": None,
         "task": "gsm8k",
         "split": "test",
-        "p1_variant": resolve_p1_variant_id(SimpleNamespace()),
-        "p1_messages": build_intervention_p1_messages(
+        "initial_input": initial_input(SimpleNamespace()),
+        "initial_role": "planner",
+        "initial_messages": build_initial_messages(
             "{question}", SimpleNamespace(model_name="Qwen/Qwen3-8B")
         ),
     }

@@ -47,18 +47,15 @@ def add_intervention_args(
         help="Run LMAS Intervention Continuation Analysis (PLE, PLCE, PLPE).",
     )
     parser.add_argument(
-        "--p1_variant",
-        "--sender_role",
-        dest="p1_variant",
-        type=str,
-        default=defaults.get("p1_variant", defaults.get("sender_role", "planner")),
-        help="P1 (initial/sender) prompt variant name (default: 'planner'; defined in configs/prompts/intervention_p1.yaml).",
+        "--initial_input",
+        choices=["rq", "q"],
+        default=defaults.get("initial_input", "rq"),
+        help="Initial input: role and question (rq), or question only (q).",
     )
     parser.add_argument(
-        "--p1_prompt",
-        type=str,
-        default=defaults.get("p1_prompt"),
-        help="Custom prompt template for P1 initial prompt (can contain {question}).",
+        "--initial_role",
+        default=defaults.get("initial_role", "planner"),
+        help="Role instruction for rq, defined in configs/prompts/intervention.yaml.",
     )
     parser.add_argument(
         "--control_signal",

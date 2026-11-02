@@ -132,9 +132,9 @@ def test_verification_01_02_03_04_05(tmp_path):
     last_hidden = common_h[-1]
 
     # UC-02: Branching
-    ple_h, ple_rec = runner.execute_ple(item, kv_snap, last_hidden)
-    plce_h, plce_rec = runner.execute_plce(item, kv_snap)
-    _plpe_h, _plpe_rec = runner.execute_plpe(item, kv_snap)
+    ple_h, ple_rec = runner.execute_unprompted(item, kv_snap, last_hidden)
+    plce_h, plce_rec = runner.execute_control(item, kv_snap)
+    _plpe_h, _plpe_rec = runner.execute_prompt(item, kv_snap)
 
     # 1. Same common latent start: kv_snap was cloned for all three branches
     assert ple_rec["intervention_length"] == 0
@@ -193,11 +193,11 @@ def test_verification_06_07_resumption_and_partial_failure(tmp_path):
         evaluator_port=evaluator,
     )
     _summary, recs = uc.execute(wrapper, args)
-    assert len(recs) == 7
+    assert len(recs) == 4
 
     plpe_dir = next(
         storage.base_dir.glob(
-            "intervention_continuation/*/*/*/samples/000000/results/ls2/*/plpe"
+            "intervention_continuation/*/*/*/samples/000000/results/ls2/*/rqlrqe"
         )
     )
     (plpe_dir / "result.json").unlink()
