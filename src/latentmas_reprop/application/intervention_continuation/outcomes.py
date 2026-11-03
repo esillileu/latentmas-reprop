@@ -108,14 +108,26 @@ class ConditionOutcome:
 
 
 def _load_state_meta(dir_path: Path) -> tuple[str | None, str | None]:
-    for parent in [dir_path.parent.parent, dir_path.parent, dir_path]:
-        sp = parent / "state.json"
-        if sp.exists():
-            try:
-                s = json.loads(sp.read_text(encoding="utf-8")).get("identity", {})
-                return s.get("task") or s.get("dataset"), s.get("split")
-            except Exception:
-                pass
+    state_file = None
+    cfg_path = dir_path / "config.json"
+    if cfg_path.exists():
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        if "state_path" in cfg:
+            state_rel = Path(cfg["state_path"])
+            # Check relative to repo root or storage/experiments or dir_path
+            for base in [Path(), Path("storage/experiments"), dir_path.parent.parent.parent]:
+                cand = base / state_rel / "state.json"
+                if cand.exists():
+                    state_file = cand
+                    break
+    if not state_file:
+        cand = dir_path.parent.parent / "state.json"
+        if cand.exists():
+            state_file = cand
+
+    if state_file and state_file.exists():
+        s = json.loads(state_file.read_text(encoding="utf-8")).get("identity", {})
+        return s.get("task") or s.get("dataset"), s.get("split")
     return None, None
 
 
@@ -142,8 +154,15 @@ def _parse_records(
         corr = bool(r["correct"])
 
         gold = r.get("gold") if r.get("gold") is not None else ident.get("gold")
-        ds = r.get("dataset") or r.get("task") or ident.get("task") or d_dataset
-        sp = r.get("split") or ident.get("split") or d_split
+        sample_ds = r.get("dataset") or r.get("task") or ident.get("task")
+        if sample_ds is not None and d_dataset is not None and sample_ds != d_dataset:
+            raise ValueError(f"Task/dataset conflict: record '{sample_ds}' vs state '{d_dataset}'")
+        sample_sp = r.get("split") or ident.get("split")
+        if sample_sp is not None and d_split is not None and sample_sp != d_split:
+            raise ValueError(f"Split conflict: record '{sample_sp}' vs state '{d_split}'")
+
+        ds = sample_ds or d_dataset
+        sp = sample_sp or d_split
         items.append((sid, corr, str(cond), gold, ds, sp))
     return items, conds
 

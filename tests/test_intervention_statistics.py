@@ -257,3 +257,24 @@ def test_mcnemar_two_fixture_runs_comparison(tmp_path: Path) -> None:
     assert res.discordant_count == 3
     assert res.accuracy_diff == pytest.approx(0.25)
     assert res.p_value == pytest.approx(1.0)
+
+
+def test_mcnemar_duplicate_sample_ids_raises() -> None:
+    oa = ConditionOutcome(condition="ca", sample_ids=[0, 0, 1], correct=[True, False, True])
+    ob = ConditionOutcome(condition="cb", sample_ids=[0, 0, 1], correct=[True, True, True])
+    with pytest.raises(ValueError, match="Duplicate sample IDs"):
+        mcnemar(oa, ob)
+
+
+def test_from_records_task_and_split_conflict_with_state_raises() -> None:
+    records_task_conflict = [
+        {"sample_index": 0, "condition": "c", "status": "complete", "correct": True, "task": "gsm8k"},
+    ]
+    with pytest.raises(ValueError, match="Task/dataset conflict"):
+        ConditionOutcome.from_records(records_task_conflict, default_dataset="math")
+
+    records_split_conflict = [
+        {"sample_index": 0, "condition": "c", "status": "complete", "correct": True, "split": "test"},
+    ]
+    with pytest.raises(ValueError, match="Split conflict"):
+        ConditionOutcome.from_records(records_split_conflict, default_split="train")

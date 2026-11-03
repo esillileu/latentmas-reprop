@@ -63,6 +63,13 @@ def mcnemar(a: Any, b: Any) -> McNemarResult:
     ids_b = list(b.sample_ids)
     corr_b = list(b.correct)
 
+    if len(ids_a) != len(set(ids_a)):
+        dups_a = {x for x in ids_a if ids_a.count(x) > 1}
+        raise ValueError(f"Duplicate sample IDs in condition a: {sorted(dups_a, key=str)}")
+    if len(ids_b) != len(set(ids_b)):
+        dups_b = {x for x in ids_b if ids_b.count(x) > 1}
+        raise ValueError(f"Duplicate sample IDs in condition b: {sorted(dups_b, key=str)}")
+
     if len(ids_a) != len(corr_a):
         raise ValueError(
             "Length mismatch between sample_ids and correct vector in condition a"
