@@ -45,13 +45,13 @@ def mcnemar(a: Any, b: Any) -> McNemarResult:
     Raises:
         ValueError: If datasets, splits, or golds do not match, or sample IDs differ.
     """
-    # Validate datasets / tasks if present
+    # Validate datasets / tasks
     dataset_a = getattr(a, "dataset", None)
     dataset_b = getattr(b, "dataset", None)
     if dataset_a is not None and dataset_b is not None and dataset_a != dataset_b:
         raise ValueError(f"Dataset mismatch: '{dataset_a}' vs '{dataset_b}'")
 
-    # Validate split if present
+    # Validate split
     split_a = getattr(a, "split", None)
     split_b = getattr(b, "split", None)
     if split_a is not None and split_b is not None and split_a != split_b:
@@ -85,15 +85,14 @@ def mcnemar(a: Any, b: Any) -> McNemarResult:
             f"Sample ID sets do not match between conditions. Extra in A: {sorted(diff_a, key=str)[:5]}, Extra in B: {sorted(diff_b, key=str)[:5]}"
         )
 
-    # Validate golds if available
+    # Validate golds
     golds_a = getattr(a, "golds", None)
     golds_b = getattr(b, "golds", None)
-    if (
-        golds_a
-        and golds_b
-        and len(golds_a) == len(ids_a)
-        and len(golds_b) == len(ids_b)
-    ):
+    if golds_a and golds_b:
+        if len(golds_a) != len(ids_a):
+            raise ValueError("Length mismatch between sample_ids and golds in condition a")
+        if len(golds_b) != len(ids_b):
+            raise ValueError("Length mismatch between sample_ids and golds in condition b")
         gold_map_a = dict(zip(ids_a, golds_a, strict=True))
         gold_map_b = dict(zip(ids_b, golds_b, strict=True))
         for sid in set_a:
