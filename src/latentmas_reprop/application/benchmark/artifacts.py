@@ -20,7 +20,6 @@ def start_benchmark_tracker(
     if not tracker_port:
         return
 
-
     backend_name = "vllm" if getattr(args, "use_vllm", False) else "transformers"
     dtype_name = getattr(args, "model_dtype", "") or getattr(args, "dtype", "")
     exp_rel = getattr(args, "exp_relpath", None) or build_experiment_relpath(
@@ -42,7 +41,7 @@ def start_benchmark_tracker(
     if hasattr(args, "latent_steps") and args.latent_steps:
         tags["latent_steps"] = str(args.latent_steps)
 
-    tracker_port.start_run(
+    tracker_port.start_staging_run(
         experiment_name=mlflow_experiment_name(BENCHMARK),
         run_name=run_name,
         tags=tags,
@@ -182,7 +181,6 @@ def save_benchmark_artifacts(
     if not tracker_port:
         return
 
-    tracker_port.log_metrics(metrics.to_mlflow_metrics())
     clean_args = clean_config_args(args)
     summary_dict = {
         "status": "complete",
@@ -190,10 +188,49 @@ def save_benchmark_artifacts(
         "metrics": metrics.to_dict(),
         "config": clean_args,
     }
-    tracker_port.log_dict(summary_dict, "results/summary.json")
-    tracker_port.log_dict(summary_dict, "summary.json")
-    tracker_port.log_dict(clean_args, "config/resolved_config.yaml")
-    tracker_port.log_artifact(samples_path, artifact_path="results")
 
-    tracker_port.flush_traces()
-    tracker_port.end_run(status="FINISHED")
+    if tracker_port.is_staging:
+        tracker_port.promote_staging_run(
+            final_run_name=run_name,
+            tags={
+                "model": args.model_name,
+                "task": args.task,
+                "method": args.method,
+                "split": getattr(args, "split", "test"),
+                "seed": str(args.seed),
+                "experiment_type": BENCHMARK,
+                "data_dir": str(exp_dir.resolve()),
+                "rel_dir": run_name,
+                "run_name": run_name,
+            },
+            metrics=metrics.to_mlflow_metrics(),
+            params={
+                "model": args.model_name,
+                "task": args.task,
+                "method": args.method,
+                "split": getattr(args, "split", "test"),
+                "prompt": getattr(args, "prompt", "sequential"),
+                "max_samples": args.max_samples,
+                "max_new_tokens": getattr(args, "max_new_tokens", 4096),
+                "temperature": getattr(args, "temperature", 0.6),
+                "top_p": getattr(args, "top_p", 0.95),
+                "generate_bs": getattr(args, "generate_bs", 1),
+                "latent_steps": getattr(args, "latent_steps", 0),
+                "backend": backend_name,
+                "seed": args.seed,
+            },
+            artifacts=[(samples_path, "results")],
+            status="FINISHED",
+        )
+        tracker_port.log_dict(summary_dict, "results/summary.json")
+        tracker_port.log_dict(summary_dict, "summary.json")
+        tracker_port.log_dict(clean_args, "config/resolved_config.yaml")
+        tracker_port.end_run(status="FINISHED")
+    else:
+        tracker_port.log_metrics(metrics.to_mlflow_metrics())
+        tracker_port.log_dict(summary_dict, "results/summary.json")
+        tracker_port.log_dict(summary_dict, "summary.json")
+        tracker_port.log_dict(clean_args, "config/resolved_config.yaml")
+        tracker_port.log_artifact(samples_path, artifact_path="results")
+        tracker_port.flush_traces()
+        tracker_port.end_run(status="FINISHED")

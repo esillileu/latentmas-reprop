@@ -106,9 +106,9 @@ class PathResolver:
                 path = root_cand
             else:
                 if clean_rel.startswith("storage/experiments/"):
-                    clean_rel = clean_rel[len("storage/experiments/"):]
+                    clean_rel = clean_rel[len("storage/experiments/") :]
                 elif clean_rel.startswith("experiments/"):
-                    clean_rel = clean_rel[len("experiments/"):]
+                    clean_rel = clean_rel[len("experiments/") :]
                 path = (self.experiments_dir / clean_rel).resolve()
         if create:
             path.mkdir(parents=True, exist_ok=True)
@@ -129,7 +129,11 @@ class PathResolver:
         return path
 
     def get_condition_dir(
-        self, run_id: str | Path, sample_key: int | str, condition: str, create: bool = False
+        self,
+        run_id: str | Path,
+        sample_key: int | str,
+        condition: str,
+        create: bool = False,
     ) -> Path:
         """Get directory for a specific condition within a sample."""
         clean_condition = str(condition).replace("/", "_").replace("\\", "_")

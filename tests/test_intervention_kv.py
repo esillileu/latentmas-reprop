@@ -204,6 +204,7 @@ def test_mlflow_run_created_before_execution():
     call_order: list[str] = []
     tracker = MagicMock()
     tracker.start_run.side_effect = lambda **_kw: call_order.append("start_run")
+    tracker.start_staging_run.side_effect = tracker.start_run.side_effect
     tracker.log_params.return_value = None
     tracker.start_sample_trace.return_value.__enter__ = lambda s: (
         call_order.append("trace_enter") or MagicMock()
@@ -237,10 +238,15 @@ def test_mlflow_run_created_before_execution():
 
 
 def test_failed_experiment_calls_end_run_failed():
-    tracker = MagicMock(start_run=lambda *a, **kw: None, log_params=lambda *a, **kw: None)
+    tracker = MagicMock(
+        start_run=lambda *a, **kw: None, log_params=lambda *a, **kw: None
+    )
     uc = InterventionKvUseCase(tracker_port=tracker)
     dataset_mock = MagicMock(
-        load=lambda **kw: [{"question": "q0", "gold": "1"}, {"question": "q1", "gold": "2"}]
+        load=lambda **kw: [
+            {"question": "q0", "gold": "1"},
+            {"question": "q1", "gold": "2"},
+        ]
     )
     args = _default_args()
     model_mock = MagicMock(

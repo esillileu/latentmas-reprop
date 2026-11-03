@@ -1,20 +1,28 @@
 """Reconcile per-sample MLflow traces with completed local results."""
 
-import json
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from ...domain.models.use_cases import INTERVENTION_CONTINUATION, mlflow_experiment_name
-from ...domain.services.prompts import initial_input, initial_role
+from ...domain.services.prompts import initial_input
 from ...infrastructure.paths.resolver import get_git_commit_hash
 from ...infrastructure.storage.tensor_store import (
-    is_condition_complete,
     load_json,
     save_json_atomic,
 )
 from .artifacts import trace_intervention_continuation_sample
-from .identity import canonical_hash, condition_name, result_identity
+from .identity import canonical_hash, result_identity
+from .tracking_verification import (
+    fetch_condition_records,
+    remove_trace_references,
+    search_matching_traces,
+    verify_trace_spans,
+)
+
+_records = fetch_condition_records
+_search = search_matching_traces
+_verified = verify_trace_spans
+_remove_references = remove_trace_references
 
 
 def _group(state: Path, args: Any, model: Any) -> dict[str, Any]:
@@ -37,138 +45,17 @@ def _group(state: Path, args: Any, model: Any) -> dict[str, Any]:
     return probe
 
 
-def _records(
-    state: Path, sample: str, item: dict[str, Any], args: Any, model: Any
-) -> dict[str, dict[str, Any]]:
-    step = int(getattr(args, "latent_steps", 10))
-    from ...domain.services.prompts.intervention import initial_conditions
-
-    conditions = initial_conditions(args)
-    records = {}
-    for condition in conditions:
-        branch_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
-        identity = result_identity(
-            state.name, branch_step, condition, item, args, model
-        )
-        directory = (
-            state
-            / "samples"
-            / sample
-            / "results"
-            / f"ls{branch_step}"
-            / canonical_hash(identity)
-            / condition
-        )
-        if not is_condition_complete(directory):
-            continue
-        record = load_json(directory / "result.json")
-        if (
-            record.get("status") != "complete"
-            or record.get("identity") != identity
-            or "hidden.pt" not in record.get("files", [])
-        ):
-            raise ValueError(f"Invalid completed result: {directory}")
-        record.pop("trace_id", None)
-        record["condition_name"] = condition_name(condition, args)
-        record["initial_role"] = initial_role(args)
-        if condition in {"rqlrqe", "rqlre", "rqrqe"} and not (
-            condition == "rqlrqe" and getattr(args, "plpe_prompt", None)
-        ):
-            record["receiver_role"] = getattr(args, "receiver_role", "judger")
-        records[record["condition_name"]] = record
-    return records
-
-
-def _search(
-    client: Any, run_id: str, experiment_id: str, sample: str, group: str
-) -> list[Any]:
-    traces = []
-    token = None
-    while True:
-        page = client.search_traces(
-            run_id=run_id,
-            locations=[experiment_id],
-            filter_string=f"tags.sample_key = '{sample}' AND tags.comparison_id = '{group}'",
-            page_token=token,
-            max_results=100,
-            include_spans=True,
-            flush=True,
-        )
-        traces.extend(page)
-        token = page.token
-        if not token:
-            return traces
-
-
-def _verified(
-    trace: Any, sample: str, group: str, fingerprint: str, names: set[str], run_id: str
-) -> bool:
-    tags = trace.info.tags
-    roots = [
-        span
-        for span in trace.data.spans
-        if span.name == f"sample_{sample}" and span.parent_id is None
-    ]
-    if len(roots) != 1:
-        return False
-    spans = {
-        span.name for span in trace.data.spans if span.parent_id == roots[0].span_id
-    }
-    return (
-        trace.info.state == "OK"
-        and trace.info.trace_metadata.get("mlflow.sourceRun") == run_id
-        and tags.get("sample_key") == sample
-        and tags.get("comparison_id") == group
-        and tags.get("result_fingerprint") == fingerprint
-        and {"common_latent", *(f"decode_{name}" for name in names)} <= spans
-    )
-
-
-def _remove_references(state: Path, sample: str, trace_id: str) -> None:
-    for path in (state / "samples" / sample / "results").glob("ls*/*/*/result.json"):
-        record = load_json(path)
-        if record.get("trace_id") == trace_id:
-            record.pop("trace_id")
-            save_json_atomic(path, record)
-    for path in (state / "runs").glob("*/samples.jsonl"):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        rows = [json.loads(line) for line in lines if line.strip()]
-        changed = False
-        for row in rows:
-            if (
-                row.get("sample_index") == int(sample)
-                and row.get("trace_id") == trace_id
-            ):
-                row.pop("trace_id")
-                changed = True
-        if changed:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=path.parent, delete=False
-            ) as handle:
-                temporary = Path(handle.name)
-                try:
-                    for row in rows:
-                        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-                except BaseException:
-                    temporary.unlink(missing_ok=True)
-                    raise
-            try:
-                temporary.replace(path)
-            finally:
-                temporary.unlink(missing_ok=True)
-
-
-def track_results(
+def start_continuation_staging_tracker(
     tracker: Any,
     base: Path,
     state: Path,
-    dataset: list[dict[str, Any]],
     args: Any,
     model: Any,
-    metrics: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
+    """Start an MLflow staging run for real-time per-sample tracing."""
     group = canonical_hash(_group(state, args, model))
     run_dir = state / "runs" / group
+    run_dir.mkdir(parents=True, exist_ok=True)
     relative = str(run_dir.relative_to(base))
     config_path = run_dir / "config.json"
     config = {
@@ -184,49 +71,82 @@ def track_results(
             raise ValueError("Run identity mismatch")
     else:
         save_json_atomic(config_path, config)
-    run = tracker.start_run(
+
+    tags = {
+        "rel_dir": relative,
+        "data_dir": str(run_dir.resolve()),
+        "comparison_id": group,
+        "experiment_type": INTERVENTION_CONTINUATION,
+        "initial_input": initial_input(args),
+    }
+    tracker.start_staging_run(
         experiment_name=mlflow_experiment_name(INTERVENTION_CONTINUATION),
         run_name=relative,
-        tags={
-            "rel_dir": relative,
-            "data_dir": str(run_dir.resolve()),
-            "comparison_id": group,
-            "experiment_type": INTERVENTION_CONTINUATION,
-            "initial_input": initial_input(args),
-        },
+        tags=tags,
     )
-    run_id, experiment_id = run.info.run_id, run.info.experiment_id
     tracker.log_params(_group(state, args, model))
-    client = tracker.client
-    git_hash = get_git_commit_hash()
-    try:
-        for index, item in enumerate(dataset):
-            sample = f"{index:06d}"
-            records = _records(state, sample, item, args, model)
-            if not records:
-                continue
-            paths = set(config["result_paths"])
-            for record in records.values():
-                identity = record["identity"]
-                path = (
-                    Path("samples")
-                    / sample
-                    / "results"
-                    / f"ls{identity['step']}"
-                    / canonical_hash(identity)
-                    / identity["condition"]
-                )
-                paths.add(path.as_posix())
-            if paths != set(config["result_paths"]):
-                config["result_paths"] = sorted(paths)
-                save_json_atomic(config_path, config)
-            meta = load_json(
-                state / "samples" / sample / "shared" / "ls0" / "result.json"
+    return {
+        "group": group,
+        "run_dir": run_dir,
+        "relative": relative,
+        "config_path": config_path,
+        "config": config,
+        "tags": tags,
+    }
+
+
+def trace_continuation_sample(
+    tracker: Any,
+    state: Path,
+    sample: str,
+    index: int,
+    item: dict[str, Any],
+    args: Any,
+    model: Any,
+    group: str,
+    config: dict[str, Any] | None = None,
+    config_path: Path | None = None,
+) -> str | None:
+    """Trace a single completed sample in real time during execution."""
+    records = _records(state, sample, item, args, model)
+    if not records:
+        return None
+
+    if config is not None and config_path is not None:
+        paths = set(config.get("result_paths", []))
+        for record in records.values():
+            identity = record["identity"]
+            path = (
+                Path("samples")
+                / sample
+                / "results"
+                / f"ls{identity['step']}"
+                / canonical_hash(identity)
+                / identity["condition"]
             )
-            meta["initial_role"] = next(iter(records.values())).get("initial_role")
-            if any(r["identity"]["step"] > 0 for r in records.values()):
-                meta["latent_steps"] = int(getattr(args, "latent_steps", 10))
-            fingerprint = canonical_hash(records)
+            paths.add(path.as_posix())
+        if paths != set(config["result_paths"]):
+            config["result_paths"] = sorted(paths)
+            save_json_atomic(config_path, config)
+
+    meta = load_json(state / "samples" / sample / "shared" / "ls0" / "result.json")
+    meta["initial_role"] = next(iter(records.values())).get("initial_role")
+    if any(r["identity"]["step"] > 0 for r in records.values()):
+        meta["latent_steps"] = int(getattr(args, "latent_steps", 10))
+
+    fingerprint = canonical_hash(records)
+    run_id = tracker.active_run_id or ""
+    client = getattr(tracker, "client", None)
+    git_hash = get_git_commit_hash()
+
+    old: list[Any] = []
+    experiment_id = ""
+    keep: str | None = None
+    if client and run_id:
+        experiment_name = mlflow_experiment_name(INTERVENTION_CONTINUATION)
+        exp = client.get_experiment_by_name(experiment_name)
+        experiment_id = exp.experiment_id if exp else ""
+        if experiment_id:
             old = _search(client, run_id, experiment_id, sample, group)
             valid = [
                 trace
@@ -235,54 +155,111 @@ def track_results(
             ]
             if valid:
                 keep = valid[0].info.trace_id
-            else:
-                trace_id = trace_intervention_continuation_sample(
-                    tracker,
-                    args,
-                    index,
-                    sample,
-                    item,
-                    meta,
-                    records,
-                    git_hash,
-                    comparison_id=group,
-                    result_fingerprint=fingerprint,
+
+    if not keep:
+        trace_id = trace_intervention_continuation_sample(
+            tracker,
+            args,
+            index,
+            sample,
+            item,
+            meta,
+            records,
+            git_hash,
+            comparison_id=group,
+            result_fingerprint=fingerprint,
+        )
+        if not trace_id:
+            raise RuntimeError(f"Trace creation failed for sample {sample}")
+
+        if client and run_id:
+            trace = client.get_trace(trace_id, flush=True)
+            if not _verified(trace, sample, group, fingerprint, set(records), run_id):
+                raise RuntimeError(
+                    f"Trace verification failed for sample {sample}: {trace_id}"
                 )
-                if not trace_id:
-                    raise RuntimeError(f"Trace creation failed for sample {sample}")
-                trace = client.get_trace(trace_id, flush=True)
-                if not _verified(
-                    trace, sample, group, fingerprint, set(records), run_id
-                ):
-                    raise RuntimeError(
-                        f"Trace verification failed for sample {sample}: {trace_id}"
-                    )
-                keep = trace_id
-            for trace in old:
-                old_id = trace.info.trace_id
-                if old_id == keep:
-                    continue
-                try:
-                    deleted = client.delete_traces(
-                        experiment_id=experiment_id, trace_ids=[old_id]
-                    )
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"Could not delete previous trace {old_id} for sample {sample}: {exc}"
-                    ) from exc
-                if deleted != 1:
-                    raise RuntimeError(
-                        f"Could not delete previous trace {old_id} for sample {sample}"
-                    )
-                _remove_references(state, sample, old_id)
-        tracker.log_metrics(
-            {
-                key: value
-                for key, value in metrics.items()
-                if isinstance(value, (int, float))
-            }
+        keep = trace_id
+
+    if client and experiment_id and old:
+        for t in old:
+            t_id = t.info.trace_id
+            if t_id == keep:
+                continue
+            try:
+                deleted = client.delete_traces(
+                    experiment_id=experiment_id, trace_ids=[t_id]
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not delete previous trace {t_id} for sample {sample}: {exc}"
+                ) from exc
+            if deleted != 1:
+                raise RuntimeError(
+                    f"Could not delete previous trace {t_id} for sample {sample}"
+                )
+            _remove_references(state, sample, t_id)
+    return keep
+
+
+def promote_continuation_tracker(
+    tracker: Any,
+    tracking_ctx: dict[str, Any],
+    metrics: dict[str, Any],
+    args: Any,
+    model: Any,
+    state: Path,
+) -> Any:
+    """Promote the completed staging run to the canonical final run."""
+    clean_metrics = {
+        key: value for key, value in metrics.items() if isinstance(value, (int, float))
+    }
+    relative = tracking_ctx["relative"]
+    tags = tracking_ctx["tags"]
+    params = _group(state, args, model)
+    return tracker.promote_staging_run(
+        final_run_name=relative,
+        tags=tags,
+        metrics=clean_metrics,
+        params=params,
+    )
+
+
+def track_results(
+    tracker: Any,
+    base: Path,
+    state: Path,
+    dataset: list[dict[str, Any]],
+    args: Any,
+    model: Any,
+    metrics: dict[str, Any],
+) -> None:
+    tracking_ctx = start_continuation_staging_tracker(tracker, base, state, args, model)
+    group = tracking_ctx["group"]
+    config = tracking_ctx["config"]
+    config_path = tracking_ctx["config_path"]
+    try:
+        for index, item in enumerate(dataset):
+            sample = f"{index:06d}"
+            trace_continuation_sample(
+                tracker=tracker,
+                state=state,
+                sample=sample,
+                index=index,
+                item=item,
+                args=args,
+                model=model,
+                group=group,
+                config=config,
+                config_path=config_path,
+            )
+        promote_continuation_tracker(
+            tracker=tracker,
+            tracking_ctx=tracking_ctx,
+            metrics=metrics,
+            args=args,
+            model=model,
+            state=state,
         )
     except Exception:
-        tracker.end_run("FAILED")
+        tracker.discard_staging_run(status="FAILED")
         raise
-    tracker.end_run("FINISHED")

@@ -28,7 +28,9 @@ class InMemoryStorage:
     def get_condition_dir(self, run_id: str, sample_key: str, condition: str) -> Path:
         return self.get_sample_dir(run_id, sample_key) / condition
 
-    def is_condition_complete(self, run_id: str, sample_key: str, condition: str) -> bool:
+    def is_condition_complete(
+        self, run_id: str, sample_key: str, condition: str
+    ) -> bool:
         key = (str(run_id), str(sample_key), str(condition))
         if key not in self._conditions:
             return False
@@ -36,7 +38,11 @@ class InMemoryStorage:
         if data.get("error") is not None or data.get("error_msg") is not None:
             return False
         required = data.get("files", [])
-        return all((*key, fname.removesuffix(".pt")) in self._tensors for fname in required if fname.endswith(".pt"))
+        return all(
+            (*key, fname.removesuffix(".pt")) in self._tensors
+            for fname in required
+            if fname.endswith(".pt")
+        )
 
     def save_condition(
         self,
@@ -57,8 +63,12 @@ class InMemoryStorage:
                 clean_name = name.removesuffix(".pt")
                 t_key = (*key, clean_name)
                 if t_key in self._tensors and not overwrite:
-                    raise ImmutableTensorOverwriteError(f"Tensor {clean_name} already exists.")
-                self._tensors[t_key] = t.clone() if isinstance(t, torch.Tensor) else copy.deepcopy(t)
+                    raise ImmutableTensorOverwriteError(
+                        f"Tensor {clean_name} already exists."
+                    )
+                self._tensors[t_key] = (
+                    t.clone() if isinstance(t, torch.Tensor) else copy.deepcopy(t)
+                )
                 fname = f"{clean_name}.pt"
                 if fname not in file_list:
                     file_list.append(fname)
@@ -68,7 +78,9 @@ class InMemoryStorage:
         self._conditions[key] = payload
         return self.get_condition_dir(run_id, sample_key, condition) / "result.json"
 
-    def load_condition_result(self, run_id: str, sample_key: str, condition: str) -> dict[str, Any]:
+    def load_condition_result(
+        self, run_id: str, sample_key: str, condition: str
+    ) -> dict[str, Any]:
         key = (str(run_id), str(sample_key), str(condition))
         if key not in self._conditions:
             raise FileNotFoundError(f"Condition not found: {key}")
@@ -91,11 +103,19 @@ class InMemoryStorage:
             return t.to(map_location) if map_location else t.clone()
         return copy.deepcopy(t)
 
-    def save_tensor(self, path: Path | str, tensor: Any, overwrite: bool = False) -> Path:
+    def save_tensor(
+        self, path: Path | str, tensor: Any, overwrite: bool = False
+    ) -> Path:
         p_str = str(path)
         if p_str in self._raw_tensors and not overwrite:
-            raise ImmutableTensorOverwriteError(f"Raw tensor at {p_str} already exists.")
-        self._raw_tensors[p_str] = tensor.clone() if isinstance(tensor, torch.Tensor) else copy.deepcopy(tensor)
+            raise ImmutableTensorOverwriteError(
+                f"Raw tensor at {p_str} already exists."
+            )
+        self._raw_tensors[p_str] = (
+            tensor.clone()
+            if isinstance(tensor, torch.Tensor)
+            else copy.deepcopy(tensor)
+        )
         return Path(path)
 
     def load_tensor(self, path: Path | str, map_location: Any = None) -> Any:

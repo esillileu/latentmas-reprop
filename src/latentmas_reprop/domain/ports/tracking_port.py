@@ -178,3 +178,59 @@ class ExperimentTrackerPort(ABC):
     ) -> None:
         """Associate the tracking run with a local storage directory."""
         return None
+
+    @property
+    def is_staging(self) -> bool:
+        """Return True if currently executing under a staging run."""
+        return False
+
+    def start_staging_run(
+        self,
+        experiment_name: str,
+        run_name: str | None = None,
+        tags: dict[str, Any] | None = None,
+    ) -> Any:
+        """Start a staging experiment tracking run where real-time sample traces are gathered.
+
+        Default implementation falls back to start_run with staging tags.
+        """
+        staging_tags = dict(tags or {})
+        staging_tags["is_staging"] = "true"
+        staging_run_name = (
+            f"staging/{run_name}"
+            if run_name and not run_name.startswith("staging/")
+            else run_name
+        )
+        return self.start_run(
+            experiment_name=experiment_name,
+            run_name=staging_run_name,
+            tags=staging_tags,
+        )
+
+    def promote_staging_run(
+        self,
+        final_run_name: str,
+        tags: dict[str, Any] | None = None,
+        metrics: dict[str, float | int] | None = None,
+        params: dict[str, Any] | None = None,
+        artifacts: list[tuple[Path | str, str | None]] | None = None,
+        status: str = "FINISHED",
+    ) -> Any:
+        """Promote the active staging run to a finalized canonical run.
+
+        Links collected traces to the final run, logs final metrics/params/artifacts,
+        and marks the staging run as promoted or cleaned up.
+        """
+        if params:
+            self.log_params(params)
+        if metrics:
+            self.log_metrics(metrics)
+        if artifacts:
+            for path, art_path in artifacts:
+                self.log_artifact(path, artifact_path=art_path)
+        self.end_run(status=status)
+        return None
+
+    def discard_staging_run(self, status: str = "FAILED") -> None:
+        """Discard or end an incomplete staging run without creating a final run."""
+        self.end_run(status=status)

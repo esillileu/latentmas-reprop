@@ -200,3 +200,29 @@ def prepare_state(
     if target != 0:
         save(target, kv, hidden, meta)
     return kv, hidden, dict(meta, **expected)
+
+
+def prepare_sample_states(
+    storage: Any, state: Any, sample: str, steps: set[int]
+) -> dict[int, Any]:
+    """Load only CPU states; unavailable states follow the normal resume path."""
+    if not is_condition_complete(state / "samples" / sample / "shared" / "ls0"):
+        return {}
+    prepared = {}
+    for step in steps:
+        try:
+            prepared[step] = storage.assemble_shared_state(state, sample, step)
+        except ValueError as exc:
+            prepared[step] = exc
+            for candidate in _available_steps(state, sample):
+                if candidate >= step or candidate in prepared:
+                    continue
+                try:
+                    storage.load_shared_segment(state, sample, candidate)
+                    prepared[candidate] = storage.assemble_shared_state(
+                        state, sample, candidate
+                    )
+                except ValueError:
+                    continue
+                break
+    return prepared

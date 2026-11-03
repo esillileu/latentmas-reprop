@@ -12,7 +12,12 @@ from ...infrastructure.storage.tensor_store import (
     load_json,
     save_json_atomic,
 )
-from .checkpoint import _available_steps, _check_sample, _sample_identity, prepare_state
+from .checkpoint import (
+    _check_sample,
+    _sample_identity,
+    prepare_sample_states,
+    prepare_state,
+)
 from .determinism import StochasticForwardError
 from .identity import (
     canonical_hash,
@@ -25,31 +30,7 @@ from .identity import (
     state_path,
 )
 
-
-def _prepare_sample(
-    storage: Any, state: Any, sample: str, steps: set[int]
-) -> dict[int, Any]:
-    """Load only CPU states; unavailable states follow the normal resume path."""
-    if not is_condition_complete(state / "samples" / sample / "shared" / "ls0"):
-        return {}
-    prepared = {}
-    for step in steps:
-        try:
-            prepared[step] = storage.assemble_shared_state(state, sample, step)
-        except ValueError as exc:
-            prepared[step] = exc
-            for candidate in _available_steps(state, sample):
-                if candidate >= step or candidate in prepared:
-                    continue
-                try:
-                    storage.load_shared_segment(state, sample, candidate)
-                    prepared[candidate] = storage.assemble_shared_state(
-                        state, sample, candidate
-                    )
-                except ValueError:
-                    continue
-                break
-    return prepared
+_prepare_sample = prepare_sample_states
 
 
 def execute(
@@ -83,6 +64,13 @@ def execute(
     runner = InterventionContinuationRunner(model, args, use_case.evaluator_port)
     records = []
     paths = {condition: [] for condition in conditions}
+    tracking_ctx = None
+    if use_case.tracker_port:
+        from .tracking import start_continuation_staging_tracker
+
+        tracking_ctx = start_continuation_staging_tracker(
+            use_case.tracker_port, use_case.storage.base_dir, state, args, model
+        )
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = None
         for index, item in enumerate(
@@ -118,7 +106,11 @@ def execute(
                         needed.add(condition_step)
                 if needed:
                     future = executor.submit(
-                        _prepare_sample, use_case.storage, state, next_sample, needed
+                        prepare_sample_states,
+                        use_case.storage,
+                        state,
+                        next_sample,
+                        needed,
                     )
             sample = f"{index:06d}"
             base = state / "samples" / sample / "shared" / "ls0"
@@ -241,6 +233,25 @@ def execute(
                             f"Condition {condition} failed: {record.get('error_msg') or record.get('error')}"
                         )
                 records.append(record)
+            if tracking_ctx is not None and use_case.tracker_port:
+                from .tracking import trace_continuation_sample
+
+                try:
+                    trace_continuation_sample(
+                        tracker=use_case.tracker_port,
+                        state=state,
+                        sample=sample,
+                        index=index,
+                        item=item,
+                        args=args,
+                        model=model,
+                        group=tracking_ctx["group"],
+                        config=tracking_ctx["config"],
+                        config_path=tracking_ctx["config_path"],
+                    )
+                except Exception:
+                    use_case.tracker_port.discard_staging_run(status="FAILED")
+                    raise
     for condition in conditions:
         subset = [record for record in records if record["condition"] == condition]
         condition_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
@@ -268,16 +279,19 @@ def execute(
         summary = build_summary_dict(subset, [condition], len(dataset), config)
         save_experiment_summary(run_dir, summary, subset)
     summary = build_summary_dict(records, conditions, len(dataset), vars(args))
-    if use_case.tracker_port:
-        from .tracking import track_results
+    if tracking_ctx is not None and use_case.tracker_port:
+        try:
+            from .tracking import promote_continuation_tracker
 
-        track_results(
-            use_case.tracker_port,
-            use_case.storage.base_dir,
-            state,
-            dataset,
-            args,
-            model,
-            summary["metrics"],
-        )
+            promote_continuation_tracker(
+                tracker=use_case.tracker_port,
+                tracking_ctx=tracking_ctx,
+                metrics=summary["metrics"],
+                args=args,
+                model=model,
+                state=state,
+            )
+        except Exception:
+            use_case.tracker_port.discard_staging_run(status="FAILED")
+            raise
     return summary, records

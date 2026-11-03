@@ -47,7 +47,7 @@ def start_intervention_tracker(
     exp_name = mlflow_experiment_name(INTERVENTION_KV)
     exp_dir = get_path_resolver().get_experiment_dir(run_name)
 
-    tracker_port.start_run(
+    tracker_port.start_staging_run(
         experiment_name=exp_name,
         run_name=run_name,
         tags={
@@ -193,11 +193,23 @@ def save_intervention_artifacts(
     write_json(patterns_path, correctness_patterns)
 
     if tracker_port:
-        tracker_port.log_metrics(metrics.to_mlflow_metrics())
-        tracker_port.log_artifact(sample_results_path, artifact_path="results")
-        tracker_port.log_artifact(summary_path, artifact_path="results")
-        tracker_port.log_artifact(summary_path, artifact_path=None)
-        tracker_port.log_artifact(patterns_path, artifact_path="results")
-        tracker_port.log_artifact(resolved_config_path, artifact_path="config")
-        tracker_port.flush_traces()
-        tracker_port.end_run(status="FINISHED")
+        artifacts_to_log = [
+            (sample_results_path, "results"),
+            (summary_path, "results"),
+            (summary_path, None),
+            (patterns_path, "results"),
+            (resolved_config_path, "config"),
+        ]
+        if tracker_port.is_staging:
+            tracker_port.promote_staging_run(
+                final_run_name=run_name,
+                metrics=metrics.to_mlflow_metrics(),
+                artifacts=artifacts_to_log,
+                status="FINISHED",
+            )
+        else:
+            tracker_port.log_metrics(metrics.to_mlflow_metrics())
+            for path, art_path in artifacts_to_log:
+                tracker_port.log_artifact(path, artifact_path=art_path)
+            tracker_port.flush_traces()
+            tracker_port.end_run(status="FINISHED")

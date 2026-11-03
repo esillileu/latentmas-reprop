@@ -55,7 +55,16 @@ def make_condition(root: Path, content: str) -> None:
 
 
 def layout(tmp_path: Path, stem: str) -> Path:
-    return tmp_path / "storage" / "experiments" / "gsm8k" / "Qwen3-8B" / "latent_mas" / "sequential" / stem
+    return (
+        tmp_path
+        / "storage"
+        / "experiments"
+        / "gsm8k"
+        / "Qwen3-8B"
+        / "latent_mas"
+        / "sequential"
+        / stem
+    )
 
 
 def run(tmp_path: Path, *extra: str) -> int:

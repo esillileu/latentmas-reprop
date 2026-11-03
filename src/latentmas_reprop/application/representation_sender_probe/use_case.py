@@ -49,7 +49,9 @@ class RepresentationSenderProbeUseCase:
                         "Trajectory sender states must contain 200 examples and 20 steps"
                     )
         tracker = self.tracker_port
-        clean_source = str(source_run_id or (states_path.parent.name if states_path else "local")).replace("/", "_")
+        clean_source = str(
+            source_run_id or (states_path.parent.name if states_path else "local")
+        ).replace("/", "_")
         probe_run_name = f"{REPRESENTATION_SENDER_PROBE}_{clean_source}_s{config.seed}_f{config.folds}"
         if tracker:
             tracker.start_run(
@@ -74,7 +76,8 @@ class RepresentationSenderProbeUseCase:
                         "source_artifact": source,
                         **(
                             {"model": source_config["model"], "latent_steps": 20}
-                            if experiment_name == mlflow_experiment_name(REPRESENTATION_TRAJECTORY)
+                            if experiment_name
+                            == mlflow_experiment_name(REPRESENTATION_TRAJECTORY)
                             else {}
                         ),
                         "git_commit": get_git_commit_hash(),

@@ -51,11 +51,17 @@ def test_path_resolver_relative_resolution():
 
 def test_path_resolver_nested_config_without_extension(tmp_path):
     resolver = PathResolver(tmp_path)
-    config = resolver.configs_dir / "representation_acquisition" / "secret_digit_q3_sweep.yaml"
+    config = (
+        resolver.configs_dir
+        / "representation_acquisition"
+        / "secret_digit_q3_sweep.yaml"
+    )
     config.parent.mkdir(parents=True)
     config.touch()
 
-    resolved = resolver.resolve_config_path("representation_acquisition/secret_digit_q3_sweep")
+    resolved = resolver.resolve_config_path(
+        "representation_acquisition/secret_digit_q3_sweep"
+    )
 
     assert resolved == config.resolve()
 

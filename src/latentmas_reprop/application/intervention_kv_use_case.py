@@ -119,7 +119,9 @@ class InterventionKvUseCase:
         save_json_atomic(
             exp_dir / "config.json",
             {
-                k: str(v) if not isinstance(v, (int, float, bool, list, dict, type(None))) else v
+                k: str(v)
+                if not isinstance(v, (int, float, bool, list, dict, type(None)))
+                else v
                 for k, v in cfg_dict.items()
             },
         )
@@ -146,7 +148,10 @@ class InterventionKvUseCase:
                 with contextlib.suppress(Exception):
                     self.tracker_port.log_params({"failure_traceback": exc_text[:500]})
                 with contextlib.suppress(Exception):
-                    self.tracker_port.end_run(status="FAILED")
+                    if getattr(self.tracker_port, "is_staging", False) is True:
+                        self.tracker_port.discard_staging_run(status="FAILED")
+                    else:
+                        self.tracker_port.end_run(status="FAILED")
             raise
 
     def _run_experiment(

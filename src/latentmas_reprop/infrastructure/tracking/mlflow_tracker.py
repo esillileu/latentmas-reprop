@@ -1,4 +1,3 @@
-import os
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -6,17 +5,11 @@ from typing import Any
 
 import mlflow
 from mlflow.entities import SpanType
-from mlflow.entities.assessment_source import AssessmentSource, AssessmentSourceType
 
 from ...domain.ports.tracking_port import ExperimentTrackerPort, LiveSpanPort
 from ..paths.resolver import PathResolver, get_git_commit_hash, get_path_resolver
+from .mlflow_staging import truncate_preview
 from .span_adapter import MLflowSpanAdapter
-
-
-def _truncate_preview(text: str | None, max_length: int = 1000) -> str | None:
-    if text is None or len(text) <= max_length:
-        return text
-    return text[: max_length - 3] + "..."
 
 
 class MLflowTracker(ExperimentTrackerPort):
@@ -35,32 +28,18 @@ class MLflowTracker(ExperimentTrackerPort):
         artifact_location: str | None = None,
         path_resolver: PathResolver | None = None,
     ) -> None:
+        from .mlflow_staging import resolve_tracking_setup
+
         self.resolver = path_resolver or get_path_resolver()
-        env_uri = os.environ.get("MLFLOW_TRACKING_URI")
-
-        if tracking_uri is not None:
-            self.tracking_uri = tracking_uri
-        elif env_uri is not None and env_uri.strip():
-            self.tracking_uri = env_uri.strip()
-        else:
-            # Standard persistent storage MLflow (storage/mlflow/mlflow.db)
-            db_path = self.resolver.mlflow_db_path
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            self.tracking_uri = f"sqlite:///{db_path.resolve()}"
-        self.is_remote = not self.tracking_uri.startswith(("sqlite", "file"))
-
+        uri, self.is_remote, self.artifact_location = resolve_tracking_setup(
+            self.resolver, tracking_uri, artifact_location
+        )
+        self.tracking_uri = uri
         mlflow.set_tracking_uri(self.tracking_uri)
 
-        if not self.is_remote:
-            self.artifact_location = artifact_location or str(
-                self.resolver.mlflow_artifacts_dir.resolve()
-            )
-            Path(self.artifact_location).mkdir(parents=True, exist_ok=True)
-        else:
-            # When remote, follow remote server-side artifact configuration without forcing local path
-            self.artifact_location = None
-
         self._active_run = None
+        self._staging_run_id: str | None = None
+        self._staging_experiment_name: str | None = None
         self._assessment_ready_traces = set()
 
     def start_run(
@@ -68,27 +47,29 @@ class MLflowTracker(ExperimentTrackerPort):
         experiment_name: str,
         run_name: str | None = None,
         tags: dict[str, Any] | None = None,
+        is_staging: bool = False,
     ) -> Any:
         self._assessment_ready_traces.clear()
         run_tags = {str(key): str(value) for key, value in (tags or {}).items()}
         run_tags.setdefault("git_commit", get_git_commit_hash(self.resolver.root))
 
-        # Check existing experiment
-        experiment = mlflow.get_experiment_by_name(experiment_name)
-        if experiment is not None and getattr(experiment, "lifecycle_stage", "") == "deleted":
-            with suppress(Exception):
-                mlflow.tracking.MlflowClient().restore_experiment(experiment.experiment_id)
-            experiment = mlflow.get_experiment_by_name(experiment_name)
+        from .mlflow_staging import find_existing_run_id, resolve_experiment_id
 
-        if experiment is None:
-            loc = self.artifact_location if not self.is_remote else None
-            experiment_id = mlflow.create_experiment(experiment_name, artifact_location=loc) if loc else mlflow.create_experiment(experiment_name)
-        else:
-            experiment_id = experiment.experiment_id
+        experiment_id = resolve_experiment_id(
+            experiment_name, self.artifact_location, self.is_remote
+        )
 
         # Canonical experiment path and directory tags
-        rel_dir = run_tags.get("rel_dir") or (str(run_name) if run_name and ("/" in str(run_name) or run_tags.get("task")) else None)
-        data_dir = run_tags.get("data_dir") or (str(self.resolver.get_experiment_dir(rel_dir).resolve()) if rel_dir else None)
+        rel_dir = run_tags.get("rel_dir") or (
+            str(run_name)
+            if run_name and ("/" in str(run_name) or run_tags.get("task"))
+            else None
+        )
+        data_dir = run_tags.get("data_dir") or (
+            str(self.resolver.get_experiment_dir(rel_dir).resolve())
+            if rel_dir
+            else None
+        )
         if run_name and "run_name" not in run_tags:
             run_tags["run_name"] = str(run_name)
         if rel_dir and "rel_dir" not in run_tags:
@@ -96,21 +77,14 @@ class MLflowTracker(ExperimentTrackerPort):
         if data_dir and "data_dir" not in run_tags:
             run_tags["data_dir"] = str(data_dir)
 
-        # Search existing run by rel_dir or data_dir, falling back to run_name
-        existing_rid = None
-        client = mlflow.tracking.MlflowClient()
-        filters = [f"tags.rel_dir = '{rel_dir}'"] if rel_dir else []
-        if data_dir:
-            filters.append(f"tags.data_dir = '{data_dir}'")
-        if run_name:
-            filters.extend([f"tags.run_name = '{run_name}'", f"attributes.run_name = '{run_name}'"])
-
-        for filt in filters:
-            with suppress(Exception):
-                runs = client.search_runs(experiment_ids=[experiment_id], filter_string=filt, max_results=1)
-                if runs:
-                    existing_rid = runs[0].info.run_id
-                    break
+        existing_rid = find_existing_run_id(
+            client=mlflow.tracking.MlflowClient(),
+            experiment_id=experiment_id,
+            rel_dir=rel_dir,
+            data_dir=data_dir,
+            run_name=run_name,
+            is_staging=is_staging,
+        )
 
         if mlflow.active_run() is not None:
             with suppress(Exception):
@@ -119,7 +93,9 @@ class MLflowTracker(ExperimentTrackerPort):
         if existing_rid:
             self._active_run = mlflow.start_run(run_id=existing_rid, tags=run_tags)
         else:
-            self._active_run = mlflow.start_run(experiment_id=experiment_id, run_name=run_name, tags=run_tags)
+            self._active_run = mlflow.start_run(
+                experiment_id=experiment_id, run_name=run_name, tags=run_tags
+            )
 
         target_rel = run_tags.get("rel_dir") or run_name
         if target_rel and "data_dir" not in run_tags:
@@ -130,9 +106,11 @@ class MLflowTracker(ExperimentTrackerPort):
 
     def set_data_dir(self, rel_or_id: str, data_dir: Path | str | None = None) -> None:
         """Explicitly set or update the storage directory tags for the active run."""
-        p = str((Path(data_dir) if data_dir else self.resolver.get_experiment_dir(rel_or_id, create=True)).resolve())
+        path = data_dir or self.resolver.get_experiment_dir(rel_or_id, create=True)
         with suppress(Exception):
-            mlflow.set_tags({"data_dir": p, "rel_dir": str(rel_or_id)})
+            mlflow.set_tags(
+                {"data_dir": str(Path(path).resolve()), "rel_dir": str(rel_or_id)}
+            )
 
     @property
     def client(self) -> Any:
@@ -146,33 +124,9 @@ class MLflowTracker(ExperimentTrackerPort):
         return active.info.run_id if active is not None else None
 
     def log_params(self, params: dict[str, Any]) -> None:
-        safe = {
-            k: (
-                "None"
-                if v is None
-                else str(v)[:500]
-                if isinstance(v, (list, tuple, dict)) or len(str(v)) > 500
-                else v
-            )
-            for k, v in params.items()
-        }
-        active = self._active_run or mlflow.active_run()
-        if active is not None:
-            with suppress(Exception):
-                run = self.client.get_run(active.info.run_id)
-                existing = run.data.params
-                new_params = {k: v for k, v in safe.items() if k not in existing}
-                changed = {
-                    k: str(v)
-                    for k, v in safe.items()
-                    if k in existing and str(existing[k]) != str(v)
-                }
-                if changed:
-                    mlflow.set_tags(changed)
-                safe = new_params
-        if safe:
-            with suppress(Exception):
-                mlflow.log_params(safe)
+        from .mlflow_staging import safe_log_params
+
+        safe_log_params(self.client, self._active_run, params)
 
     def log_metrics(
         self, metrics: dict[str, float | int], step: int | None = None
@@ -208,7 +162,7 @@ class MLflowTracker(ExperimentTrackerPort):
                 safe_tags = {str(k): str(v) for k, v in tags.items()} if tags else None
                 mlflow.update_current_trace(
                     tags=safe_tags,
-                    request_preview=_truncate_preview(request_preview),
+                    request_preview=truncate_preview(request_preview),
                 )
             adapter = MLflowSpanAdapter(span)
             yield adapter
@@ -238,22 +192,18 @@ class MLflowTracker(ExperimentTrackerPort):
         safe_tags = {str(k): str(v) for k, v in tags.items()} if tags else None
         mlflow.update_current_trace(
             tags=safe_tags,
-            request_preview=_truncate_preview(request_preview),
-            response_preview=_truncate_preview(response_preview),
+            request_preview=truncate_preview(request_preview),
+            response_preview=truncate_preview(response_preview),
         )
 
     def log_expectation(
         self, trace_id: str, name: str, value: Any, source_id: str = "ground_truth"
     ) -> None:
         """Log expectation (ground truth) assessment on a trace."""
-        with suppress(Exception):
-            self._flush_before_assessment(trace_id)
-            source = AssessmentSource(
-                source_type=AssessmentSourceType.CODE, source_id=source_id
-            )
-            mlflow.log_expectation(
-                trace_id=trace_id, name=name, value=value, source=source
-            )
+        from .mlflow_assessment import record_trace_expectation
+
+        self._flush_before_assessment(trace_id)
+        record_trace_expectation(trace_id, name, value, source_id=source_id)
 
     def log_feedback(
         self,
@@ -264,18 +214,12 @@ class MLflowTracker(ExperimentTrackerPort):
         rationale: str | None = None,
     ) -> None:
         """Log feedback assessment on a trace."""
-        with suppress(Exception):
-            self._flush_before_assessment(trace_id)
-            source = AssessmentSource(
-                source_type=AssessmentSourceType.CODE, source_id=source_id
-            )
-            mlflow.log_feedback(
-                trace_id=trace_id,
-                name=name,
-                value=value,
-                source=source,
-                rationale=rationale,
-            )
+        from .mlflow_assessment import record_trace_feedback
+
+        self._flush_before_assessment(trace_id)
+        record_trace_feedback(
+            trace_id, name, value, source_id=source_id, rationale=rationale
+        )
 
     def _flush_before_assessment(self, trace_id: str) -> None:
         if trace_id not in self._assessment_ready_traces:
@@ -285,6 +229,64 @@ class MLflowTracker(ExperimentTrackerPort):
     def flush_traces(self) -> None:
         """Flush background async trace queue."""
         mlflow.flush_trace_async_logging()
+
+    @property
+    def is_staging(self) -> bool:
+        return self._staging_run_id is not None
+
+    def start_staging_run(
+        self,
+        experiment_name: str,
+        run_name: str | None = None,
+        tags: dict[str, Any] | None = None,
+    ) -> Any:
+        self._staging_experiment_name = experiment_name
+        staging_tags = dict(tags or {})
+        staging_tags["is_staging"] = "true"
+        prefix = "" if (run_name and run_name.startswith("staging/")) else "staging/"
+        staging_run_name = f"{prefix}{run_name or 'unnamed'}"
+        run = self.start_run(
+            experiment_name, staging_run_name, tags=staging_tags, is_staging=True
+        )
+        self._staging_run_id = self.active_run_id
+        return run
+
+    def promote_staging_run(
+        self,
+        final_run_name: str,
+        tags: dict[str, Any] | None = None,
+        metrics: dict[str, float | int] | None = None,
+        params: dict[str, Any] | None = None,
+        artifacts: list[tuple[Path | str, str | None]] | None = None,
+        status: str = "FINISHED",
+    ) -> Any:
+        from .mlflow_staging import execute_staging_promotion
+
+        staging_run_id = self._staging_run_id or self.active_run_id
+        experiment_name = self._staging_experiment_name
+        final_run = execute_staging_promotion(
+            tracker=self,
+            staging_run_id=staging_run_id,
+            experiment_name=experiment_name,
+            final_run_name=final_run_name,
+            tags=tags,
+            metrics=metrics,
+            params=params,
+            artifacts=artifacts,
+            status=status,
+        )
+        self._staging_run_id = None
+        self._staging_experiment_name = None
+        return final_run
+
+    def discard_staging_run(self, status: str = "FAILED") -> None:
+        staging_run_id = self._staging_run_id or self.active_run_id
+        self.end_run(status=status)
+        if staging_run_id:
+            with suppress(Exception):
+                self.client.delete_run(staging_run_id)
+        self._staging_run_id = None
+        self._staging_experiment_name = None
 
 
 # Re-export analysis tracking helper

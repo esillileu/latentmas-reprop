@@ -136,7 +136,9 @@ def test_mlflow_tracker_tracing_and_assessments(tmp_path: Path, make_mlflow_db):
     assert "own_correct" in assessment_names
 
 
-def test_mlflow_tracker_truncates_long_previews(tmp_path: Path, monkeypatch, make_mlflow_db):
+def test_mlflow_tracker_truncates_long_previews(
+    tmp_path: Path, monkeypatch, make_mlflow_db
+):
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
     resolver = PathResolver(tmp_path)
     test_db = tmp_path / "test_preview.db"
@@ -170,7 +172,9 @@ def test_mlflow_tracker_truncates_long_previews(tmp_path: Path, monkeypatch, mak
     assert trace.info.response_preview.endswith("...")
 
 
-def test_run_tags_are_serializable_for_remote_tracking(tmp_path, monkeypatch, make_mlflow_db):
+def test_run_tags_are_serializable_for_remote_tracking(
+    tmp_path, monkeypatch, make_mlflow_db
+):
     from mlflow.entities import RunTag
 
     tracker = MLflowTracker(

@@ -76,7 +76,9 @@ def test_scenario_10_missing_summary_synthesized_without_model(tmp_path):
     assert (exp_dir / "summary.json").is_file()
 
 
-def test_representation_trajectory_sender_contexts_not_overwritten(tmp_path, monkeypatch):
+def test_representation_trajectory_sender_contexts_not_overwritten(
+    tmp_path, monkeypatch
+):
     """Trajectory collection must not overwrite sender_contexts.jsonl."""
     samples = generate_secret_digit_samples(2, 42)
     full = ((torch.zeros(1, 1, 23, 1), torch.ones(1, 1, 23, 1)),)

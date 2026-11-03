@@ -22,7 +22,9 @@ def test_in_memory_tracker_lifecycle_and_spans():
     tracker.log_dict({"config": "custom"}, "cfg.json")
     tracker.log_artifact(Path("README.md"))
 
-    with tracker.start_sample_trace("sample_1", {"input": "hello"}, tags={"task": "gsm8k"}) as root:
+    with tracker.start_sample_trace(
+        "sample_1", {"input": "hello"}, tags={"task": "gsm8k"}
+    ) as root:
         assert root.trace_id is not None
         root.set_inputs({"input": "hello world"})
         with tracker.start_span("child_span", "LLM", {"prompt": "p"}) as child:

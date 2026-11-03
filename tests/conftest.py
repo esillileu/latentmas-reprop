@@ -21,10 +21,12 @@ def mlflow_sqlite_template(tmp_path_factory):
 @pytest.fixture
 def make_mlflow_db(mlflow_sqlite_template):
     """Helper to quickly copy pre-migrated SQLite DB to a target path."""
+
     def _copy(dest_path: Path) -> str:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(mlflow_sqlite_template, dest_path)
         return f"sqlite:///{dest_path}"
+
     return _copy
 
 

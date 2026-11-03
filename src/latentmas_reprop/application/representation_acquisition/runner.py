@@ -91,7 +91,10 @@ def run_acquisition_loop(
             for mode in modes:
                 base_name = f"{mode}_{condition}" if mode != "none" else str(condition)
                 cond_name = _resolve_acquisition_cond_name(
-                    mode, condition, target.digit, cross.digit if cross is not None else None
+                    mode,
+                    condition,
+                    target.digit,
+                    cross.digit if cross is not None else None,
                 )
                 if run_id and not getattr(args, "overwrite", False):
                     cond_dir = resolver.get_condition_dir(run_id, index, cond_name)
@@ -131,7 +134,9 @@ def run_acquisition_loop(
                                         else None
                                     ),
                                 )
-                                for f in dataclasses.fields(RepresentationAcquisitionRecord)
+                                for f in dataclasses.fields(
+                                    RepresentationAcquisitionRecord
+                                )
                             }
                             rec = RepresentationAcquisitionRecord(**rec_kwargs)
                             records.append(rec)

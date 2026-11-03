@@ -245,7 +245,9 @@ def run_intervention_decoding(
                     cond_dir = resolver.get_condition_dir(run_id, s_key, cond)
                     save_condition_result(cond_dir, rec.to_dict(), overwrite=True)
                     if cond == "cross" and cross_j is not None:
-                        src_dir = resolver.get_condition_dir(run_id, s_key, f"cross_src_{cross_j}")
+                        src_dir = resolver.get_condition_dir(
+                            run_id, s_key, f"cross_src_{cross_j}"
+                        )
                         save_condition_result(src_dir, rec.to_dict(), overwrite=True)
 
             del own_context_gpu

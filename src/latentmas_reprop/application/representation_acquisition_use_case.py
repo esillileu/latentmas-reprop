@@ -118,7 +118,7 @@ class RepresentationAcquisitionUseCase:
                 "rel_dir": exp_relpath,
                 "run_name": exp_relpath,
             }
-            self.tracker_port.start_run(
+            self.tracker_port.start_staging_run(
                 experiment_name=mlflow_experiment_name(REPRESENTATION_ACQUISITION),
                 run_name=exp_relpath,
                 tags=tags,
@@ -218,9 +218,17 @@ class RepresentationAcquisitionUseCase:
                 self.tracker_port.active_run_id if self.tracker_port else None
             )
             if self.tracker_port:
-                self.tracker_port.log_metrics(metrics.to_mlflow_metrics())
-                self.tracker_port.flush_traces()
-                self.tracker_port.end_run("FINISHED")
+                if self.tracker_port.is_staging:
+                    self.tracker_port.promote_staging_run(
+                        final_run_name=exp_relpath,
+                        tags=tags,
+                        metrics=metrics.to_mlflow_metrics(),
+                        status="FINISHED",
+                    )
+                else:
+                    self.tracker_port.log_metrics(metrics.to_mlflow_metrics())
+                    self.tracker_port.flush_traces()
+                    self.tracker_port.end_run("FINISHED")
             if state_path is not None:
                 RepresentationSenderProbeUseCase(self.tracker_port).execute(
                     state_path,
@@ -246,7 +254,10 @@ class RepresentationAcquisitionUseCase:
                     self.tracker_port.log_params(
                         {"failure_traceback": traceback.format_exc()[:500]}
                     )
-                    self.tracker_port.end_run("FAILED")
+                    if getattr(self.tracker_port, "is_staging", False):
+                        self.tracker_port.discard_staging_run("FAILED")
+                    else:
+                        self.tracker_port.end_run("FAILED")
             raise
 
     @staticmethod

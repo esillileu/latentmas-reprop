@@ -278,5 +278,8 @@ class BenchmarkUseCase:
             return metrics, predictions
         except Exception:
             if self.tracker_port:
-                self.tracker_port.end_run(status="FAILED")
+                if getattr(self.tracker_port, "is_staging", False):
+                    self.tracker_port.discard_staging_run(status="FAILED")
+                else:
+                    self.tracker_port.end_run(status="FAILED")
             raise
