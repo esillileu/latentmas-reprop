@@ -89,10 +89,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--replace-source-run requires --source-run-id")
         client = mlflow.MlflowClient()
         source = client.get_run(args.source_run_id)
-        if (
-            client.get_experiment(source.info.experiment_id).name
-            == mlflow_experiment_name(REPRESENTATION_TRAJECTORY)
-        ):
+        if client.get_experiment(
+            source.info.experiment_id
+        ).name == mlflow_experiment_name(REPRESENTATION_TRAJECTORY):
             raise ValueError(
                 "Trajectory sweeps must be preserved; analyze without --replace-source-run"
             )
@@ -162,7 +161,9 @@ def main(argv: list[str] | None = None) -> int:
             source_experiment = client.get_experiment(
                 source_run.info.experiment_id
             ).name
-            trajectory = source_experiment == mlflow_experiment_name(REPRESENTATION_TRAJECTORY)
+            trajectory = source_experiment == mlflow_experiment_name(
+                REPRESENTATION_TRAJECTORY
+            )
             if trajectory:
                 if (
                     source_run.info.status != "FINISHED"

@@ -65,10 +65,14 @@ def mcnemar(a: Any, b: Any) -> McNemarResult:
 
     if len(ids_a) != len(set(ids_a)):
         dups_a = {x for x in ids_a if ids_a.count(x) > 1}
-        raise ValueError(f"Duplicate sample IDs in condition a: {sorted(dups_a, key=str)}")
+        raise ValueError(
+            f"Duplicate sample IDs in condition a: {sorted(dups_a, key=str)}"
+        )
     if len(ids_b) != len(set(ids_b)):
         dups_b = {x for x in ids_b if ids_b.count(x) > 1}
-        raise ValueError(f"Duplicate sample IDs in condition b: {sorted(dups_b, key=str)}")
+        raise ValueError(
+            f"Duplicate sample IDs in condition b: {sorted(dups_b, key=str)}"
+        )
 
     if len(ids_a) != len(corr_a):
         raise ValueError(
@@ -97,9 +101,13 @@ def mcnemar(a: Any, b: Any) -> McNemarResult:
     golds_b = getattr(b, "golds", None)
     if golds_a and golds_b:
         if len(golds_a) != len(ids_a):
-            raise ValueError("Length mismatch between sample_ids and golds in condition a")
+            raise ValueError(
+                "Length mismatch between sample_ids and golds in condition a"
+            )
         if len(golds_b) != len(ids_b):
-            raise ValueError("Length mismatch between sample_ids and golds in condition b")
+            raise ValueError(
+                "Length mismatch between sample_ids and golds in condition b"
+            )
         gold_map_a = dict(zip(ids_a, golds_a, strict=True))
         gold_map_b = dict(zip(ids_b, golds_b, strict=True))
         for sid in set_a:

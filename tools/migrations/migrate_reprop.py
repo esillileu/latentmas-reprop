@@ -98,13 +98,15 @@ def migrate_reprop_runs(
         print(f"    -> {rel_path} ({count} samples)")
 
         if dry_run:
-            migrated_runs.append({
-                "source": str(p),
-                "rel_path": rel_path,
-                "target": str(target_dir),
-                "samples": count,
-                "status": "dry_run",
-            })
+            migrated_runs.append(
+                {
+                    "source": str(p),
+                    "rel_path": rel_path,
+                    "target": str(target_dir),
+                    "samples": count,
+                    "status": "dry_run",
+                }
+            )
             continue
 
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -162,15 +164,17 @@ def migrate_reprop_runs(
                 file=sys.stderr,
             )
 
-        migrated_runs.append({
-            "source": str(p),
-            "rel_path": rel_path,
-            "target": str(target_dir),
-            "samples_written": samples_written,
-            "verified": is_ok,
-            "loaded_count": loaded_count,
-            "status": "migrated",
-        })
+        migrated_runs.append(
+            {
+                "source": str(p),
+                "rel_path": rel_path,
+                "target": str(target_dir),
+                "samples_written": samples_written,
+                "verified": is_ok,
+                "loaded_count": loaded_count,
+                "status": "migrated",
+            }
+        )
 
     return migrated_runs
 

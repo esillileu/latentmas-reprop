@@ -159,7 +159,9 @@ def plot_receiver(receiver, output):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--acquisition-dir", type=Path, default=Path("artifacts/representation_acquisition")
+        "--acquisition-dir",
+        type=Path,
+        default=Path("artifacts/representation_acquisition"),
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("artifacts/presentation")

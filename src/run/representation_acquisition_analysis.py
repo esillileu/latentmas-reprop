@@ -232,7 +232,9 @@ def main() -> None:
             for cell in probes_by_id[run_id]:
                 cell.update(effect_ci_low=None, effect_ci_high=None)
             continue
-        cache = paths.get_cache_layer_dir(f"representation_acquisition/mlflow/{source_id}")
+        cache = paths.get_cache_layer_dir(
+            f"representation_acquisition/mlflow/{source_id}"
+        )
         state_path = client.download_artifacts(source_id, artifact, dst_path=str(cache))
         payload = torch.load(state_path, map_location="cpu", weights_only=True)
         print(f"Analyzing saved Sender features: {run_id}", flush=True)

@@ -79,7 +79,9 @@ class ConditionOutcome:
         cond = next(iter(conditions))
 
         _check_unique_sample_ids(items)
-        items.sort(key=lambda x: (0, int(x[0])) if str(x[0]).isdigit() else (1, str(x[0])))
+        items.sort(
+            key=lambda x: (0, int(x[0])) if str(x[0]).isdigit() else (1, str(x[0]))
+        )
 
         s_ids = [x[0] for x in items]
         corr = [x[1] for x in items]
@@ -115,7 +117,11 @@ def _load_state_meta(dir_path: Path) -> tuple[str | None, str | None]:
         if "state_path" in cfg:
             state_rel = Path(cfg["state_path"])
             # Check relative to repo root or storage/experiments or dir_path
-            for base in [Path(), Path("storage/experiments"), dir_path.parent.parent.parent]:
+            for base in [
+                Path(),
+                Path("storage/experiments"),
+                dir_path.parent.parent.parent,
+            ]:
                 cand = base / state_rel / "state.json"
                 if cand.exists():
                     state_file = cand
@@ -138,8 +144,14 @@ def _parse_records(
     conds = set()
     for idx, r in enumerate(records):
         if r.get("status") != "complete":
-            raise ValueError(f"Incomplete sample at index {idx}: status={r.get('status')}")
-        sid = r.get("sample_index") if r.get("sample_index") is not None else r.get("sample_id")
+            raise ValueError(
+                f"Incomplete sample at index {idx}: status={r.get('status')}"
+            )
+        sid = (
+            r.get("sample_index")
+            if r.get("sample_index") is not None
+            else r.get("sample_id")
+        )
         if sid is None:
             raise ValueError(f"Record at index {idx} lacks sample identifier")
 
@@ -156,10 +168,14 @@ def _parse_records(
         gold = r.get("gold") if r.get("gold") is not None else ident.get("gold")
         sample_ds = r.get("dataset") or r.get("task") or ident.get("task")
         if sample_ds is not None and d_dataset is not None and sample_ds != d_dataset:
-            raise ValueError(f"Task/dataset conflict: record '{sample_ds}' vs state '{d_dataset}'")
+            raise ValueError(
+                f"Task/dataset conflict: record '{sample_ds}' vs state '{d_dataset}'"
+            )
         sample_sp = r.get("split") or ident.get("split")
         if sample_sp is not None and d_split is not None and sample_sp != d_split:
-            raise ValueError(f"Split conflict: record '{sample_sp}' vs state '{d_split}'")
+            raise ValueError(
+                f"Split conflict: record '{sample_sp}' vs state '{d_split}'"
+            )
 
         ds = sample_ds or d_dataset
         sp = sample_sp or d_split
@@ -175,7 +191,9 @@ def _check_unique_sample_ids(items: list[tuple]) -> None:
 
 
 def _check_missing_ids(ids: list[Any]) -> None:
-    if ids and all(isinstance(x, int) or (isinstance(x, str) and x.isdigit()) for x in ids):
+    if ids and all(
+        isinstance(x, int) or (isinstance(x, str) and x.isdigit()) for x in ids
+    ):
         ints = [int(x) for x in ids]
         if len(ints) != (max(ints) - min(ints) + 1):
             missing = set(range(min(ints), max(ints) + 1)) - set(ints)
@@ -203,7 +221,9 @@ def _validate_summary(out: ConditionOutcome, summary_path: Path) -> None:
     if stats:
         comp = stats.get("completed")
         if comp is not None and out.n_samples != int(comp):
-            raise ValueError(f"Completed count mismatch: out={out.n_samples}, sum={comp}")
+            raise ValueError(
+                f"Completed count mismatch: out={out.n_samples}, sum={comp}"
+            )
         acc = stats.get("accuracy")
         if acc is not None and abs(out.accuracy - float(acc)) > 1e-6:
             raise ValueError(f"Accuracy mismatch: out={out.accuracy}, sum={acc}")

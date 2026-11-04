@@ -226,7 +226,10 @@ def test_budget_reuse_copies_unexhausted_and_recomputes_exhausted(tmp_path):
 
     # Mark sample 0 as unexhausted (finished naturally) and sample 1 as exhausted
     import json
-    pattern = "intervention_continuation/*/*/*/samples/{sample}/results/ls0/*/rqe/result.json"
+
+    pattern = (
+        "intervention_continuation/*/*/*/samples/{sample}/results/ls0/*/rqe/result.json"
+    )
     s0_files = list(storage.base_dir.glob(pattern.format(sample="000000")))
     s1_files = list(storage.base_dir.glob(pattern.format(sample="000001")))
     assert len(s0_files) == 1 and len(s1_files) == 1
@@ -255,4 +258,3 @@ def test_budget_reuse_copies_unexhausted_and_recomputes_exhausted(tmp_path):
     # For sample 0: 0 forwards (copied directly from sample 0 result)
     # For sample 1: decode tokens
     assert wrapper.model.forward.call_count < fwd_count_initial
-
