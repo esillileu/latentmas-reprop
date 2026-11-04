@@ -190,6 +190,13 @@ class BenchmarkUseCase:
             metrics.reused_trajectories = target
             metrics.fresh_trajectories = 0
             metrics.failed_trajectories = 0
+
+            # Replay sample traces to tracker if tracker is active
+            if self.tracker_port:
+                for idx, res in enumerate(predictions):
+                    problem_idx = idx + 1
+                    trace_benchmark_sample(self.tracker_port, args, problem_idx, res)
+
             save_benchmark_artifacts(
                 self.cache_port,
                 self.tracker_port,
