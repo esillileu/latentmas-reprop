@@ -169,7 +169,9 @@ def test_run_uploads_prompt_artifacts_and_all_raw_logits(
         artifact_location=str(tmp_path / "artifacts"),
         path_resolver=PathResolver(tmp_path),
     )
-    monkeypatch.setattr(cli, "MLflowTracker", lambda: tracker)
+    monkeypatch.setattr(
+        "src.run.representation_trajectory_tracking.MLflowTracker", lambda: tracker
+    )
     staging = TemporaryDirectory(prefix="representation-trajectory-", dir=tmp_path)
     directory = Path(staging.name)
     (directory / "receiver_outputs").mkdir()

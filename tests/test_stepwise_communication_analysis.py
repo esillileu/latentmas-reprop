@@ -5,11 +5,13 @@ import csv
 import pytest
 
 from src.run import stepwise_communication_analysis as analysis
+from src.run import stepwise_communication_metrics as metric_helpers
+from src.run import stepwise_communication_plots as plots
 
 
 def inputs():
     probes, sweep, independent = [], [], []
-    for model in analysis.MODELS[:3]:
+    for model in metric_helpers.MODELS[:3]:
         for step in range(1, 21):
             probes.append(
                 {
@@ -106,7 +108,7 @@ def test_artifacts_use_exact_final_rows_and_plot_has_no_default_annotations(
     tmp_path, monkeypatch
 ):
     figures = []
-    monkeypatch.setattr(analysis, "save", lambda fig, *args: figures.append(fig))
+    monkeypatch.setattr(plots, "save", lambda fig, *args: figures.append(fig))
     rows = analysis.analyze(*inputs(), tmp_path / "output")
     with (tmp_path / "output/stepwise_communication_metrics.csv").open() as stream:
         saved = list(csv.DictReader(stream))
@@ -130,12 +132,12 @@ def test_artifacts_use_exact_final_rows_and_plot_has_no_default_annotations(
         list(axis.get_yticks()) == list(ax.get_yticks()) for axis in diagnostic_axes[3:]
     )
     for fig in figures:
-        analysis.plt.close(fig)
+        plots.plt.close(fig)
 
 
 def test_four_models_include_explicit_unavailable_14b_parity():
     probes, sweep, independent = inputs()
-    model = analysis.MODELS[-1]
+    model = metric_helpers.MODELS[-1]
     probes.extend(row | {"model": model} for row in list(probes[:20]))
     sweep.extend(row | {"model": model} for row in list(sweep[:20]))
     metrics = analysis.communication_metrics(probes, sweep)

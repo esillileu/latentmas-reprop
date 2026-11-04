@@ -12,7 +12,7 @@ from latentmas_reprop.domain.models.use_cases import (
     mlflow_experiment_name,
 )
 
-from .stepwise_communication_analysis import MODELS, grid, number
+from .stepwise_communication_metrics import MODELS, grid, number
 
 
 class SavedRunReader:

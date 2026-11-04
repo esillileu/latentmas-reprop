@@ -10,6 +10,7 @@ from latentmas_reprop.application.representation_acquisition.sampling import (
     generate_secret_digit_samples,
 )
 from src.run import stepwise_communication_analysis as analysis
+from src.run import stepwise_communication_metrics as metric_helpers
 from src.run import stepwise_communication_sources as sources
 
 
@@ -22,7 +23,7 @@ class SavedClient:
             "independent": "latentmas/representation/acquisition",
         }
         self.probe_ids, self.sweep_ids, self.independent_ids = [], [], []
-        for index, model in enumerate(analysis.MODELS[:3]):
+        for index, model in enumerate(metric_helpers.MODELS[:3]):
             probe_id, sweep_id = f"probe-{index}", f"sweep-{index}"
             self.probe_ids.append(probe_id)
             self.sweep_ids.append(sweep_id)
