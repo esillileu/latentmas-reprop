@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
-from tools.migrations.use_case_names.migrate import new_relpath
+from tools.migrations.use_case_names.paths import new_relpath
 
 
 def find_runs(uri: str, experiments_root: Path) -> dict[str, list[str]]:

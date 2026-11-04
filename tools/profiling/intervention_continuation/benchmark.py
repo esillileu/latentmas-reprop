@@ -18,6 +18,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from latentmas_reprop.domain.services.kv_cache import clone_past_kv
+from tools.profiling.intervention_continuation.equivalence import compare_equivalence
+from tools.profiling.intervention_continuation.report import generate_markdown_report
 from tools.profiling.intervention_continuation.variants import VARIANTS
 
 
@@ -124,39 +126,6 @@ def run_benchmark_trial(
         "peak_gpu_mem_mb": peak_mem_mb,
         "sample_ids": generated_ids_list[0],
         "sample_hiddens": hiddens_list[0],
-    }
-
-
-def compare_equivalence(
-    base_ids: list[int],
-    base_hiddens: list[torch.Tensor],
-    variant_ids: list[int],
-    variant_hiddens: list[torch.Tensor],
-) -> dict[str, Any]:
-    """Check exact token id match and hidden state distance."""
-    ids_match = base_ids == variant_ids
-    num_common = min(len(base_hiddens), len(variant_hiddens))
-
-    max_hidden_diff = 0.0
-    mean_hidden_diff = 0.0
-    if num_common > 0:
-        diffs = []
-        for h1, h2 in zip(
-            base_hiddens[:num_common], variant_hiddens[:num_common], strict=False
-        ):
-            diff = torch.max(torch.abs(h1 - h2)).item()
-            diffs.append(diff)
-        max_hidden_diff = float(np.max(diffs))
-        mean_hidden_diff = float(np.mean(diffs))
-
-    is_equivalent = ids_match and (max_hidden_diff < 1e-3)
-
-    return {
-        "ids_exact_match": ids_match,
-        "token_len_diff": len(variant_ids) - len(base_ids),
-        "max_hidden_diff": max_hidden_diff,
-        "mean_hidden_diff": mean_hidden_diff,
-        "is_equivalent": is_equivalent,
     }
 
 
@@ -293,59 +262,6 @@ def run_full_benchmark(
         all_results, report_path, model_name, max_new_tokens, temperature
     )
     print(f"\nBenchmark completed. Report written to: {report_path}")
-
-
-def generate_markdown_report(
-    results: dict[str, Any], path: str, model_name: str, tokens: int, temp: float
-):
-    """Write markdown summary table and conclusions."""
-    with open(path, "w") as f:
-        f.write("# Intervention Continuation Decoding Optimization Report\n\n")
-        f.write(f"- **Model**: `{model_name}`\n")
-        f.write(f"- **Max New Tokens**: {tokens}\n")
-        f.write(f"- **Temperature**: {temp} (Greedy)\n")
-        f.write(f"- **Timestamp**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-
-        f.write("## 1. Summary Comparison Table\n\n")
-        f.write(
-            "| Variant | Throughput (tok/s) | Speedup | Latency (ms/tok) | Peak GPU Mem (MB) | Exact IDs | Max Hidden Diff | Equivalence |\n"
-        )
-        f.write("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n")
-
-        base_thr = results.get("baseline", {}).get("throughput_tok_s", 1.0)
-        for name, data in results.items():
-            if "error" in data:
-                f.write(f"| `{name}` | *Error* | - | - | - | - | - | ❌ Failed |\n")
-                continue
-            thr = data.get("throughput_tok_s", 0.0)
-            speedup = thr / base_thr if base_thr > 0 else 1.0
-            lat = data.get("per_token_latency_ms", 0.0)
-            mem = data.get("peak_gpu_mem_mb", 0.0)
-            eq = data.get("equivalence", {})
-            exact_ids = "✅" if eq.get("ids_exact_match", False) else "❌"
-            diff = eq.get("max_hidden_diff", 0.0)
-            diff_str = f"{diff:.2e}" if diff > 0 else "0.0"
-            is_eq = "✅ Equivalent" if eq.get("is_equivalent", False) else "❌ Mismatch"
-
-            f.write(
-                f"| `{name}` | {thr:.2f} | **{speedup:.2f}x** | {lat:.2f} | {mem:.1f} | {exact_ids} | {diff_str} | {is_eq} |\n"
-            )
-
-        f.write("\n## 2. Key Observations and Bottleneck Analysis\n\n")
-        f.write("- **Baseline Bottlenecks**:\n")
-        f.write(
-            "  1. Per-step GPU-to-CPU synchronization (`curr_hidden.detach().cpu()` and `int(next_id.item())`).\n"
-        )
-        f.write(
-            "  2. Redundant LM Head evaluation inside `model()` when predicting next hidden state.\n"
-        )
-        f.write(
-            "  3. Allocation overhead of attention masks and full hidden state tuples at every step.\n"
-        )
-        f.write("- **Equivalence Verification**:\n")
-        f.write(
-            "  - Variants preserving numerical identity produce exact token match and identical hidden representations.\n"
-        )
 
 
 def main():

@@ -12,7 +12,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -21,20 +20,8 @@ from pathlib import Path
 from latentmas_reprop.infrastructure.paths.resolver import PathResolver
 from latentmas_reprop.infrastructure.storage.tensor_store import is_condition_complete
 
-BASE_STEM = (
-    r"ls\d+_seed-?\d+_temp[^_]+_top[^_]+_mt\d+(?:_split[^_]+)?"
-    r"_[A-Za-z0-9]+(?:_vllm)?(?:_think)?(?:_realign)?"
-)
-USE_CASE_TOKEN_RE = re.compile(
-    rf"^(?P<base>{BASE_STEM})_(?P<token>single_intervention|intervention(?!(?:_kv|_continuation)(?:_|$))|acquisition)"
-    r"(?P<rest>(?:_.*)?)$"
-)
-TRAJECTORY_RE = re.compile(rf"^(?P<head>{BASE_STEM}.*)_trajectory(?P<tail>(?:_smoke)?)$")
-TOKEN_RENAMES = {
-    "single_intervention": "intervention_continuation",
-    "intervention": "intervention_kv",
-    "acquisition": "representation_acquisition",
-}
+from .mlflow import run_mlflow
+from .paths import new_params_stem
 
 # Local analysis/cache directories, relative to (artifacts_dir, cache_dir).
 ARTIFACT_DIR_RENAMES = {
@@ -44,39 +31,6 @@ ARTIFACT_DIR_RENAMES = {
 CACHE_DIR_RENAMES = {
     "evaluation/receiver_acquisition": "evaluation/representation_acquisition",
 }
-
-# One-to-one MLflow experiment renames. ``latentmas-reprop`` is intentionally
-# absent: it holds benchmark and intervention runs, so it cannot be renamed
-# without merging or splitting; it is preserved as is.
-EXPERIMENT_RENAMES = {
-    "latentmas_intervention": "latentmas/intervention/kv",
-    "latentmas_single_intervention": "latentmas/intervention/continuation",
-    "latentmas_receiver_acquisition": "latentmas/representation/acquisition",
-    "latentmas_receiver_trajectory": "latentmas/representation/trajectory",
-    "latentmas_sender_probe": "latentmas/representation/sender_probe",
-}
-
-
-def new_params_stem(stem: str) -> str | None:
-    """Return the renamed params directory name, or None if it is unaffected."""
-    match = USE_CASE_TOKEN_RE.match(stem)
-    if match:
-        renamed = TOKEN_RENAMES[match["token"]]
-        return f"{match['base']}_{renamed}{match['rest']}"
-    match = TRAJECTORY_RE.match(stem)
-    if match:
-        return f"{match['head']}_representation_trajectory{match['tail']}"
-    return None
-
-
-def new_relpath(rel: str) -> str | None:
-    """Rename ``<task>/<model>/<method>/<prompt>/<params>``; None if unaffected."""
-    parts = rel.strip("/").split("/")
-    if len(parts) != 5:
-        return None
-    renamed = new_params_stem(parts[-1])
-    return None if renamed is None else "/".join([*parts[:-1], renamed])
-
 
 @dataclass
 class DirMove:
@@ -115,7 +69,9 @@ def plan_experiment_moves(experiments_dir: Path) -> list[DirMove]:
     if not experiments_dir.is_dir():
         return moves
     for task in sorted(experiments_dir.iterdir()):
-        for model in sorted(p for p in task.iterdir() if p.is_dir()) if task.is_dir() else []:
+        for model in (
+            sorted(p for p in task.iterdir() if p.is_dir()) if task.is_dir() else []
+        ):
             for method in sorted(p for p in model.iterdir() if p.is_dir()):
                 for prompt in sorted(p for p in method.iterdir() if p.is_dir()):
                     for params in sorted(p for p in prompt.iterdir() if p.is_dir()):
@@ -133,7 +89,10 @@ def plan_experiment_moves(experiments_dir: Path) -> list[DirMove]:
 
 def plan_local_moves(artifacts_dir: Path, cache_dir: Path) -> list[DirMove]:
     moves = []
-    for base, renames in ((artifacts_dir, ARTIFACT_DIR_RENAMES), (cache_dir, CACHE_DIR_RENAMES)):
+    for base, renames in (
+        (artifacts_dir, ARTIFACT_DIR_RENAMES),
+        (cache_dir, CACHE_DIR_RENAMES),
+    ):
         for old, new in renames.items():
             if (base / old).is_dir():
                 moves.append(DirMove("local", str(base / old), str(base / new)))
@@ -157,7 +116,10 @@ def apply_move(move: DirMove, verify: str) -> None:
     before_files, before_state = file_manifest(source, verify), completion_state(source)
     dest.parent.mkdir(parents=True, exist_ok=True)
     os.rename(source, dest)
-    if file_manifest(dest, verify) != before_files or completion_state(dest) != before_state:
+    if (
+        file_manifest(dest, verify) != before_files
+        or completion_state(dest) != before_state
+    ):
         os.rename(dest, source)
         move.status, move.detail = "failed", "verification failed; rolled back"
         return
@@ -175,79 +137,13 @@ def run_filesystem(moves: list[DirMove], execute: bool, verify: str) -> None:
         print(f"[{move.status}] {move.source} -> {move.dest} {move.detail}")
 
 
-def _tag_updates(tags: dict[str, str], experiments_dir: Path) -> dict[str, str]:
-    """New tag values for a run whose rel_dir is affected by the rename."""
-    rel = tags.get("rel_dir")
-    renamed = new_relpath(rel) if rel else None
-    if not renamed:
-        return {}
-    updates = {"rel_dir": renamed}
-    if tags.get("run_name") == rel:
-        updates["run_name"] = renamed
-    data_dir = tags.get("data_dir")
-    if data_dir and data_dir.endswith(rel):
-        updates["data_dir"] = data_dir[: -len(rel)] + renamed
-    elif data_dir:
-        updates["data_dir"] = str((experiments_dir / renamed).resolve())
-    return updates
-
-
-def run_mlflow(
-    tracking_uri: str, experiments_dir: Path, execute: bool, rename_experiments: bool
-) -> dict:
-    from mlflow.entities import ViewType
-    from mlflow.tracking import MlflowClient
-
-    client = MlflowClient(tracking_uri=tracking_uri)
-    summary = {"runs_updated": 0, "experiments_renamed": [], "experiments_skipped": []}
-    experiments = client.search_experiments(view_type=ViewType.ALL)
-    for experiment in experiments:
-        token = None
-        while True:
-            runs = client.search_runs(
-                [experiment.experiment_id],
-                run_view_type=ViewType.ALL,
-                max_results=1000,
-                page_token=token,
-            )
-            for run in runs:
-                updates = _tag_updates(run.data.tags, experiments_dir)
-                if not updates:
-                    continue
-                summary["runs_updated"] += 1
-                print(f"[mlflow-run] {run.info.run_id} {updates}")
-                if execute:
-                    for key, value in updates.items():
-                        client.set_tag(run.info.run_id, key, value)
-                    if run.info.run_name == run.data.tags.get("rel_dir"):
-                        client.update_run(run.info.run_id, name=updates["rel_dir"])
-            token = runs.token
-            if not token:
-                break
-    if rename_experiments:
-        names = {e.name for e in experiments}
-        for experiment in experiments:
-            target = EXPERIMENT_RENAMES.get(experiment.name)
-            if target is None:
-                continue
-            if target in names:
-                summary["experiments_skipped"].append(
-                    f"{experiment.name}: target {target} already exists"
-                )
-                print(f"[mlflow-experiment-skip] {experiment.name} -> {target} exists")
-                continue
-            print(f"[mlflow-experiment] {experiment.name} -> {target}")
-            if execute:
-                client.rename_experiment(experiment.experiment_id, target)
-            summary["experiments_renamed"].append(f"{experiment.name} -> {target}")
-    return summary
-
-
 def main(argv: list[str] | None = None) -> int:
     resolver = PathResolver()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true", help="Apply the migration.")
-    parser.add_argument("--experiments-dir", type=Path, default=resolver.experiments_dir)
+    parser.add_argument(
+        "--experiments-dir", type=Path, default=resolver.experiments_dir
+    )
     parser.add_argument("--artifacts-dir", type=Path, default=resolver.artifacts_dir)
     parser.add_argument("--cache-dir", type=Path, default=resolver.cache_dir)
     parser.add_argument("--mlflow-tracking-uri", default=None)
@@ -282,7 +178,11 @@ def main(argv: list[str] | None = None) -> int:
         "mlflow": mlflow_summary,
     }
     if args.execute:
-        default_rep = args.experiments_dir.parent / "migrations" / f"use_case_names_{datetime.now():%Y%m%d_%H%M%S}.json"
+        default_rep = (
+            args.experiments_dir.parent
+            / "migrations"
+            / f"use_case_names_{datetime.now():%Y%m%d_%H%M%S}.json"
+        )
         report_path = args.report or default_rep
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
