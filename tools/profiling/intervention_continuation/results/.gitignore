@@ -1,0 +1,3 @@
+# Ignore profiling run outputs and trace files
+*
+!.gitignore
