@@ -21,7 +21,7 @@ def get_lm_head(model_module: torch.nn.Module) -> Any:
     raise AttributeError("Cannot find lm_head or output embeddings on model.")
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def decode_tokens_with_hiddens(
     model: torch.nn.Module,
     device: torch.device,
@@ -36,8 +36,9 @@ def decode_tokens_with_hiddens(
 ) -> tuple[list[int], list[torch.Tensor], str, bool]:
     """Autoregressive explicit decoding recording the hidden state predicting each token."""
     lm_head = get_lm_head(model)
+    inner_model = getattr(model, "model", model)
     ids: list[int] = []
-    hiddens: list[torch.Tensor] = []
+    gpu_hiddens: list[torch.Tensor] = []
     curr_hidden = initial_hidden
     kv = past_kv
 
@@ -51,9 +52,11 @@ def decode_tokens_with_hiddens(
         disable=not report_progress,
     )
 
+    reason = "length"
+    exhausted = True
     try:
         for _ in range(max(1, max_new_tokens)):
-            hiddens.append(curr_hidden.detach().cpu())
+            gpu_hiddens.append(curr_hidden.detach())
             logits = lm_head(curr_hidden)
             if logits.dim() == 2:
                 logits = logits[-1]
@@ -64,30 +67,42 @@ def decode_tokens_with_hiddens(
                 next_id = int(torch.argmax(logits, dim=-1).item())
 
             if next_id == tokenizer.eos_token_id:
-                return ids, hiddens[:-1], "stop", False
+                gpu_hiddens.pop()
+                reason = "stop"
+                exhausted = False
+                break
 
             ids.append(next_id)
             progress.update(1)
             if len(ids) >= max_new_tokens:
-                return ids, hiddens, "length", True
+                break
 
             next_tensor = torch.tensor([[next_id]], device=device, dtype=torch.long)
-            past_len = get_past_kv_sequence_length(kv)
-            mask = torch.ones((1, past_len + 1), dtype=torch.long, device=device)
-            outputs = model(
+            outputs = inner_model(
                 input_ids=next_tensor,
-                attention_mask=mask,
+                attention_mask=None,
                 past_key_values=kv,
                 use_cache=True,
-                output_hidden_states=True,
+                output_hidden_states=False,
                 return_dict=True,
             )
             kv = outputs.past_key_values
-            curr_hidden = outputs.hidden_states[-1][0, -1, :]
-
-        return ids, hiddens, "length", True
+            if (
+                hasattr(outputs, "last_hidden_state")
+                and outputs.last_hidden_state is not None
+            ):
+                curr_hidden = outputs.last_hidden_state[0, -1, :]
+            elif hasattr(outputs, "hidden_states") and outputs.hidden_states:
+                curr_hidden = outputs.hidden_states[-1][0, -1, :]
+            else:
+                raise AttributeError(
+                    "Model outputs do not contain last_hidden_state or hidden_states."
+                )
     finally:
         progress.close()
+
+    cpu_hiddens = [h.cpu() for h in gpu_hiddens]
+    return ids, cpu_hiddens, reason, exhausted
 
 
 def run_explicit_generation(
