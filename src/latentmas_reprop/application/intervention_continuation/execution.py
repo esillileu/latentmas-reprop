@@ -30,6 +30,7 @@ from .identity import (
     state_identity,
     state_path,
 )
+from .run_artifacts import save_condition_runs
 
 _prepare_sample = prepare_sample_states
 
@@ -39,7 +40,6 @@ def execute(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from .artifacts import (
         build_summary_dict,
-        save_experiment_summary,
     )
     from .runner import InterventionContinuationRunner
 
@@ -72,8 +72,12 @@ def execute(
         tracking_ctx = start_continuation_staging_tracker(
             use_case.tracker_port, use_case.storage.base_dir, state, args, model
         )
-    with ThreadPoolExecutor(max_workers=1) as executor:
+    with (
+        ThreadPoolExecutor(max_workers=1) as executor,
+        ThreadPoolExecutor(max_workers=1) as upload_executor,
+    ):
         future = None
+        upload_futures: list[Any] = []
         for index, item in enumerate(
             tqdm(
                 dataset,
@@ -109,7 +113,7 @@ def execute(
             sample = f"{index:06d}"
             base = state / "samples" / sample / "shared" / "ls0"
             if is_condition_complete(base):
-                _, _, meta = use_case.storage.load_shared_segment(state, sample, 0)
+                meta = load_json(base / "result.json")
                 _check_sample(meta, _sample_identity(model, args, item, index))
             states = {}
             if not is_condition_complete(base) and base.exists():
@@ -229,8 +233,13 @@ def execute(
             if tracking_ctx is not None and use_case.tracker_port:
                 from .tracking import trace_continuation_sample
 
-                try:
-                    trace_continuation_sample(
+                for upload in upload_futures:
+                    if upload.done() and upload.exception() is not None:
+                        use_case.tracker_port.discard_staging_run(status="FAILED")
+                        raise upload.exception()
+                upload_futures.append(
+                    upload_executor.submit(
+                        trace_continuation_sample,
                         tracker=use_case.tracker_port,
                         state=state,
                         sample=sample,
@@ -242,35 +251,17 @@ def execute(
                         config=tracking_ctx["config"],
                         config_path=tracking_ctx["config_path"],
                     )
-                except Exception:
+                )
+        for upload in upload_futures:
+            try:
+                upload.result()
+            except Exception:
+                if tracking_ctx is not None and use_case.tracker_port:
                     use_case.tracker_port.discard_staging_run(status="FAILED")
-                    raise
-    for condition in conditions:
-        subset = [record for record in records if record["condition"] == condition]
-        condition_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
-        run_id = canonical_hash(
-            {
-                "state": state.name,
-                "step": condition_step,
-                "condition": condition,
-                "results": paths[condition],
-            }
-        )
-        run_dir = state / "runs" / run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-        config = {
-            "state_path": str(state.relative_to(use_case.storage.base_dir)),
-            "step": condition_step,
-            "condition": condition,
-            "result_paths": paths[condition],
-        }
-        config_path = run_dir / "config.json"
-        if config_path.is_file() and load_json(config_path) != config:
-            raise ValueError("Run identity mismatch")
-        if not config_path.is_file():
-            save_json_atomic(config_path, config)
-        summary = build_summary_dict(subset, [condition], len(dataset), config)
-        save_experiment_summary(run_dir, summary, subset)
+                raise
+    save_condition_runs(
+        state, use_case.storage.base_dir, conditions, step, paths, records, len(dataset)
+    )
     summary = build_summary_dict(records, conditions, len(dataset), vars(args))
     if tracking_ctx is not None and use_case.tracker_port:
         try:

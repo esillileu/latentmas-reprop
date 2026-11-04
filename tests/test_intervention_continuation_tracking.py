@@ -14,6 +14,12 @@ from latentmas_reprop.infrastructure.storage import FileStorage
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
 
+@pytest.fixture(autouse=True)
+def synchronous_trace_logging(monkeypatch):
+    """Exercise persisted traces without repeated asynchronous queue shutdowns."""
+    monkeypatch.setenv("MLFLOW_ENABLE_ASYNC_TRACE_LOGGING", "false")
+
+
 @pytest.fixture
 def setup_run(tmp_path):
     wrapper = _build_mock_wrapper()
