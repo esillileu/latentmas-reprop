@@ -12,6 +12,7 @@ from ...infrastructure.storage.tensor_store import (
     load_json,
     save_json_atomic,
 )
+from .budget_reuse import get_or_create_result, should_compute_condition
 from .checkpoint import (
     _check_sample,
     _sample_identity,
@@ -93,16 +94,9 @@ def execute(
                     ident = result_identity(
                         state.name, condition_step, condition, next_item, args, model
                     )
-                    directory = (
-                        state
-                        / "samples"
-                        / next_sample
-                        / "results"
-                        / f"ls{condition_step}"
-                        / canonical_hash(ident)
-                        / condition
-                    )
-                    if not is_condition_complete(directory):
+                    if should_compute_condition(
+                        state, next_sample, condition_step, condition, ident
+                    ):
                         needed.add(condition_step)
                 if needed:
                     future = executor.submit(
@@ -145,11 +139,10 @@ def execute(
                     / condition
                 )
                 paths[condition].append(str(directory.relative_to(state)))
-                if is_condition_complete(directory):
-                    _, record = use_case.storage.load_intervention_result(
-                        directory, ident
-                    )
-                else:
+                record = get_or_create_result(
+                    use_case, directory, state, sample, condition_step, ident
+                )
+                if record is None:
                     if condition_step not in states:
                         state_runner = copy.copy(runner)
                         state_runner.args = copy.copy(args)

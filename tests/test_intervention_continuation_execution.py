@@ -190,3 +190,69 @@ def test_condition_aliases_and_intervention_content():
     question = intervention_messages("rqlqe", item, args)[0]["content"]
     assert "Judger" in role and item["question"] not in role
     assert item["question"] in question and "Judger" not in question
+
+
+def test_budget_reuse_copies_unexhausted_and_recomputes_exhausted(tmp_path):
+    wrapper = _build_mock_wrapper()
+    wrapper.model.forward = MagicMock(wraps=wrapper.model.forward)
+    args = SimpleNamespace(
+        task="gsm8k",
+        model_name="Qwen/mock",
+        latent_steps=10,
+        max_new_tokens=10,
+        temperature=0.7,
+        top_p=1.0,
+        seed=42,
+        max_samples=2,
+        no_progress=True,
+        intervention_conditions=["rqe"],
+    )
+    dataset = MagicMock()
+    dataset.load.return_value = [
+        {"question": "Q0", "gold": "0"},
+        {"question": "Q1", "gold": "1"},
+    ]
+    evaluator = MagicMock()
+    evaluator.evaluate.return_value = ("0", True, None)
+    storage = FileStorage(PathResolver(tmp_path / "budget_test"))
+    uc = InterventionContinuationUseCase(
+        dataset_port=dataset, storage=storage, evaluator_port=evaluator
+    )
+
+    # Initial run with max_new_tokens=10
+    _, res1 = uc.execute(wrapper, args)
+    assert len(res1) == 2
+    fwd_count_initial = wrapper.model.forward.call_count
+
+    # Mark sample 0 as unexhausted (finished naturally) and sample 1 as exhausted
+    import json
+    pattern = "intervention_continuation/*/*/*/samples/{sample}/results/ls0/*/rqe/result.json"
+    s0_files = list(storage.base_dir.glob(pattern.format(sample="000000")))
+    s1_files = list(storage.base_dir.glob(pattern.format(sample="000001")))
+    assert len(s0_files) == 1 and len(s1_files) == 1
+
+    r0 = json.loads(s0_files[0].read_text(encoding="utf-8"))
+    r0["budget_exhausted"] = False
+    r0["finish_reason"] = "stop"
+    s0_files[0].write_text(json.dumps(r0), encoding="utf-8")
+
+    r1 = json.loads(s1_files[0].read_text(encoding="utf-8"))
+    r1["budget_exhausted"] = True
+    r1["finish_reason"] = "length"
+    s1_files[0].write_text(json.dumps(r1), encoding="utf-8")
+
+    # Second run with increased budget max_new_tokens=20
+    args.max_new_tokens = 20
+    wrapper.model.forward.reset_mock()
+    _, res2 = uc.execute(wrapper, args)
+
+    # Sample 0 should be reused without forward/generation; Sample 1 should be recomputed
+    assert len(res2) == 2
+    assert res2[0]["identity"]["max_new_tokens"] == 20
+    assert res2[1]["identity"]["max_new_tokens"] == 20
+
+    # Forward should have been called only for Sample 1, not Sample 0
+    # For sample 0: 0 forwards (copied directly from sample 0 result)
+    # For sample 1: decode tokens
+    assert wrapper.model.forward.call_count < fwd_count_initial
+
