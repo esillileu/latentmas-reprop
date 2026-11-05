@@ -78,6 +78,7 @@ def trace_intervention_continuation_sample(
     flush: bool = True,
     comparison_id: str = "",
     result_fingerprint: str = "",
+    trace_tags: dict[str, Any] | None = None,
 ) -> str | None:
     """Log a per-sample MLflow trace with common_latent and decode_{cond} spans."""
     if not tracker:
@@ -121,6 +122,7 @@ def trace_intervention_continuation_sample(
             "seed": str(getattr(args, "seed", 42)),
             "git_commit": git_hash,
             "recording": "saved_results",
+            **(trace_tags or {}),
         },
         request_preview=f"[{sample_id}] {question[:90]}",
     ) as root_span:

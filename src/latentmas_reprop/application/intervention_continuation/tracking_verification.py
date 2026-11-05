@@ -108,6 +108,7 @@ def verify_trace_spans(
     fingerprint: str,
     names: set[str],
     run_id: str = "",
+    shared_span: str | None = None,
 ) -> bool:
     """Verify trace integrity, spans, tags, and source run."""
     tags = trace.info.tags
@@ -122,7 +123,7 @@ def verify_trace_spans(
         span.name for span in trace.data.spans if span.parent_id == roots[0].span_id
     }
     source_run = trace.info.trace_metadata.get("mlflow.sourceRun")
-    shared_span = (
+    shared_span = shared_span or (
         "initial_states"
         if names & {name.upper() for name in COMPARISON_CONDITIONS}
         else "common_latent"

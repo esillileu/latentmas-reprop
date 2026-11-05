@@ -62,6 +62,8 @@ def decode_tokens_with_hiddens(
     desc: str = "Generating",
     top_k: int = 0,
     eos_ids: list[int] | None = None,
+    termination_ids: list[int] | None = None,
+    progress_position: int | None = None,
 ) -> tuple[list[int], list[torch.Tensor], str, bool]:
     """Autoregressive explicit decoding recording the hidden state predicting each token."""
     lm_head = get_lm_head(model)
@@ -87,6 +89,7 @@ def decode_tokens_with_hiddens(
         mininterval=0.5,
         leave=False,
         disable=not report_progress,
+        position=progress_position,
     )
 
     reason = "length"
@@ -107,6 +110,8 @@ def decode_tokens_with_hiddens(
                 next_id = int(torch.argmax(logits, dim=-1).item())
 
             if next_id in stop_ids:
+                if termination_ids is not None:
+                    termination_ids.append(next_id)
                 gpu_hiddens.pop()
                 reason = "stop"
                 exhausted = False
