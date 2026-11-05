@@ -155,3 +155,22 @@ just clean-cache # Clean local execution cache
 
 This project is licensed under the [Apache License 2.0](LICENSE).
 See the [`LICENSE`](LICENSE) file for details.
+
+### Training-Free Latent Trajectories
+
+Collect two 80-step latent trajectories and four readouts at every step, using
+`max_samples: 1` by default (larger sample limits are supported):
+
+```bash
+just run-latent-trajectory -c latent_trajectory/gsm8k_q38 --dry-run
+CUDA_VISIBLE_DEVICES=3 just run-latent-trajectory -c latent_trajectory/gsm8k_q38
+```
+
+See [latent trajectory collection and offline analysis](docs/use_cases/latent_trajectory.md).
+
+Qwen3-14B presets run alignment OFF then ON: `latent_trajectory/gsm8k_q314`
+selects GSM8K indices `[0, 660]`; `latent_trajectory/medqa_q314` selects MedQA
+indices `[0, 145]`. MedQA uses the existing local `data/medqa.json` loader and
+multiple-choice single-agent prompt. Collection logs runs, saved-result sample
+traces, metrics and raw tensor artifacts to `latentmas/latent/trajectory` in one
+run per alignment/sample. Progress shows samples, steps and token decoding.

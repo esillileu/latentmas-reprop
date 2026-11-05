@@ -1,6 +1,6 @@
 # Application Use Cases Index
 
-이 문서는 LatentMAS Reprop 프로젝트의 애플리케이션 계층(`src/latentmas_reprop/application/`) 및 실행 계층(`src/run/`)에 정의된 **6대 핵심 유스케이스(Use Cases)**와 각 유스케이스별 상세 기술 명세 문서의 색인입니다.
+이 문서는 LatentMAS Reprop 프로젝트의 애플리케이션 계층(`src/latentmas_reprop/application/`) 및 실행 계층(`src/run/`)에 정의된 유스케이스와 각 유스케이스별 상세 기술 명세 문서의 색인입니다.
 
 모든 유스케이스는 **헥사고날 아키텍처(Hexagonal Architecture)**의 포트(Ports)와 도메인 모델/서비스를 조합하여 구체적인 연구 및 실험 워크플로를 오케스트레이션합니다.
 
@@ -10,6 +10,7 @@
 
 | 유스케이스 (`use_case`) | 실험군 | MLflow Experiment | 대응 클래스 / 모듈 | 실행 명령 (`just`) | 연구 목적 및 주요 기능 요약 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| [**`latent_trajectory`**](latent_trajectory.md) | Latent computation | `latentmas/latent/trajectory` | `application.latent_trajectory` | `just run-latent-trajectory` / `just analyze-latent-trajectory` | 두 latent 궤적과 단계별 네 thinking 태그 조건의 explicit readout 수집 및 오프라인 분석 |
 | [**1. `benchmark`**](benchmark.md) | Benchmark | `latentmas/benchmark` | `BenchmarkUseCase` | `just run -c <preset>`<br>`just lmas reprop` | Single Baseline, TextMAS, LatentMAS 멀티에이전트 협업 벤치마크 및 원본 논문 재현 |
 | [**2. `intervention_kv`**](intervention_kv.md) | Intervention | `latentmas/intervention/kv` | `InterventionKvUseCase` | `just run-intervention-kv` | 잠재 통신 인과성 KV 개입 실험 (`own`, `cross`, `drop`, `zero`) 및 McNemar 통계 검정 |
 | [**3. `intervention_continuation`**](intervention_continuation.md) | Intervention | `latentmas/intervention/continuation` | `InterventionContinuationUseCase` | `just run-intervention-continuation` | 공통 상위 잠재 상태($P_1 \to L$)에서 3조건(`ple`, `plce`, `plpe`) 분기 분석, 10스텝 자동 체크포인트 및 증분 재개 |
