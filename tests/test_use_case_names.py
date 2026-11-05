@@ -10,7 +10,7 @@ from latentmas_reprop.infrastructure.paths.naming import build_params_stem
 BASE = "ls20_seed42_temp0.6_top0.95_mt2048_float16"
 
 
-def test_experiment_names_cover_exactly_the_six_use_cases():
+def test_experiment_names_cover_all_use_cases():
     assert set(use_cases.MLFLOW_EXPERIMENT_NAMES) == set(use_cases.USE_CASES)
     assert {use_cases.mlflow_experiment_name(name) for name in use_cases.USE_CASES} == {
         "latentmas/benchmark",
@@ -19,6 +19,7 @@ def test_experiment_names_cover_exactly_the_six_use_cases():
         "latentmas/representation/acquisition",
         "latentmas/representation/trajectory",
         "latentmas/representation/sender_probe",
+        "latentmas/latent/trajectory",
     }
 
 

@@ -11,6 +11,7 @@ INTERVENTION_CONTINUATION = "intervention_continuation"
 REPRESENTATION_ACQUISITION = "representation_acquisition"
 REPRESENTATION_TRAJECTORY = "representation_trajectory"
 REPRESENTATION_SENDER_PROBE = "representation_sender_probe"
+LATENT_TRAJECTORY = "latent_trajectory"
 
 USE_CASES = (
     BENCHMARK,
@@ -19,6 +20,7 @@ USE_CASES = (
     REPRESENTATION_ACQUISITION,
     REPRESENTATION_TRAJECTORY,
     REPRESENTATION_SENDER_PROBE,
+    LATENT_TRAJECTORY,
 )
 
 MLFLOW_EXPERIMENT_NAMES = {
@@ -28,6 +30,7 @@ MLFLOW_EXPERIMENT_NAMES = {
     REPRESENTATION_ACQUISITION: "latentmas/representation/acquisition",
     REPRESENTATION_TRAJECTORY: "latentmas/representation/trajectory",
     REPRESENTATION_SENDER_PROBE: "latentmas/representation/sender_probe",
+    LATENT_TRAJECTORY: "latentmas/latent/trajectory",
 }
 
 
