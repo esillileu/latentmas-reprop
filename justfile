@@ -104,3 +104,11 @@ analyze-stepwise-communication *args:
 # One-time migration of results and MLflow references after the use case rename (dry run by default)
 migrate-use-case-names *args:
     uv run python -m tools.migrations.use_case_names.migrate {{args}}
+
+# Collect independent training-free latent trajectories and explicit readouts
+run-latent-trajectory *args:
+    uv run python -m src.run.latent_trajectory {{args}}
+
+# Analyze saved latent vectors and logits without loading a model
+analyze-latent-trajectory *args:
+    uv run python -m src.run.latent_trajectory_analysis {{args}}
