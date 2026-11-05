@@ -62,7 +62,10 @@ class ModelWrapper(ModelPort):
             return
 
         self.tokenizer, self.model, self.dtype = load_hf_causal_lm(
-            model_name, self.device, dtype=model_dtype
+            model_name,
+            self.device,
+            dtype=model_dtype,
+            revision=getattr(args, "model_revision", None),
         )
         self.dtype_name = dtype_name(self.dtype)
         if self.latent_space_realign:

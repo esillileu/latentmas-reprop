@@ -1,5 +1,82 @@
 # LMAS Intervention Continuation Analysis
 
+## Four-condition Sequential comparison
+
+`configs/intervention_continuation/gsm8k_q314.yaml` runs four fresh conditions
+with Qwen3-14B. It pins both model and tokenizer to revision
+`40c069824f4251a91eefaf281ebe4c544efd3e18`, uses FP16, GSM8K main/test,
+seed 42 and a final generation budget of 2048 tokens.
+
+| Condition | Calculation | Initial prompt |
+|---|---|---|
+| `baseline` | Single-agent(Q) → E | Exact benchmark single-agent builder |
+| `latent_only` | Single-agent(Q) → L60 → E | Same single-agent builder |
+| `intervention_only` | Planner(Q) → Critic(Q) → Refiner(Q) → Judger(Q) → E | Original Sequential builders |
+| `latent_intervention` | Planner(Q) → L20 → Critic(Q) → L20 → Refiner(Q) → L20 → Judger(Q) → E | Same Sequential builders |
+
+Judger is the final Solver. Only the last stage generates text. Every Sequential
+stage retains all preceding prompt and latent KV; `intervention_only` does not
+drop the cache when its latent budget is zero.
+
+`latent_steps` controls the single-agent latent budget (60 in this preset).
+`intervention_latent_steps` controls each of Planner, Critic and Refiner (20;
+60 total). Zero budgets are also supported. `intervention_conditions` selects
+any subset of these four, as a YAML list or comma-separated CLI value. A YAML
+condition list is one comparison, not a sweep. These conditions cannot be mixed
+with the single-intervention condition identifiers. Comparisons require
+Sequential prompts, the Transformers backend, `initial_input: rq` and
+`think: false`.
+
+All four conditions use the same decoder and sample-derived `sample_v2` seed,
+independent of condition order or resumption. The preset explicitly applies
+temperature 0.6, top-p 0.95, and top-k 20, and uses all model generation-config
+EOS IDs. Generated lengths and saved IDs exclude the terminating EOS, with one
+saved prediction hidden per generated token. Existing single-intervention
+presets retain temperature-only sampling and tokenizer EOS termination; their
+requested top-p remains recorded but unapplied. Requested and effective sampling
+settings are stored in result identities so results cannot be mixed across policies.
+
+The two initial prompt groups have separate state hashes. Single-agent branches
+share their prefill, while Sequential branches share the Planner prefill.
+The existing 10-step checkpoint mechanism applies before branching, including
+the full single-agent latent trajectory and the Planner latent trajectory.
+After branching, Critic/Refiner/Judger execution is saved on condition completion;
+an interrupted condition resumes from its shared boundary. Intermediate role
+KV checkpoints are not persisted.
+
+A third state directory identifies the comparison without duplicating tensors.
+Its `runs/<hash>/config.json` contains `state_paths`, `condition_steps`, and
+sample-indexed `result_references` pointing to the two original state trees.
+Condition names and sample limits do not change the comparison run identity;
+adding conditions or samples extends it. `sample_id` is the zero-padded dataset
+index and the saved question/gold are checked when combining references.
+
+The MLflow experiment remains `latentmas/intervention/continuation`. Once
+requested calculations complete, the comparison records one trace per sample
+with an `initial_states` span, a `decode_<CONDITION>` span per completed condition,
+and nested Critic/Refiner/Judger spans containing the recorded prompts, latent
+budgets and cache lengths. `recording=saved_results` identifies reconstruction
+from saved inference records: trace durations measure recording, not historical
+inference latency. Unchanged traces are retained; missing traces can be rebuilt
+without model forward calls. Tracking errors preserve local results for retry.
+
+`ResearchDataReader.load_intervention_state(run_id, sample, condition="latent_only")`
+selects the appropriate shared state. For `latent_intervention`, this shared
+boundary is after Planner's 20 steps, not after all 60 Sequential latent steps.
+`load_intervention_result` resolves a comparison condition to its original tensor
+directory. Read `summary.json`/`samples.jsonl` from the comparison run for the
+combined results.
+
+```bash
+just run-intervention-continuation -c intervention_continuation/gsm8k_q314 --dry-run
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q314
+# Small new calculation; omitted conditions can be added later with the same preset.
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q314 \
+  --max_samples 2 --intervention_conditions baseline,intervention_only
+```
+
+The remaining sections describe the existing single-intervention conditions.
+
 R은 역할 또는 풀이 지시 프롬프트, Q는 문제, L은 잠재 계산, C는 제어 신호, E는 명시적 생성입니다. 초기 역할 R₁과 후속 역할 R₂는 서로 다를 수 있으며 기본값은 각각 Planner와 Judger입니다. 실제 초기 입력과 개입 프롬프트 및 토큰 ID가 기록됩니다.
 
 | 조건 | 순서 | 저장 식별자 |

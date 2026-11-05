@@ -19,6 +19,12 @@ from .checkpoint import (
     prepare_sample_states,
     prepare_state,
 )
+from .conditions import (
+    COMPARISON_CONDITIONS,
+    SEQUENTIAL_CONDITIONS,
+    UNPROMPTED_CONDITIONS,
+    branch_step,
+)
 from .determinism import StochasticForwardError
 from .identity import (
     canonical_hash,
@@ -61,7 +67,7 @@ def execute(
     if limit > 0:
         dataset = dataset[:limit]
     conditions = resolve_conditions(args)
-    step = int(getattr(args, "latent_steps", 10))
+    step = max(branch_step(condition, args) for condition in conditions)
     runner = InterventionContinuationRunner(model, args, use_case.evaluator_port)
     records = []
     paths = {condition: [] for condition in conditions}
@@ -94,7 +100,7 @@ def execute(
                 next_sample = f"{next_index:06d}"
                 needed = set()
                 for condition in conditions:
-                    condition_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
+                    condition_step = branch_step(condition, args)
                     ident = result_identity(
                         state.name, condition_step, condition, next_item, args, model
                     )
@@ -128,7 +134,7 @@ def execute(
                     save_json_atomic(invalid, {"reason": "stochastic_forward"})
                     raise
             for condition in conditions:
-                condition_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
+                condition_step = branch_step(condition, args)
                 ident = result_identity(
                     state.name, condition_step, condition, item, args, model
                 )
@@ -193,7 +199,14 @@ def execute(
                             "sample_index": index,
                             "condition": condition,
                         }
-                        if condition in {"qe", "rqe", "qle", "rqle"}:
+                        if condition in SEQUENTIAL_CONDITIONS:
+                            from .sequential import execute_sequential
+
+                            branch, record = execute_sequential(
+                                runner, item, kv, condition_step
+                            )
+                            record["condition"] = condition
+                        elif condition in UNPROMPTED_CONDITIONS:
                             branch, record = runner.execute_unprompted(
                                 item, kv, hidden[-1]
                             )
@@ -216,7 +229,11 @@ def execute(
                         sample_index=index,
                         identity=ident,
                         files=["hidden.pt"],
-                        top_p_applied=False,
+                        latent_steps_executed=record.get(
+                            "latent_steps_executed", condition_step
+                        ),
+                        sample_id=sample,
+                        top_p_applied=condition in COMPARISON_CONDITIONS,
                         rng_provenance=rng,
                     )
                     use_case.storage.save_intervention_result(

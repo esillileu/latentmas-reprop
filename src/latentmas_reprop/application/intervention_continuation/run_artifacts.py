@@ -10,7 +10,7 @@ def save_condition_runs(
 ):
     for condition in conditions:
         subset = [record for record in records if record["condition"] == condition]
-        condition_step = 0 if condition in {"qe", "rqe", "rqrqe"} else step
+        condition_step = subset[0]["identity"]["step"] if subset else step
         run_id = canonical_hash(
             {
                 "state": state.name,

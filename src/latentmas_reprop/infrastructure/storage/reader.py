@@ -17,27 +17,12 @@ from .tensor_store import (
 )
 
 
-def _validate_safe_name(name_val: str, field_name: str) -> str:
+def _validate_safe_name(name_val: str, field_name: str) -> None:
     """Disallow path traversal components and directory separators for leaf names."""
-    if not name_val:
-        return name_val
     if ".." in name_val or "/" in name_val or "\\" in name_val:
         raise ValueError(
             f"Path traversal or invalid path character in {field_name}: '{name_val}'"
         )
-    return name_val
-
-
-def _validate_safe_path(path_val: str, field_name: str) -> str:
-    """Disallow path traversal components and absolute paths for hierarchical paths."""
-    if not path_val:
-        return path_val
-    p = Path(path_val)
-    if p.is_absolute() or ".." in p.parts:
-        raise ValueError(
-            f"Path traversal or absolute path disallowed in {field_name}: '{path_val}'"
-        )
-    return path_val
 
 
 def _validate_safe_relpath(path_val: str, field_name: str) -> Path:
@@ -73,7 +58,7 @@ class ResearchDataReader:
 
     def get_run_data_dir(self, run_id: str) -> Path:
         """Find the local storage directory associated with an experiment run or relative path without mutating disk."""
-        _validate_safe_path(run_id, "run_id")
+        _validate_safe_relpath(run_id, "run_id")
 
         # 1. Check MLflow run tags if client is available
         if self.client:
@@ -86,7 +71,7 @@ class ResearchDataReader:
                     "resumed_from_run_id"
                 )
                 if alt_id:
-                    _validate_safe_path(alt_id, "rel_dir")
+                    _validate_safe_relpath(alt_id, "rel_dir")
                     return self.resolver.get_experiment_dir(alt_id)
 
             with contextlib.suppress(Exception):
@@ -105,9 +90,9 @@ class ResearchDataReader:
         return self.resolver.experiments_dir / clean_rel
 
     def _intervention_state_dir(
-        self, run_or_state: str
+        self, run_or_state: str, condition: str | None = None
     ) -> tuple[Path, dict[str, Any] | None]:
-        _validate_safe_path(run_or_state, "run_or_state")
+        _validate_safe_relpath(run_or_state, "run_or_state")
         link = (
             self.resolver.experiments_dir
             / "intervention_continuation"
@@ -125,15 +110,35 @@ class ResearchDataReader:
         config_path = path / "config.json"
         if config_path.is_file():
             config = load_json(config_path)
+            if "state_paths" in config:
+                if condition not in config["condition_steps"]:
+                    raise ValueError(
+                        "A comparison condition is required to select its shared state"
+                    )
+                role = (
+                    "single_agent"
+                    if condition in {"baseline", "latent_only"}
+                    else "planner"
+                )
+                relative = _validate_safe_relpath(
+                    config["state_paths"][role], "state_path"
+                )
+                return self.resolver.experiments_dir / relative, config
             relative = _validate_safe_relpath(config["state_path"], "state_path")
             return self.resolver.experiments_dir / relative, config
         return path, None
 
     def load_intervention_state(
-        self, run_or_state: str, sample: str, step: int | None = None
+        self,
+        run_or_state: str,
+        sample: str,
+        step: int | None = None,
+        condition: str | None = None,
     ) -> tuple[Any, torch.Tensor, dict[str, Any]]:
         _validate_safe_name(sample, "sample")
-        state, config = self._intervention_state_dir(run_or_state)
+        state, config = self._intervention_state_dir(run_or_state, condition)
+        if config and "state_paths" in config and step is None:
+            step = int(config["condition_steps"][condition])
         if step is None:
             if config is None:
                 raise ValueError("A step is required for a state path")
@@ -166,7 +171,7 @@ class ResearchDataReader:
             (condition, "condition"),
         ):
             _validate_safe_name(value, name)
-        state, _ = self._intervention_state_dir(run_or_state)
+        state, _ = self._intervention_state_dir(run_or_state, condition)
         directory = (
             state
             / "samples"
@@ -180,7 +185,7 @@ class ResearchDataReader:
 
     def load_artifact(self, run_id: str, artifact_path: str) -> Any:
         """Load an artifact (JSON, JSONL, YAML) from MLflow or local run storage."""
-        _validate_safe_path(run_id, "run_id")
+        _validate_safe_relpath(run_id, "run_id")
         rel_path = _validate_safe_relpath(artifact_path, "artifact_path")
         downloaded_path = None
 
@@ -248,7 +253,7 @@ class ResearchDataReader:
         segment_id: str = "",
     ) -> torch.Tensor:
         """Load a torch tensor for a given run and artifact identifier."""
-        _validate_safe_path(run_id, "run_id")
+        _validate_safe_relpath(run_id, "run_id")
         run_dir = self.get_run_data_dir(run_id)
         cond = condition or branch_id
         fname = artifact_id if artifact_id.endswith(".pt") else f"{artifact_id}.pt"

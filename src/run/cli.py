@@ -92,6 +92,7 @@ def build_parser(defaults: dict[str, Any] | None = None) -> argparse.ArgumentPar
     )
 
     # Execution configuration
+    parser.add_argument("--model_revision", default=defaults.get("model_revision"))
     parser.add_argument("--device", type=str, default=defaults.get("device", "cuda"))
     parser.add_argument("--split", type=str, default=defaults.get("split", "test"))
     parser.add_argument(
@@ -231,7 +232,11 @@ def parse_run_matrix(args=None) -> list[argparse.Namespace]:
     """Expand top-level YAML lists into a Cartesian product of parsed runs."""
     argv = list(args) if args is not None else None
     defaults = _load_defaults(argv)
-    dimensions = {k: v for k, v in defaults.items() if isinstance(v, list)}
+    dimensions = {
+        k: v
+        for k, v in defaults.items()
+        if isinstance(v, list) and k != "intervention_conditions"
+    }
     empty = [k for k, v in dimensions.items() if not v]
     if empty:
         raise ValueError(f"sweep dimensions cannot be empty: {', '.join(empty)}")

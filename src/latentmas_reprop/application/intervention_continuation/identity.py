@@ -17,6 +17,8 @@ from ...domain.services.prompts import (
 )
 from ...infrastructure.paths.naming import clean_model_name
 from ...infrastructure.storage.tensor_store import load_json, save_json_atomic
+from .conditions import COMPARISON_CONDITIONS, SEQUENTIAL_CONDITIONS, sequential_prompts
+from .decoder import generation_settings
 
 
 def canonical_hash(value: Any) -> str:
@@ -169,11 +171,20 @@ def result_identity(
         "max_new_tokens": int(getattr(args, "max_new_tokens", 2048)),
         "temperature": float(getattr(args, "temperature", 0.6)),
         "top_p": float(getattr(args, "top_p", 0.95)),
+        "top_k": int(getattr(args, "top_k", 0)),
+        "sampling": generation_settings(model, args),
         "rng_policy": "sample_v2",
         "decoder": hashlib.sha256(
             (Path(__file__).parent / "decoder.py").read_bytes()
         ).hexdigest(),
     }
+    if condition in SEQUENTIAL_CONDITIONS:
+        payload["stages"] = sequential_prompts(model, item, args)
+        payload["latent_steps_per_role"] = step
+        payload["latent_steps_executed"] = step * 3
+        payload["continuation"] = hashlib.sha256(
+            (Path(__file__).parent / "sequential.py").read_bytes()
+        ).hexdigest()
     if condition == "rqlce":
         payload["control_signal"] = getattr(args, "control_signal", "\nSolution:")
     if condition == "rqlce":
@@ -241,6 +252,23 @@ def resolve_conditions(args: Any) -> list[str]:
     conditions = [
         c.strip().lower() for c in (raw.split(",") if isinstance(raw, str) else raw)
     ]
+    if set(conditions) & set(COMPARISON_CONDITIONS):
+        if set(conditions) - set(COMPARISON_CONDITIONS):
+            raise ValueError("Cannot mix comparison and single-intervention conditions")
+        if getattr(args, "prompt", "sequential") != "sequential":
+            raise ValueError("Comparison conditions require sequential prompts")
+        if getattr(args, "use_vllm", False) or getattr(args, "think", False):
+            raise ValueError(
+                "Comparison conditions require transformers and think=false"
+            )
+        if initial_input(args) != "rq":
+            raise ValueError("Comparison conditions require initial_input=rq")
+        if (
+            int(getattr(args, "latent_steps", 60)) < 0
+            or int(getattr(args, "intervention_latent_steps", 20)) < 0
+        ):
+            raise ValueError("Latent step budgets must be non-negative")
+        return list(dict.fromkeys(conditions))
     if set(conditions) - set(permitted):
         raise ValueError("Condition does not match initial input")
     return list(dict.fromkeys(conditions))

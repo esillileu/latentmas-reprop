@@ -10,9 +10,6 @@ def build_agent_messages_single_agent(
         "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."
     )
 
-    assert args.method in ["baseline"], (
-        "this prompt only for baseline method (single agent)"
-    )
     assert "qwen" in args.model_name.lower(), "this prompt only for qwen models"
 
     task = getattr(args, "task", "gsm8k")

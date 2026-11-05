@@ -1,0 +1,25 @@
+method: latent_mas
+model_name: Qwen/Qwen3-14B
+model_revision: 40c069824f4251a91eefaf281ebe4c544efd3e18
+task: gsm8k
+split: test
+prompt: sequential
+intervention_continuation: true
+intervention_conditions:
+  - baseline
+  - latent_only
+  - intervention_only
+  - latent_intervention
+latent_steps: 60
+intervention_latent_steps: 20
+max_samples: -1
+generate_bs: 1
+max_new_tokens: 2048
+temperature: 0.6
+top_p: 0.95
+top_k: 20
+seed: 42
+think: false
+latent_space_realign: false
+device: cuda
+latent_step_checkpoint_interval: 10

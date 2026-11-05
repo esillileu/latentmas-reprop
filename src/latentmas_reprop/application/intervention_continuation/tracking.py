@@ -42,6 +42,18 @@ def _group(state: Path, args: Any, model: Any) -> dict[str, Any]:
             "plpe_prompt": getattr(args, "plpe_prompt", None),
         }
     )
+    if "initial_states" in load_json(state / "state.json")["identity"]:
+        probe["intervention_latent_steps"] = int(
+            getattr(args, "intervention_latent_steps", 20)
+        )
+        probe["sequential"] = result_identity(
+            state.name,
+            probe["intervention_latent_steps"],
+            "latent_intervention",
+            {"question": "", "gold": ""},
+            args,
+            model,
+        )
     return probe
 
 
@@ -77,7 +89,9 @@ def start_continuation_staging_tracker(
         "data_dir": str(run_dir.resolve()),
         "comparison_id": group,
         "experiment_type": INTERVENTION_CONTINUATION,
-        "initial_input": initial_input(args),
+        "initial_input": "comparison"
+        if "state_paths" in config
+        else initial_input(args),
     }
     tracker.start_staging_run(
         experiment_name=mlflow_experiment_name(INTERVENTION_CONTINUATION),
@@ -108,11 +122,17 @@ def trace_continuation_sample(
     config_path: Path | None = None,
 ) -> str | None:
     """Trace a single completed sample in real time during execution."""
-    records = _records(state, sample, item, args, model)
+    comparison = config is not None and "result_references" in config
+    if comparison:
+        from .comparison import comparison_meta, comparison_records
+
+        records = comparison_records(state.parents[3], config, sample, item)
+    else:
+        records = _records(state, sample, item, args, model)
     if not records:
         return None
 
-    if config is not None and config_path is not None:
+    if not comparison and config is not None and config_path is not None:
         paths = set(config.get("result_paths", []))
         for record in records.values():
             identity = record["identity"]
@@ -129,10 +149,13 @@ def trace_continuation_sample(
             config["result_paths"] = sorted(paths)
             save_json_atomic(config_path, config)
 
-    meta = load_json(state / "samples" / sample / "shared" / "ls0" / "result.json")
-    meta["initial_role"] = next(iter(records.values())).get("initial_role")
-    if any(r["identity"]["step"] > 0 for r in records.values()):
-        meta["latent_steps"] = int(getattr(args, "latent_steps", 10))
+    if comparison:
+        meta = comparison_meta(state.parents[3], config, sample, records)
+    else:
+        meta = load_json(state / "samples" / sample / "shared" / "ls0" / "result.json")
+        meta["initial_role"] = next(iter(records.values())).get("initial_role")
+        if any(r["identity"]["step"] > 0 for r in records.values()):
+            meta["latent_steps"] = int(getattr(args, "latent_steps", 10))
 
     fingerprint = canonical_hash(records)
     run_id = tracker.active_run_id or ""

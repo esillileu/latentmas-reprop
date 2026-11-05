@@ -11,6 +11,10 @@ condition_sets:
 question_template: "Question: {question}\n"
 
 roles:
+  single_agent:
+    description: "Exact benchmark single-agent prompt"
+    role_builder: single_agent
+
   planner:
     description: "Default LatentMAS Sequential Planner prompt (outline step-by-step plan without final answer)"
     role_builder: "planner"

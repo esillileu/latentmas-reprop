@@ -18,7 +18,7 @@ def add_intervention_args(
         "--intervention_conditions",
         type=str,
         default=defaults.get("intervention_conditions", "own,cross,zero"),
-        help="Comma-separated conditions for intervention: 'own', 'cross', 'zero'.",
+        help="Comma-separated KV or continuation conditions; comparison: baseline,latent_only,intervention_only,latent_intervention.",
     )
     parser.add_argument(
         "--cross_policy",
@@ -45,6 +45,18 @@ def add_intervention_args(
         action="store_true",
         default=defaults.get("intervention_continuation", False),
         help="Run LMAS Intervention Continuation Analysis (PLE, PLCE, PLPE).",
+    )
+    parser.add_argument(
+        "--intervention_latent_steps",
+        type=int,
+        default=defaults.get("intervention_latent_steps", 20),
+        help="Latent steps after each of Planner, Critic and Refiner in comparisons.",
+    )
+    parser.add_argument(
+        "--top_k",
+        type=int,
+        default=defaults.get("top_k", 0),
+        help="Four-condition continuation top-k sampling; 0 disables filtering.",
     )
     parser.add_argument(
         "--initial_input",
@@ -208,6 +220,20 @@ def validate_intervention_and_acquisition_args(
             parsed, "intervention_conditions", None
         ) or parsed.intervention_conditions == ["own", "cross", "zero"]:
             parsed.intervention_conditions = None
+        from latentmas_reprop.application.intervention_continuation.identity import (
+            resolve_conditions,
+        )
+
+        try:
+            resolve_conditions(parsed)
+            if parsed.max_new_tokens <= 0 or parsed.top_k < 0:
+                raise ValueError(
+                    "max_new_tokens must be positive and top_k non-negative"
+                )
+            if not 0 < parsed.top_p <= 1 or parsed.temperature < 0:
+                raise ValueError("Require 0 < top_p <= 1 and temperature >= 0")
+        except ValueError as exc:
+            parser.error(str(exc))
     if parsed.representation_acquisition:
         if parsed.method != "latent_mas" or parsed.task != "secret_digit":
             parser.error(

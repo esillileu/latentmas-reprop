@@ -12,6 +12,7 @@ from ...infrastructure.storage.tensor_store import (
     load_json,
     save_json_atomic,
 )
+from .conditions import COMPARISON_CONDITIONS, SEQUENTIAL_CONDITIONS, SEQUENTIAL_ROLES
 from .identity import canonical_hash, condition_name, result_identity
 
 
@@ -121,6 +122,23 @@ def verify_trace_spans(
         span.name for span in trace.data.spans if span.parent_id == roots[0].span_id
     }
     source_run = trace.info.trace_metadata.get("mlflow.sourceRun")
+    shared_span = (
+        "initial_states"
+        if names & {name.upper() for name in COMPARISON_CONDITIONS}
+        else "common_latent"
+    )
+    for name in names & {condition.upper() for condition in SEQUENTIAL_CONDITIONS}:
+        branch = [
+            span
+            for span in trace.data.spans
+            if span.name == f"decode_{name}" and span.parent_id == roots[0].span_id
+        ]
+        if len(branch) != 1 or not set(SEQUENTIAL_ROLES) <= {
+            span.name
+            for span in trace.data.spans
+            if span.parent_id == branch[0].span_id
+        }:
+            return False
     run_matches = True
     if run_id:
         run_matches = (source_run == run_id) or (tags.get("comparison_id") == group)
@@ -130,7 +148,7 @@ def verify_trace_spans(
         and tags.get("sample_key") == sample
         and tags.get("comparison_id") == group
         and tags.get("result_fingerprint") == fingerprint
-        and {"common_latent", *(f"decode_{name}" for name in names)} <= spans
+        and {shared_span, *(f"decode_{name}" for name in names)} <= spans
     )
 
 

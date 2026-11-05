@@ -4,12 +4,14 @@ from typing import Any
 
 import torch
 from tqdm import tqdm
+from transformers import TopKLogitsWarper, TopPLogitsWarper
 
 from ...domain.services.kv_cache import (
     clone_past_kv,
     get_past_kv_sequence_length,
     move_past_kv,
 )
+from .conditions import COMPARISON_CONDITIONS
 
 
 def get_lm_head(model_module: torch.nn.Module) -> Any:
@@ -19,6 +21,31 @@ def get_lm_head(model_module: torch.nn.Module) -> Any:
     if hasattr(model_module, "get_output_embeddings"):
         return model_module.get_output_embeddings()
     raise AttributeError("Cannot find lm_head or output embeddings on model.")
+
+
+def eos_token_ids(model: Any, tokenizer: Any) -> list[int]:
+    eos = getattr(getattr(model, "generation_config", None), "eos_token_id", None)
+    eos = tokenizer.eos_token_id if eos is None else eos
+    return list(eos) if isinstance(eos, (list, tuple)) else [eos]
+
+
+def generation_settings(model: Any, args: Any) -> dict[str, Any]:
+    """Retain single-intervention decoding; comparisons use explicit sampling filters."""
+    conditions = getattr(args, "intervention_conditions", None) or []
+    if isinstance(conditions, str):
+        conditions = conditions.split(",")
+    comparison = bool(
+        {condition.strip().lower() for condition in conditions}
+        & set(COMPARISON_CONDITIONS)
+    )
+    return {
+        "temperature": float(getattr(args, "temperature", 0.0)),
+        "top_p": float(getattr(args, "top_p", 1.0)) if comparison else 1.0,
+        "top_k": int(getattr(args, "top_k", 0)) if comparison else 0,
+        "eos_ids": eos_token_ids(model.model, model.tokenizer)
+        if comparison
+        else [model.tokenizer.eos_token_id],
+    }
 
 
 @torch.inference_mode()
@@ -33,6 +60,8 @@ def decode_tokens_with_hiddens(
     top_p: float = 1.0,
     report_progress: bool = True,
     desc: str = "Generating",
+    top_k: int = 0,
+    eos_ids: list[int] | None = None,
 ) -> tuple[list[int], list[torch.Tensor], str, bool]:
     """Autoregressive explicit decoding recording the hidden state predicting each token."""
     lm_head = get_lm_head(model)
@@ -41,6 +70,14 @@ def decode_tokens_with_hiddens(
     gpu_hiddens: list[torch.Tensor] = []
     curr_hidden = initial_hidden
     kv = past_kv
+    if max_new_tokens <= 0 or temperature < 0 or not 0 < top_p <= 1 or top_k < 0:
+        raise ValueError("Invalid continuation generation budget or sampling settings")
+    stop_ids = set(eos_token_ids(model, tokenizer) if eos_ids is None else eos_ids)
+    filters = []
+    if top_k:
+        filters.append(TopKLogitsWarper(top_k))
+    if top_p < 1:
+        filters.append(TopPLogitsWarper(top_p))
 
     progress = tqdm(
         total=max_new_tokens,
@@ -55,18 +92,21 @@ def decode_tokens_with_hiddens(
     reason = "length"
     exhausted = True
     try:
-        for _ in range(max(1, max_new_tokens)):
+        for _ in range(max_new_tokens):
             gpu_hiddens.append(curr_hidden.detach())
             logits = lm_head(curr_hidden)
             if logits.dim() == 2:
                 logits = logits[-1]
             if temperature > 0.0:
-                probs = torch.softmax(logits / temperature, dim=-1)
+                scores = (logits / temperature).unsqueeze(0)
+                for processor in filters:
+                    scores = processor(None, scores)
+                probs = torch.softmax(scores[0], dim=-1)
                 next_id = int(torch.multinomial(probs, num_samples=1).item())
             else:
                 next_id = int(torch.argmax(logits, dim=-1).item())
 
-            if next_id == tokenizer.eos_token_id:
+            if next_id in stop_ids:
                 gpu_hiddens.pop()
                 reason = "stop"
                 exhausted = False
@@ -114,8 +154,6 @@ def run_explicit_generation(
 ) -> tuple[list[int], list[torch.Tensor], str, bool, str]:
     """Run explicit generation loop and decode tokens to string."""
     max_new = int(getattr(args, "max_new_tokens", 256))
-    temp = float(getattr(args, "temperature", 0.0))
-    top_p = float(getattr(args, "top_p", 1.0))
     report_progress = not bool(getattr(args, "no_progress", False))
     ids, hiddens, reason, exhausted = decode_tokens_with_hiddens(
         model.model,
@@ -124,8 +162,7 @@ def run_explicit_generation(
         start_hidden.to(model.device),
         model.tokenizer,
         max_new,
-        temperature=temp,
-        top_p=top_p,
+        **generation_settings(model, args),
         report_progress=report_progress,
         desc=desc,
     )

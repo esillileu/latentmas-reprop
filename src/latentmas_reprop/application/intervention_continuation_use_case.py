@@ -36,6 +36,13 @@ class InterventionContinuationUseCase:
     def execute(
         self, model: ModelWrapper, args: Any
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        from .intervention_continuation.conditions import COMPARISON_CONDITIONS
         from .intervention_continuation.execution import execute
+        from .intervention_continuation.identity import resolve_conditions
+
+        if set(resolve_conditions(args)) & set(COMPARISON_CONDITIONS):
+            from .intervention_continuation.comparison import execute_comparison
+
+            return execute_comparison(self, model, args)
 
         return execute(self, model, args)

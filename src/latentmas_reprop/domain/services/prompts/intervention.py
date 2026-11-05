@@ -8,6 +8,7 @@ import yaml
 from ....infrastructure.paths.resolver import get_path_resolver
 from .hierarchical_latent import build_agent_message_hierarchical_latent_mas
 from .sequential_latent import build_agent_message_sequential_latent_mas
+from .single_agent import build_agent_messages_single_agent
 
 
 @lru_cache(maxsize=4)
@@ -52,6 +53,8 @@ def build_initial_messages(question: str, args: Any) -> list[dict[str, str]]:
     role = initial_role(args)
     spec = config["roles"][role] if role else {"template": config["question_template"]}
     builder_role = spec.get("role_builder")
+    if builder_role == "single_agent":
+        return build_agent_messages_single_agent(question, args)
     if builder_role:
         builder = (
             build_agent_message_hierarchical_latent_mas

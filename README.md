@@ -112,6 +112,19 @@ CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_contin
 
 The default preset uses `rq` with the `direct_solve` role with `RQE`, `RQLE`, `RQRQE`, and `RQLRQE`. Initial roles and available and default conditions are configured in `configs/prompts/intervention.yaml`; `q` uses `QE` and `QLE`. Shared states are checkpointed and resumed incrementally, and each MLflow run contains one consolidated trace per sample. See [Intervention Continuation Analysis](docs/use_cases/intervention_continuation.md) for detailed specifications.
 
+Run a fresh Qwen3-14B four-condition comparison (single-agent baseline, 60 latent
+steps, Sequential prompts without latent steps, and Sequential prompts with
+20 latent steps per role):
+
+```bash
+just run-intervention-continuation -c intervention_continuation/gsm8k_q314 --dry-run
+CUDA_VISIBLE_DEVICES=3 just run-intervention-continuation -c intervention_continuation/gsm8k_q314
+```
+
+The comparison keeps separate single-agent and Planner states, references their
+completed condition results, and publishes one consolidated MLflow trace per
+sample after calculation. Existing single-intervention presets remain available.
+
 ### 3. Developer Commands
 ```bash
 just test        # Run test suite

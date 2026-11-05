@@ -17,9 +17,15 @@ def main(argv: list[str] | None = None) -> None:
         for index, run in enumerate(runs, start=1):
             details = ", ".join(f"{key}={getattr(run, key)}" for key in varying)
             if getattr(run, "intervention_continuation", False):
+                from latentmas_reprop.application.intervention_continuation.identity import (
+                    resolve_conditions,
+                )
+
                 details = (
                     f"model={run.model_name}, task={run.task}, "
-                    f"latent_steps={run.latent_steps}, conditions=rqe/rqle/rqlce/rqlre/rqlqe/rqlrqe/rqrqe, "
+                    f"latent_steps={run.latent_steps}, "
+                    f"intervention_latent_steps={run.intervention_latent_steps}, "
+                    f"conditions={','.join(resolve_conditions(run))}, "
                     f"samples={run.max_samples}"
                 )
             print(f"[{index}/{len(runs)}] {details or 'single configuration'}")

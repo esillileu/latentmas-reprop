@@ -23,15 +23,20 @@ def load_hf_causal_lm(
     device: torch.device,
     *,
     dtype: torch.dtype | None = None,
+    revision: str | None = None,
 ) -> tuple[AutoTokenizer, AutoModelForCausalLM, torch.dtype]:
     """Load the requested dtype (FP16 by default), verifying parameter precision."""
     selected = dtype or resolve_model_dtype(device)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    revision_options = {"revision": revision} if revision else {}
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name, use_fast=True, **revision_options
+    )
     ensure_pad_token(tokenizer)
     with torch.no_grad():
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             dtype=selected,
+            **revision_options,
         )
     if len(tokenizer) != model.get_input_embeddings().weight.shape[0]:
         model.resize_token_embeddings(len(tokenizer))

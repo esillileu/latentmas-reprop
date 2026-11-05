@@ -58,6 +58,17 @@ A YAML configuration can define any argument accepted by `src/run/cli.py`:
 | `seed` | `int` | `42` | Random seed for reproducibility |
 | `use_vllm` | `bool` | `false` | Use vLLM backend for faster generation |
 
+For the four-condition continuation comparison, use
+`intervention_continuation/gsm8k_q314`. `intervention_conditions` selects
+`baseline`, `latent_only`, `intervention_only`, and `latent_intervention` as a
+YAML list or comma-separated string. The list selects conditions within one run;
+it is not a sweep dimension. `latent_steps` is the single-agent latent budget,
+and `intervention_latent_steps` is the budget per non-final Sequential role.
+`top_k` specifies comparison sampling (0 disables it); `model_revision` pins both
+model and tokenizer for the Transformers loader. See the
+[continuation specification](use_cases/intervention_continuation.md) for state
+sharing, effective decoding policies and MLflow reconstruction.
+
 Representation acquisition additionally accepts `representation_acquisition`, `context_modes`,
 `acquisition_conditions`, `acquisition_cross_policy`, `save_hidden_states`, and
 `save_raw_cache`. The canonical preset is `representation_acquisition/secret_digit_q3_sweep.yaml`; it requires

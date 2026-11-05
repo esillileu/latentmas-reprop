@@ -38,19 +38,7 @@ def find_reusable_result(
     if not candidate_dir.exists():
         return None
 
-    # Filter keys to match between identities (everything except max_new_tokens)
-    match_keys = {
-        "state",
-        "step",
-        "condition",
-        "task",
-        "gold",
-        "seed",
-        "temperature",
-        "top_p",
-        "rng_policy",
-        "decoder",
-    }
+    match_keys = set(current_identity) - {"max_new_tokens"}
 
     current_budget = int(current_identity.get("max_new_tokens", 0))
 
@@ -74,32 +62,6 @@ def find_reusable_result(
         prior_ident = record.get("identity", {})
         if not all(prior_ident.get(k) == current_identity.get(k) for k in match_keys):
             continue
-
-        # Check condition-specific keys (control_signal, intervention_token_ids, etc.)
-        cond = current_identity["condition"]
-        if cond == "rqlce":
-            if prior_ident.get("control_signal") != current_identity.get(
-                "control_signal"
-            ):
-                continue
-            if prior_ident.get("intervention_token_ids") != current_identity.get(
-                "intervention_token_ids"
-            ):
-                continue
-        elif cond in {"rqlrqe", "rqlre", "rqlqe", "rqrqe"}:
-            if prior_ident.get("intervention_prompt") != current_identity.get(
-                "intervention_prompt"
-            ):
-                continue
-            if prior_ident.get("intervention_token_ids") != current_identity.get(
-                "intervention_token_ids"
-            ):
-                continue
-            extra_keys = ("plpe_prompt", "receiver_role", "prompt", "think")
-            if not all(
-                prior_ident.get(k) == current_identity.get(k) for k in extra_keys
-            ):
-                continue
 
         prior_budget = int(prior_ident.get("max_new_tokens", 0))
         # We can only reuse if prior budget was smaller (or equal) and did NOT exhaust

@@ -120,13 +120,18 @@ def trace_intervention_continuation_sample(
             "latent_steps": str(getattr(args, "latent_steps", 10)),
             "seed": str(getattr(args, "seed", 42)),
             "git_commit": git_hash,
+            "recording": "saved_results",
         },
         request_preview=f"[{sample_id}] {question[:90]}",
     ) as root_span:
         with tracker.start_span(
-            name="common_latent",
+            name="initial_states"
+            if "initial_states" in shared_meta
+            else "common_latent",
             span_type="CHAIN",
-            inputs={
+            inputs={"initial_states": shared_meta["initial_states"]}
+            if "initial_states" in shared_meta
+            else {
                 "sample_key": skey,
                 "initial_input": shared_meta.get("initial_input", initial_input(args)),
                 "prompt": shared_meta.get("prompt", shared_meta.get("prompt_text", "")),
@@ -139,6 +144,16 @@ def trace_intervention_continuation_sample(
             if b_span is not None:
                 b_span.set_outputs(
                     {
+                        "prefills": {
+                            role: {
+                                "prompt_length": meta["prompt_length"],
+                                "latent_steps": meta["latent_steps"],
+                            }
+                            for role, meta in shared_meta["initial_states"].items()
+                        }
+                    }
+                    if "initial_states" in shared_meta
+                    else {
                         "prompt_length": shared_meta.get("prompt_length", 0),
                         "latent_steps": shared_meta.get("latent_steps", 0),
                     }
@@ -167,15 +182,25 @@ def trace_intervention_continuation_sample(
                     "intervention_length": interv_len,
                     "intervention_token_ids": rec.get("intervention_token_ids", []),
                     "step": rec.get("identity", {}).get("step"),
-                    "baseline": cond in {"QE", "RQE", "PE"},
+                    "baseline": cond in {"QE", "RQE", "PE", "BASELINE"},
                     "initial_role": rec.get("initial_role"),
                     "receiver_role": rec.get("receiver_role"),
+                    "initial_prompt": rec.get("initial_prompt"),
+                    "initial_prompt_token_ids": rec.get("initial_prompt_token_ids"),
+                    "latent_steps_executed": rec.get("latent_steps_executed"),
+                    "stages": rec.get("stages", []),
+                    "rng_provenance": rec.get("rng_provenance"),
+                    "sampling": rec.get("identity", {}).get("sampling"),
+                    "max_new_tokens": rec.get("identity", {}).get("max_new_tokens"),
                 },
             ) as c_span:
                 if c_span is not None:
                     g_tok = int(rec.get("generated_length", 0))
+                    prompt_tokens = interv_len
+                    if "initial_states" in shared_meta:
+                        prompt_tokens += len(rec["initial_prompt_token_ids"])
                     c_span.set_token_usage(
-                        prompt_tokens=interv_len, completion_tokens=g_tok
+                        prompt_tokens=prompt_tokens, completion_tokens=g_tok
                     )
                     c_span.set_outputs(
                         {
@@ -191,6 +216,28 @@ def trace_intervention_continuation_sample(
                             ),
                         }
                     )
+                for stage in rec.get("stages", []):
+                    with tracker.start_span(
+                        name=stage["role"],
+                        span_type="CHAIN",
+                        inputs={
+                            "prompt": stage["prompt"],
+                            "token_ids": stage["token_ids"],
+                            "latent_steps": stage["latent_steps"],
+                        },
+                    ) as stage_span:
+                        if stage_span is not None:
+                            stage_span.set_outputs(
+                                {
+                                    key: stage[key]
+                                    for key in (
+                                        "cache_length_before",
+                                        "cache_length_after",
+                                        "hidden_offset",
+                                        "hidden_length",
+                                    )
+                                }
+                            )
 
         if root_span is not None:
             root_out: dict[str, Any] = {
