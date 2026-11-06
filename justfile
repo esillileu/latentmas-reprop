@@ -116,3 +116,7 @@ analyze-latent-trajectory *args:
 # Global PCA across all saved items/benchmarks (one basis per model)
 analyze-global-latent-pca *args:
     uv run python -m src.run.latent_global_pca {{args}}
+
+# Layer-wise saved KV structure (no model inference)
+analyze-latent-kv *args:
+    uv run python -m src.run.latent_kv_analysis {{args}}

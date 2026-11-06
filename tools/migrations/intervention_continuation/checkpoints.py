@@ -6,8 +6,8 @@ from typing import Any
 import torch
 
 from latentmas_reprop.domain.services.kv_cache import (
-    _dense_layers,
     concat_past_kv,
+    dense_kv_layers,
     get_past_kv_sequence_length,
     slice_past_kv,
 )
@@ -22,8 +22,8 @@ class Checkpoint:
 
 
 def equal_kv(left: Any, right: Any) -> bool:
-    a, _ = _dense_layers(left)
-    b, _ = _dense_layers(right)
+    a, _ = dense_kv_layers(left)
+    b, _ = dense_kv_layers(right)
     return len(a) == len(b) and all(
         x.dtype == y.dtype and torch.equal(x, y)
         for layer_a, layer_b in zip(a, b, strict=True)

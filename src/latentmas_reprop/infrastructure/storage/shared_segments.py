@@ -18,7 +18,7 @@ def save_shared_segment(
 ) -> Path:
     """Commit an immutable segment; hidden contains the full trajectory."""
     from ...domain.services.kv_cache import (
-        _dense_layers,
+        dense_kv_layers,
         get_past_kv_sequence_length,
         slice_past_kv,
     )
@@ -28,7 +28,7 @@ def save_shared_segment(
         raise ValueError("Invalid segment bounds")
     prompt = int(metadata["prompt_length"])
     expected = prompt if end == 0 else end - start
-    layers, dynamic = _dense_layers(kv)
+    layers, dynamic = dense_kv_layers(kv)
     if (
         expected <= 0
         or get_past_kv_sequence_length(kv) != expected
@@ -80,9 +80,9 @@ def load_shared_segment(
         raise ValueError(f"Invalid shared segment metadata: {directory}")
     kv = load_tensor(directory / "kv.pt", map_location="cpu")
     hidden = load_tensor(directory / "hidden.pt", map_location="cpu")
-    from ...domain.services.kv_cache import _dense_layers
+    from ...domain.services.kv_cache import dense_kv_layers
 
-    layers, dynamic = _dense_layers(kv)
+    layers, dynamic = dense_kv_layers(kv)
     specs = [
         [{"shape": list(t.shape), "dtype": str(t.dtype)} for t in layer]
         for layer in layers
@@ -162,14 +162,14 @@ def assemble_shared_state(
         take = min(end, step) - current
         offset = current - int(meta["start_step"])
         if offset:
-            from ...domain.services.kv_cache import _dense_layers
+            from ...domain.services.kv_cache import dense_kv_layers
 
             existing = slice_past_kv(
                 concat_past_kv(segments), prompt + current - offset, prompt + current
             )
             overlap = slice_past_kv(part, 0, offset)
-            left, _ = _dense_layers(existing)
-            right, _ = _dense_layers(overlap)
+            left, _ = dense_kv_layers(existing)
+            right, _ = dense_kv_layers(overlap)
             if len(left) != len(right) or any(
                 not torch.equal(a, b)
                 for x, y in zip(left, right, strict=True)

@@ -169,7 +169,7 @@ def create_zero_past_kv(past_kv: Any) -> Any:
     )
 
 
-def _dense_layers(cache: Any) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], bool]:
+def dense_kv_layers(cache: Any) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], bool]:
     """Extract only cache types whose complete state is represented by dense K/V."""
     from transformers.cache_utils import DynamicCache, DynamicLayer
 
@@ -212,7 +212,7 @@ def _build_dense_cache(
 
 def slice_past_kv(cache: Any, start: int, end: int) -> Any:
     """Return an independent CPU slice on the sequence axis."""
-    layers, dynamic = _dense_layers(cache)
+    layers, dynamic = dense_kv_layers(cache)
     length = layers[0][0].shape[-2]
     if not 0 <= start <= end <= length:
         raise ValueError("Invalid KV slice bounds")
@@ -232,7 +232,7 @@ def concat_past_kv(segments: list[Any]) -> Any:
     """Concatenate compatible dense cache segments without mutating them."""
     if not segments:
         raise ValueError("No KV segments")
-    extracted = [_dense_layers(segment) for segment in segments]
+    extracted = [dense_kv_layers(segment) for segment in segments]
     first, dynamic = extracted[0]
     for layers, kind in extracted[1:]:
         if kind != dynamic or len(layers) != len(first):

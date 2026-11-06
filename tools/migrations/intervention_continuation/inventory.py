@@ -8,7 +8,7 @@ import torch
 from latentmas_reprop.application.intervention_continuation.identity import (
     canonical_hash,
 )
-from latentmas_reprop.domain.services.kv_cache import _dense_layers
+from latentmas_reprop.domain.services.kv_cache import dense_kv_layers
 from latentmas_reprop.infrastructure.storage.tensor_store import load_json, load_tensor
 
 CONDITIONS = ("pe", "ple", "plce", "plpe")
@@ -60,7 +60,7 @@ def group_sources(siblings: list[Path]) -> list[tuple[str, list[Path]]]:
     def prefix(index: int):
         if index not in prefixes:
             _, _, length, root = records[index]
-            layers, _ = _dense_layers(load_tensor(root / "kv.pt", "cpu"))
+            layers, _ = dense_kv_layers(load_tensor(root / "kv.pt", "cpu"))
             hidden = load_tensor(root / "hidden.pt", "cpu")
             prefixes[index] = (
                 [(k[..., :length, :], v[..., :length, :]) for k, v in layers],

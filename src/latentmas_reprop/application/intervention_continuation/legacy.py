@@ -6,14 +6,18 @@ from typing import Any
 
 import torch
 
-from ...domain.services.kv_cache import _build_dense_cache, _dense_layers, slice_past_kv
+from ...domain.services.kv_cache import (
+    _build_dense_cache,
+    dense_kv_layers,
+    slice_past_kv,
+)
 from ...infrastructure.storage.tensor_store import is_condition_complete, load_json
 from .determinism import StochasticForwardError
 
 
 def _equal_kv(left: Any, right: Any) -> bool:
-    a, _ = _dense_layers(left)
-    b, _ = _dense_layers(right)
+    a, _ = dense_kv_layers(left)
+    b, _ = dense_kv_layers(right)
     return len(a) == len(b) and all(
         x.dtype == y.dtype and torch.equal(x, y)
         for la, lb in zip(a, b, strict=True)
@@ -127,8 +131,10 @@ def reuse_migrated_state(
                 previous_kv, previous_hidden, _ = storage.assemble_shared_state(
                     source, sample, step - 1
                 )
-                _, dynamic = _dense_layers(current_kv)
-                previous_kv = _build_dense_cache(_dense_layers(previous_kv)[0], dynamic)
+                _, dynamic = dense_kv_layers(current_kv)
+                previous_kv = _build_dense_cache(
+                    dense_kv_layers(previous_kv)[0], dynamic
+                )
                 probe = copy.copy(runner)
                 probe.args = copy.copy(runner.args)
                 probe.args.latent_steps = step
@@ -151,7 +157,7 @@ def reuse_migrated_state(
                     current_step,
                     step,
                     _build_dense_cache(
-                        _dense_layers(
+                        dense_kv_layers(
                             slice_past_kv(
                                 legacy_kv,
                                 prompt_length + current_step,
