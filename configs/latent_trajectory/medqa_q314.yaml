@@ -9,7 +9,7 @@ sample_indices: [0, 145]
 latent_steps: 80
 latent_step_start: 0
 conditions: [a, b, c, d]
-max_new_tokens: 2048
+max_new_tokens: 4096
 temperature: 0.6
 top_p: 0.95
 seed: 42
