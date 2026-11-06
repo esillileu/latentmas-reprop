@@ -6,6 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from latentmas_reprop.application.latent_alignment_analysis import compare_alignment
+from latentmas_reprop.application.latent_common_pca import analyze_common_pca
 from latentmas_reprop.application.latent_evaluation_audit import (
     audit_evaluations,
     medqa_gold_audit,
@@ -30,6 +31,7 @@ from latentmas_reprop.infrastructure.tracking.analysis_tracking import (
 )
 from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracker
 
+from .latent_common_pca_report import write_common_pca_report
 from .latent_review_report import write_review_report
 from .latent_state_report import write_state_report
 from .latent_trajectory_report import write_csv, write_report
@@ -125,6 +127,9 @@ def main(argv=None):
     )
     if not args.continuations_only:
         write_state_report(rows, latent, statuses, output)
+        write_common_pca_report(
+            analyze_common_pca(directory, metadata, args.compare_directory), output
+        )
     if args.track:
         log_analysis_results_to_mlflow(
             MLflowTracker(),

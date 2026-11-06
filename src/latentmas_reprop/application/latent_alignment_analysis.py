@@ -24,7 +24,7 @@ PROTOCOL_FIELDS = (
 )
 
 
-def compare_alignment(left_rows, right_rows, left_metadata, right_metadata):
+def alignment_protocol_mismatches(left_metadata, right_metadata):
     mismatches = [
         key
         for key in PROTOCOL_FIELDS
@@ -36,6 +36,11 @@ def compare_alignment(left_rows, right_rows, left_metadata, right_metadata):
     right_identity = right_metadata.get("state_identity", {}).get("tokenizer")
     if left_identity != right_identity:
         mismatches.append("tokenizer identity")
+    return mismatches
+
+
+def compare_alignment(left_rows, right_rows, left_metadata, right_metadata):
+    mismatches = alignment_protocol_mismatches(left_metadata, right_metadata)
     cells = []
     for condition in "abcd":
         for step in sorted({r["step"] for r in left_rows + right_rows}):

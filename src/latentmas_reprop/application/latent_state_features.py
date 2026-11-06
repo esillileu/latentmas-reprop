@@ -113,40 +113,70 @@ def logit_features(logits, markers=None, tokenizer=None):
     return rows
 
 
-def trajectory_geometry(hidden, steps):
-    """Centered PCA and entropy effective rank; components are fitted per trajectory."""
-    matrix = hidden.float() - hidden.float().mean(dim=0, keepdim=True)
-    u, singular, _ = torch.linalg.svd(matrix, full_matrices=False)
-    tolerance = (
-        max(matrix.shape)
-        * torch.finfo(matrix.dtype).eps
-        * (singular[0] if len(singular) else 0)
-    )
+def fit_pca(hidden, weights=None):
+    """Fit a shared mean/basis; optional point weights sum to one."""
+    values = hidden.float()
+    if (
+        values.ndim != 2
+        or not len(values)
+        or not values.shape[1]
+        or not torch.isfinite(values).all()
+    ):
+        raise ValueError("PCA requires a nonempty finite state matrix")
+    if weights is None:
+        weights = torch.ones(len(values), dtype=values.dtype, device=values.device)
+    if (
+        weights.shape != (len(values),)
+        or not torch.isfinite(weights).all()
+        or (weights <= 0).any()
+    ):
+        raise ValueError("PCA weights must be positive and match states")
+    weights = weights / weights.sum()
+    mean = (values * weights[:, None]).sum(dim=0)
+    matrix = (values - mean) * weights.sqrt()[:, None]
+    _, singular, axes = torch.linalg.svd(matrix, full_matrices=False)
+    tolerance = max(matrix.shape) * torch.finfo(matrix.dtype).eps * singular[0]
     nonzero = singular[singular > tolerance]
+    rank = 0.0
+    variance = torch.zeros_like(singular)
     if len(nonzero):
-        weights = nonzero / nonzero.sum()
-        rank = (-(weights * weights.log()).sum()).exp().item()
+        probabilities = nonzero / nonzero.sum()
+        rank = (-(probabilities * probabilities.log()).sum()).exp().item()
         variance = singular.square() / singular.square().sum()
-    else:
-        rank, variance = 0.0, torch.zeros_like(singular)
-    coordinates = u[:, :2] * singular[:2]
-    # Fix component signs to make repeated local decompositions easier to compare.
-    for column in range(coordinates.shape[1]):
-        pivot = coordinates[:, column].abs().argmax()
-        if coordinates[pivot, column] < 0:
-            coordinates[:, column] *= -1
+    components = values.new_zeros((2, values.shape[1]))
+    dimensions = min(2, len(axes))
+    components[:dimensions] = axes[:dimensions]
+    for component in components:
+        if component[component.abs().argmax()] < 0:
+            component *= -1
+    explained = values.new_zeros(2)
+    explained[:dimensions] = variance[:dimensions]
+    return {
+        "mean": mean,
+        "components": components,
+        "explained_variance_ratio": explained,
+        "effective_rank": rank,
+        "numerical_rank": len(nonzero),
+        "n_components": dimensions,
+    }
+
+
+def trajectory_geometry(hidden, steps):
+    """Centered local PCA, sharing the same fitting primitive as common PCA."""
+    basis = fit_pca(hidden)
+    coordinates = (hidden.float() - basis["mean"]) @ basis["components"].T
     rows = [
         {
             "step": step,
             "pca_1": coordinates[i, 0].item(),
-            "pca_2": coordinates[i, 1].item() if coordinates.shape[1] > 1 else 0.0,
+            "pca_2": coordinates[i, 1].item(),
         }
         for i, step in enumerate(steps)
     ]
     return rows, {
-        "effective_rank": rank,
-        "numerical_rank": len(nonzero),
-        "pca_explained_variance": variance[:2].tolist(),
+        "effective_rank": basis["effective_rank"],
+        "numerical_rank": basis["numerical_rank"],
+        "pca_explained_variance": basis["explained_variance_ratio"].tolist(),
         "pca_centered": True,
         "rank_definition": "exp(entropy(normalized nonzero singular values of centered states))",
     }
