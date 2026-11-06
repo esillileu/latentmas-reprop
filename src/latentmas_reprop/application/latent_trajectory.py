@@ -216,6 +216,10 @@ def collect(model, args, dataset_port, evaluator, directory, sample_context=None
                     snapshot = load_tensor(
                         trajectory_path.with_suffix("") / "kv.pt", map_location="cpu"
                     )
+                    data["prompt_hidden"] = load_tensor(
+                        trajectory_path.with_suffix("") / "prompt_hidden.pt",
+                        map_location="cpu",
+                    )[-1]
                     prompt_length = snapshot["prompt_length"]
                     if (
                         prompt_length != ids.shape[1]
@@ -273,7 +277,9 @@ def collect(model, args, dataset_port, evaluator, directory, sample_context=None
                                 condition,
                                 step,
                                 kv,
-                                data["hidden"][step - 1],
+                                data["prompt_hidden"]
+                                if step == 0
+                                else data["hidden"][step - 1],
                                 path,
                                 settings,
                             )

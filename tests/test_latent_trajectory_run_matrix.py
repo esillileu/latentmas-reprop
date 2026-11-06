@@ -10,6 +10,18 @@ from src.run import latent_trajectory as cli
 PRESET = "latent_trajectory/gsm8k_q314"
 
 
+def test_step_zero_preserves_existing_run_identity(capsys):
+    cli.main(["-c", PRESET, "--dry-run"])
+    extended = json.loads(capsys.readouterr().out)["runs"]
+    cli.main(["-c", PRESET, "--latent_step_start", "1", "--dry-run"])
+    original = json.loads(capsys.readouterr().out)["runs"]
+    for new, old in zip(extended, original, strict=True):
+        assert new["config"]["latent_step_start"] == 0
+        assert old["config"]["latent_step_start"] == 1
+        assert new["directory"] == old["directory"]
+        assert new["mlflow_runs"] == old["mlflow_runs"]
+
+
 def test_alignment_run_plan_and_cli_override(capsys):
     cli.main(["-c", PRESET, "--dry-run", "--sample_indices", "37", "0"])
     plans = json.loads(capsys.readouterr().out)["runs"]

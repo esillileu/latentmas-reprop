@@ -264,6 +264,35 @@ def test_tracking_exports_results_and_failure(
             assert {t.info.tags["dataset_sample_key"] for t in first_traces} == {
                 "000000"
             }
+            # Append step zero to the same canonical run and retain existing traces.
+            from shutil import copyfile
+
+            args.latent_step_start = 0
+            for condition in "abcd":
+                source = sample / f"continuations/{condition}/step_001.json"
+                target = source.with_name("step_000.json")
+                row = json.loads(source.read_text())
+                save_json_atomic(target, {**row, "step": 0, "latent_steps_executed": 0})
+                target.with_suffix("").mkdir()
+                copyfile(
+                    source.with_suffix("") / "hidden.pt",
+                    target.with_suffix("") / "hidden.pt",
+                )
+            with tracking.tracked_sample(
+                sample, directory=directory, args=args, config={"seed": 42}
+            ) as submit:
+                submit(0)
+            assert (
+                json.loads((sample / "tracking.json").read_text())["run_id"] == run_id
+            )
+            extended = client.search_traces(
+                locations=[run.info.experiment_id], run_id=run_id
+            )
+            identities = {t.info.tags["latent_step"]: t.info.trace_id for t in extended}
+            assert set(identities) == {"0", "1", "2"}
+            assert {k: identities[k] for k in latest} == latest
+            assert client.get_run(run_id).data.metrics["completed_continuations"] == 12
+            assert client.get_run(run_id).data.metrics["completed_steps"] == 3
         if fail:
             assert any(a.path == "failure.json" for a in client.list_artifacts(run_id))
     finally:

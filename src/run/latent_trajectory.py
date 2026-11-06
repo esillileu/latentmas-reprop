@@ -81,8 +81,8 @@ def main(argv=None):
         if not args.sample_indices or any(index < 0 for index in args.sample_indices):
             parser.error("sample_indices must contain non-negative dataset indices")
         args.sample_indices = sorted(set(args.sample_indices))
-    if not 1 <= args.latent_step_start <= args.latent_steps:
-        parser.error("Require 1 <= latent_step_start <= latent_steps")
+    if not 0 <= args.latent_step_start <= args.latent_steps:
+        parser.error("Require 0 <= latent_step_start <= latent_steps")
     if args.max_new_tokens <= 0 or args.temperature < 0 or not 0 < args.top_p <= 1:
         parser.error("Invalid decoding settings")
     if args.initial_input != "rq":
@@ -122,9 +122,11 @@ def run_plan(args):
             "sample_indices",
         )
     }
-    identity = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[
-        :16
-    ]
+    # Step zero extends the original readout range without changing its cache/run.
+    identity_config = {**config, "latent_step_start": max(1, args.latent_step_start)}
+    identity = hashlib.sha256(
+        json.dumps(identity_config, sort_keys=True).encode()
+    ).hexdigest()[:16]
     directory = args.output_root / args.task / args.model_name.split("/")[-1] / identity
     indices = args.sample_indices
     if indices is None and args.max_samples > 0:

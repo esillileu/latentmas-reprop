@@ -182,6 +182,38 @@ def test_collection_multiple_samples_and_resume(tmp_path, monkeypatch):
     assert selected["question"] == "2"
     assert selected["seed"] == sample_seed(42, "gsm8k", "test", 2, "2")
 
+    # Extend completed runs with prompt-only readouts, retaining all latent results.
+    args.sample_indices = [0, 1]
+    args.latent_step_start = 0
+    saved = {
+        path: path.read_bytes()
+        for path in tmp_path.glob("samples/*/continuations/*/step_00[123].json")
+    }
+    calls = evaluator.evaluate.call_count
+    order.clear()
+    latent_count = len(latent_calls)
+    collect(model, args, dataset, evaluator, tmp_path)
+    assert evaluator.evaluate.call_count == calls + 8
+    assert len(latent_calls) == latent_count
+    assert order == [
+        f"Sample {index:06d} · {condition} · latent 0/3"
+        for index in (0, 1)
+        for condition in "ABCD"
+    ]
+    assert all(path.read_bytes() == contents for path, contents in saved.items())
+    for index in (0, 1):
+        for condition in "abcd":
+            path = (
+                tmp_path
+                / f"samples/{index:06d}/continuations/{condition}/step_000.json"
+            )
+            row = json.loads(path.read_text())
+            assert row["step"] == row["latent_steps_executed"] == 0
+            assert (path.with_suffix("") / "hidden.pt").is_file()
+    calls = evaluator.evaluate.call_count
+    collect(model, args, dataset, evaluator, tmp_path)
+    assert evaluator.evaluate.call_count == calls
+
 
 def test_template_strips_only_automatic_opening():
     model = _build_mock_wrapper()

@@ -24,7 +24,7 @@ uses the existing model adapter and is disabled by default, as in that preset.
 | c | R(Q) → Lk → </think> → E | without_think |
 | d | R(Q) → <think> → Lk → </think> → E | with_think |
 
-`latent_steps: 80` is the trajectory endpoint; `latent_step_start: 1` is the first
+`latent_steps: 80` is the trajectory endpoint; `latent_step_start: 0` is the first
 readout boundary. All preceding latent steps are still calculated and saved.
 `--conditions a c` selects readouts without creating unnecessary trajectories.
 The assistant header is rendered with the tokenizer's thinking-enabled template,
@@ -133,10 +133,10 @@ Distance peaks identify candidate output changes, including content changes, not
 necessarily formatting changes or reasoning improvements. Inspect the paired text,
 lengths, correctness and truncation. Whitespace-only layout changes are deliberately
 ignored. Sampling remains a source of output variability despite the shared sample
-seed. No step-0 reference or condition-to-condition distance is computed.
+seed. Readout comparisons include the adjacent step-0/step-1 pair when available; no condition-to-condition distance is computed.
 
 Default completion is two 80-step hidden/logit artifacts, two full KV artifacts,
-and 320 continuation records
+and 324 continuation records
 per sample. Unit tests use a small model; a full Qwen3-8B run remains a separate GPU
 execution, and is not part of the unit suite.
 
@@ -154,7 +154,7 @@ CUDA_VISIBLE_DEVICES=3 just run-latent-trajectory -c latent_trajectory/medqa_q31
 ```
 
 After both trajectories are saved, decoding runs in step order: A, B, C, D at
-k=1, then A, B, C, D at k=2, through k=80. Selected subsets retain this condition
+k=0, then A, B, C, D at k=1, through k=80. Selected subsets retain this condition
 order. Finished local continuations are skipped without changing this schedule.
 
 Collection uses the shared `MLflowTracker`, honoring `MLFLOW_TRACKING_URI` and
@@ -166,7 +166,7 @@ including raw hidden/logit tensors. `samples/<index>/tracking.json` links that s
 
 After each step's requested conditions finish, a single background worker uploads
 one `(sample, latent_step)` trace while decoding proceeds to the next step. With
-the default four conditions, each trace has four decode spans (A/B/C/D), for 80
+the default four conditions, each trace has four decode spans (A/B/C/D), for 81
 traces per sample. Root inputs/tags include the sample ID and latent step.
 Like intervention traces, the response preview summarizes each condition's
 prediction and PASS/FAIL. Root outputs expose `a_prediction`, `a_correct`, etc.;
@@ -259,7 +259,7 @@ any of its samples.
 
 Sample directories, seed derivation, step callbacks, trace identities and summary
 indices always use the original dataset index (`000012` for index 12), never the
-position within the selected list. Each selected sample retains k=1..80 and
+position within the selected list. Each selected sample retains k=0..80 and
 A/B/C/D ordering with the three progress bars. Selection does not change the run or
 cache directory identity, so matching saved KV/results remain reusable. Invocation
 metadata records the requested selection; shutdown trace publication and current
@@ -319,7 +319,7 @@ No dataset/model inference is performed by preset dry runs.
 MLflow run identity is `(configuration, dataset sample index)`. Display names are
 `<task>_<model>_align-<on|off>_sample-<index>_<configuration-hash>`; the hash keeps
 different decoding/configuration runs distinct. The defaults produce four runs
-per dataset and eight across GSM8K plus MedQA. Every sample run contains 80 step
+per dataset and eight across GSM8K plus MedQA. Every sample run contains 81 step
 traces with four condition spans each. The async worker publishes each completed
 step immediately to its sample's staging run, which is promoted independently.
 
@@ -348,3 +348,20 @@ Sample 000660 · B · latent 28/80   512/2048 token
 Dry runs list the per-sample `mlflow_runs` names and indices within each alignment
 plan. If selecting the full dataset without an explicit positive limit, sample
 runs are resolved from the dataset during collection rather than during dry run.
+
+## Adding step zero to an existing run
+
+The presets now collect readouts at steps 0 through 80. Rerun the original
+command with the same model, decoding settings, alignment and sample selection.
+Step 0 and step 1 starts share the original cache directory and MLflow run identity.
+Completed steps 1–80 are skipped. Step 0 slices the saved KV to the prompt length
+and uses the last saved prompt hidden state (including `<think>` for B/D); latent
+computation is not repeated when the trajectory artifacts are complete. Only the
+missing A/B/C/D readouts require decoding. Raw latent hidden/logit tensors still
+represent steps 1–80.
+
+Tracking verifies/reuses existing traces, publishes step 0, records all step
+metrics again, recomputes summaries, and uploads all artifacts to the canonical
+sample run. MLflow parameters are immutable: an existing `latent_step_start=1`
+parameter remains, with the current value `0` recorded as a tag and in metadata.
+Use `--latent_step_start 1` to retain the previous readout range.
