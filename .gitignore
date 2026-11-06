@@ -14,3 +14,4 @@ runs/
 *.db
 artifacts/
 /storage/
+.agents/
