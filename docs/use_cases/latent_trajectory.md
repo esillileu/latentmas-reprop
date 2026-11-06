@@ -179,6 +179,100 @@ metrics continue. Centered PCA and singular-value-entropy effective rank are fit
 once per shared trajectory using available states (including step 0 when present).
 Axes are local to each fit and must not be compared directly across runs.
 
+The main condition-comparison view is `common_pca_summary.md`, generated for both
+GSM8K and MedQA by the same default command. For each model/item it fits one mean
+and PCA basis over available OFF/ON × without/with-think states. A/C and B/D are
+included once as shared trajectories. Each trajectory has equal total weight,
+with uniform weights within it, so unequal saved step counts do not dominate.
+All states use the same mean and basis, without individual recentering.
+
+The opposite-alignment source is discovered among sibling directories only when
+exactly one matches protocol/tokenizer checks. Select it explicitly with
+`--compare-directory OTHER_SOURCE`. Different tasks, models, protocols, questions,
+golds or base prompt IDs are not silently pooled. Missing/incompatible groups
+remain gray in the legend while available states produce a partial fit.
+
+`common_pca_coordinates.csv` stores coordinates, `common_pca_status.json` records
+source membership/availability and explained variance, and
+`common_pca_<sample>.pt` stores the mean/components for exact reprojection. Plots
+show PC1/PC2 and combined explained variance, start/end and step markers.
+The basis is local to one item and may change when more trajectories arrive.
+Coordinates from different items, benchmarks or report generations are not
+directly comparable. Individual PCA remains a supplementary within-trajectory view.
+
+### Global PCA across all saved items
+
+```bash
+just analyze-global-latent-pca --model Qwen/Qwen3-14B
+# Omit --model to fit each saved model separately.
+```
+
+This explicitly fits one common mean/basis across all saved GSM8K and MedQA items
+of the selected model. It trusts the saved state as-is: historical runs remain
+included, with no freshness checks, current-run filtering or automatic refresh.
+Fit weights balance benchmarks, items within each benchmark, saved shared
+trajectories within each item, and states within each trajectory. A/C and B/D
+remain single shared trajectories. Different models are fitted separately.
+
+The report under `artifacts/latent_trajectory/global_pca/<model-name>/` contains
+an overall overlay and benchmark panels using identical axes and limits,
+`global_pca_coordinates.csv`, `global_pca_status.json`, and `global_pca.pt` with
+the common mean/components. Axis labels show explained variance. Missing hidden
+states remain unavailable and do not prevent fitting the available states.
+This global view supplements the item-specific common PCA: between-item or
+benchmark variation may dominate the global components.
+
+### Output instability diagnostics (B7)
+
+The existing trajectory analysis also writes `output_stability.csv`,
+`output_stability_summary.md`, and per-item PNGs. These include repeated content
+4-gram fraction, longest identical-token run, exact normalized-line repetition,
+Unicode letter-script profiles/switches, generated chat-opening markers and odd
+line-leading code-fence counts. Terminal EOS is excluded from token repetition;
+structural chat/thinking tags are excluded from script counts. These are
+observable diagnostics, not a language detector or automatic incoherence verdict.
+Missing values remain gaps. No classifier, model inference or LLM judge is used.
+
+### Saved KV structure (E1–E4)
+
+```bash
+just analyze-latent-kv SOURCE
+just analyze-latent-kv SOURCE --samples 1288 --layers 0 10 20 30 39
+```
+
+This separate command reads one saved shared trajectory cache at a time without
+cloning/mutating full KV or running a model. It writes to the collection's
+`artifacts/latent_trajectory/<task>/<model>/<run>/kv_analysis/` directory:
+
+- `kv_layers.csv`: per-layer K/V prompt/latent means, standard deviations, norm
+  means, finite-position counts, uncentered numerical/effective rank and leading
+  singular-value energy fraction for **both** prompt and latent regions.
+- `kv_positions.csv`: every prompt/latent position with region, cache position,
+  region position, norm, adjacent cosine/L2, prompt-last/centroid cosine and nearest
+  prompt position/cosine. This replaces the former latent-only `kv_steps.csv`.
+- `kv_status.json`, `summary.md`, full-cache boundary heatmaps, separate prompt vs
+  latent heatmaps with shared color ranges, and region rank/energy comparisons. Missing files,
+  invalid layers and nonfinite positions remain unavailable/gray; adjacent metrics
+  do not bridge invalid positions.
+
+Step 0 is the last prompt cache position; latent step k is at prompt_length+k-1.
+Earlier prompt positions have an empty step and their own zero-based prompt index.
+Full-cache heatmaps mark the prompt/latent boundary in red. Prompt nearest-neighbor
+queries exclude their own position, so the prompt baseline is not trivially 1.
+Latent queries search all valid, nonzero prompt positions.
+
+Rank curves include full-region values and an equal-length control: the last W
+prompt positions vs the first W latent positions, W=min(prompt_length, latent_steps).
+The matched valid-position counts are also saved. This helps distinguish region
+length effects from differences within equal-length windows; no subsampling,
+padding or new model forward is used.
+
+Vectors concatenate batch/heads per sequence position. Saved K retains positional
+encoding/RoPE, so key similarity can reflect position. KV rank uses uncentered
+finite rows and is distinct from centered hidden PCA rank. Prompt cosine
+does not measure attention or causal usefulness. Attention collection (E5) and
+causal interventions (F2–F6) remain separate work requiring additional inference.
+
 Raw-logit features include entropy, top-10 IDs/probabilities (token strings when
 the recorded tokenizer is available), concentration, adjacent KL(current||previous)
 and JS, JS from saved latent step 1, and thinking-marker logits/probabilities.
