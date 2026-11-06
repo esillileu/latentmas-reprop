@@ -246,8 +246,9 @@ def test_analysis_constant_distribution_and_direction():
         "logits": torch.zeros(3, 12),
         "steps": torch.arange(1, 4),
     }
-    rows = trajectory_metrics(data)
-    assert rows[0]["adjacent_cosine"] is None
-    assert rows[1]["js_divergence"] == 0
-    assert rows[2]["direction_cosine"] == 1
-    assert rows[2]["adjacent_l2"] == 1
+    rows = {row["step"]: row for row in trajectory_metrics(data)}
+    assert rows[0]["hidden_status"] == "missing"
+    assert rows[1]["adjacent_cosine"] is None
+    assert rows[2]["js_divergence"] == 0
+    assert rows[3]["direction_cosine"] == 1
+    assert rows[3]["adjacent_l2"] == 1
