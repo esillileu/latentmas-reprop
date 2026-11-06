@@ -112,3 +112,7 @@ run-latent-trajectory *args:
 # Analyze saved latent vectors, logits and adjacent readout tokens without model weights
 analyze-latent-trajectory *args:
     uv run python -m src.run.latent_trajectory_analysis {{args}}
+
+# Global PCA across all saved items/benchmarks (one basis per model)
+analyze-global-latent-pca *args:
+    uv run python -m src.run.latent_global_pca {{args}}
