@@ -109,6 +109,6 @@ migrate-use-case-names *args:
 run-latent-trajectory *args:
     uv run python -m src.run.latent_trajectory {{args}}
 
-# Analyze saved latent vectors and logits without loading a model
+# Analyze saved latent vectors, logits and adjacent readout tokens without model weights
 analyze-latent-trajectory *args:
     uv run python -m src.run.latent_trajectory_analysis {{args}}

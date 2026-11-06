@@ -76,13 +76,64 @@ the trajectory is computed once, checked for exact equality with the saved
 tensors, and its KV is saved for subsequent reuse. Sample limits and selected conditions do not change the
 run identity. Use a separate output root to request an independent repeat.
 
-The analysis command loads only saved tensors and writes `.analysis.json` next to
+The analysis command reads saved tensors and writes `.analysis.json` next to
 each trajectory: L2 norm, adjacent cosine/L2, successive displacement cosine,
 entropy (nats), top-10 token IDs/probabilities and adjacent Jensen–Shannon divergence
 (natural logarithms). Missing predecessor metrics are null. Token IDs can be mapped
 using the recorded tokenizer; no model is required. Continuation records retain all
 inputs needed for subsequent correctness, length, reasoning and paired-condition
-comparisons. No visualization system is included.
+comparisons.
+
+### Adjacent readout token distance
+
+The same command also compares each condition's explicit readouts at consecutive
+latent steps (`k-1` to `k`), separately for each sample. To analyze continuations
+without loading the potentially large hidden/logit tensors:
+
+```bash
+just analyze-latent-trajectory storage/experiments/latent_trajectory/gsm8k/Qwen3-14B/RUN_HASH --continuations-only
+```
+
+Terminal EOS is excluded using `content_length`. Content IDs are decoded with
+special tokens retained and tokenizer cleanup disabled. Whitespace runs (including
+newlines, tabs and Unicode whitespace) become one ASCII space, and leading/trailing
+whitespace is removed. No Unicode normalization, punctuation removal or thinking-tag
+removal is performed. Text is retokenized with `add_special_tokens=False` using the
+recorded tokenizer/revision from the local Hugging Face cache. Model weights and
+network downloads are not needed; a recorded tokenizer identity mismatch fails.
+
+The distance is unit-cost token Levenshtein divided by the maximum of the two
+normalized token lengths. Two empty sequences have distance 0; exactly one empty
+sequence has distance 1. Only actual consecutive step numbers are compared: missing
+or unfinished records are never bridged. A snapshot of the available readout file
+names is taken per sample, so partial/running collections can be analyzed and later
+reanalyzed. Legacy atomically saved readout JSON without a `status` field remains
+analyzable; generated hidden states are not required for this metric.
+
+B readouts whose whitespace-normalized content consists solely of
+`\boxed{...}` (optionally enclosed in `$...$`) are excluded from distance analysis,
+regardless of correctness.
+This isolates the observed answer-only collapse without imposing an arbitrary
+token-length threshold or filtering all incorrect answers. Both adjacent pairs
+touching an excluded step are omitted, and neighbors are never bridged. Original
+continuations remain intact; `excluded_steps` and the exclusion policy are recorded
+in the analysis JSON and report, separately from missing readouts.
+
+Outputs are written under
+`artifacts/latent_trajectory/<task>/<model>/<config-hash>/` (override with
+`--output-dir`), with source metadata and `summary.md`. Each sample gets
+`token_distances.json`, a CSV table, and `adjacent_distances.png` when pairs exist.
+The table retains lengths, predictions, correctness and budget exhaustion for both
+outputs. The report ranks the three largest distances per condition and includes
+original output excerpts for the largest pair. Missing steps are recorded explicitly.
+Results are also uploaded to the existing `latentmas-analysis` MLflow experiment;
+the source collection run and its completion records are not changed.
+
+Distance peaks identify candidate output changes, including content changes, not
+necessarily formatting changes or reasoning improvements. Inspect the paired text,
+lengths, correctness and truncation. Whitespace-only layout changes are deliberately
+ignored. Sampling remains a source of output variability despite the shared sample
+seed. No step-0 reference or condition-to-condition distance is computed.
 
 Default completion is two 80-step hidden/logit artifacts, two full KV artifacts,
 and 320 continuation records

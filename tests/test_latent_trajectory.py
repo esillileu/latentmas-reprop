@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import torch
 
 from latentmas_reprop.application.latent_trajectory import collect, prepare_prompt
-from src.run.latent_trajectory_analysis import trajectory_metrics
+from latentmas_reprop.application.latent_trajectory_analysis import trajectory_metrics
 from tests.test_intervention_continuation import _build_mock_wrapper
 
 
