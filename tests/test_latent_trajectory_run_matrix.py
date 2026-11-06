@@ -62,7 +62,7 @@ def test_alignment_sweep_rejects_invalid_values(tmp_path, value):
     assert error.value.code == 2
 
 
-@pytest.mark.parametrize("task,indices", [("gsm8k", [0, 660]), ("medqa", [0, 145])])
+@pytest.mark.parametrize("task,indices", [("gsm8k", [0, 1288]), ("medqa", [0, 145])])
 def test_default_14b_presets(task, indices, capsys):
     cli.main(["-c", f"latent_trajectory/{task}_q314", "--dry-run"])
     plans = json.loads(capsys.readouterr().out)["runs"]
