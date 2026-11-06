@@ -1,5 +1,7 @@
 """Token lengths and explicit thinking-boundary features for saved readouts."""
 
+from .latent_output_stability import output_stability
+
 
 def readout_text(record, tokenizer):
     """Decode content without terminal EOS, retaining tags and symbols."""
@@ -41,6 +43,7 @@ def readout_features(record, markers):
             reasoning_length += 1
     prefill = record["inserted_prefix_ids"] + record["inserted_readout_ids"]
     return {
+        **output_stability(record),
         "evaluator_correct": record["correct"],
         "semantic_correct": None,
         "review_status": "unreviewed",

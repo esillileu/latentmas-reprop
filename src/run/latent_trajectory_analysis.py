@@ -33,6 +33,7 @@ from latentmas_reprop.infrastructure.tracking.mlflow_tracker import MLflowTracke
 
 from .latent_common_pca_report import write_common_pca_report
 from .latent_review_report import write_review_report
+from .latent_stability_report import write_stability_report
 from .latent_state_report import write_state_report
 from .latent_trajectory_report import write_csv, write_report
 
@@ -116,6 +117,7 @@ def main(argv=None):
         metadata,
         notes,
     )
+    write_stability_report(rows, output)
     write_review_report(
         rows,
         cases,
