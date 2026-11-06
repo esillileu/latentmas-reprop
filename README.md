@@ -169,7 +169,7 @@ CUDA_VISIBLE_DEVICES=3 just run-latent-trajectory -c latent_trajectory/gsm8k_q38
 See [latent trajectory collection and offline analysis](docs/use_cases/latent_trajectory.md).
 
 Qwen3-14B presets run alignment OFF then ON: `latent_trajectory/gsm8k_q314`
-selects GSM8K indices `[0, 660]`; `latent_trajectory/medqa_q314` selects MedQA
+selects GSM8K indices `[0, 1288]`; `latent_trajectory/medqa_q314` selects MedQA
 indices `[0, 145]`. MedQA uses the existing local `data/medqa.json` loader and
 multiple-choice single-agent prompt. Collection logs runs, saved-result sample
 traces, metrics and raw tensor artifacts to `latentmas/latent/trajectory` in one

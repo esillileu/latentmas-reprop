@@ -76,64 +76,123 @@ the trajectory is computed once, checked for exact equality with the saved
 tensors, and its KV is saved for subsequent reuse. Sample limits and selected conditions do not change the
 run identity. Use a separate output root to request an independent repeat.
 
-The analysis command reads saved tensors and writes `.analysis.json` next to
-each trajectory: L2 norm, adjacent cosine/L2, successive displacement cosine,
-entropy (nats), top-10 token IDs/probabilities and adjacent Jensen–Shannon divergence
-(natural logarithms). Missing predecessor metrics are null. Token IDs can be mapped
-using the recorded tokenizer; no model is required. Continuation records retain all
-inputs needed for subsequent correctness, length, reasoning and paired-condition
-comparisons.
-
-### Adjacent readout token distance
-
-The same command also compares each condition's explicit readouts at consecutive
-latent steps (`k-1` to `k`), separately for each sample. To analyze continuations
-without loading the potentially large hidden/logit tensors:
+## Offline partial-result analysis
 
 ```bash
 just analyze-latent-trajectory storage/experiments/latent_trajectory/gsm8k/Qwen3-14B/RUN_HASH --continuations-only
+# No tokenizer or model weights required for correctness/length/boundary analysis:
+just analyze-latent-trajectory SOURCE --continuations-only --skip-token-distance
+# Pair an opposite-alignment collection at the same condition and step:
+just analyze-latent-trajectory SOURCE --compare-directory OTHER_SOURCE --continuations-only
 ```
 
-Terminal EOS is excluded using `content_length`. Content IDs are decoded with
-special tokens retained and tokenizer cleanup disabled. Whitespace runs (including
-newlines, tabs and Unicode whitespace) become one ASCII space, and leading/trailing
-whitespace is removed. No Unicode normalization, punctuation removal or thinking-tag
-removal is performed. Text is retokenized with `add_special_tokens=False` using the
-recorded tokenizer/revision from the local Hugging Face cache. Model weights and
-network downloads are not needed; a recorded tokenizer identity mismatch fails.
+Analysis snapshots available continuation paths and uses the collector's completion
+contract (complete status, hidden artifact, RNG provenance and decoder identity).
+Missing, incomplete and invalid observations remain explicit rows; none are counted
+as incorrect. Missing conditions and interrupted collection do not prevent reports.
+Malformed continuation JSON or inconsistent record identity is reported as invalid.
+Unavailable correctness cells are gray; curves break at unavailable steps.
 
-The distance is unit-cost token Levenshtein divided by the maximum of the two
-normalized token lengths. Two empty sequences have distance 0; exactly one empty
-sequence has distance 1. Only actual consecutive step numbers are compared: missing
-or unfinished records are never bridged. A snapshot of the available readout file
-names is taken per sample, so partial/running collections can be analyzed and later
-reanalyzed. Legacy atomically saved readout JSON without a `status` field remains
-analyzable; generated hidden states are not required for this metric.
+Outputs under `artifacts/latent_trajectory/<task>/<model>/<config-hash>/`
+(or `--output-dir`) include:
 
-B readouts whose whitespace-normalized content consists solely of
-`\boxed{...}` (optionally enclosed in `$...$`) are excluded from distance analysis,
-regardless of correctness.
-This isolates the observed answer-only collapse without imposing an arbitrary
-token-length threshold or filtering all incorrect answers. Both adjacent pairs
-touching an excluded step are omitted, and neighbors are never bridged. Original
-continuations remain intact; `excluded_steps` and the exclusion policy are recorded
-in the analysis JSON and report, separately from missing readouts.
+- `readouts.csv`: availability, evaluator correctness, prediction, lengths, finish
+  reason, budget exhaustion, generated/prefilled thinking token counts and
+  explicit thinking-boundary token lengths.
+- `trajectories.csv`: within-item correct-step fractions and adjacent correctness
+  changes. These fractions are not accuracy over independent items.
+- `step_accuracy.csv`: across-item step accuracy with available item IDs and denominators.
+- `condition_comparisons.csv`: paired same-step contingency tables and accuracy
+  differences; unavailable comparisons have empty values and zero pairs.
+- `alignment_comparisons.csv` when requested: protocol-checked paired comparisons.
+  Different inference protocols or question/gold mismatches are marked incompatible.
+- `review_candidates.json`: full before/after outputs for adjacent correctness
+  changes, with semantic judgments left unreviewed. Human annotations belong in a
+  separate file; generated candidates may be replaced when analysis is rerun.
+- `sample_<index>.png` and `summary.md`: availability/correctness heatmaps,
+  content/thinking lengths, adjacent distances and transition review excerpts.
+- `source.json`: source metadata and feature-availability notes.
 
-Outputs are written under
-`artifacts/latent_trajectory/<task>/<model>/<config-hash>/` (override with
-`--output-dir`), with source metadata and `summary.md`. Each sample gets
-`token_distances.json`, a CSV table, and `adjacent_distances.png` when pairs exist.
-The table retains lengths, predictions, correctness and budget exhaustion for both
-outputs. The report ranks the three largest distances per condition and includes
-original output excerpts for the largest pair. Missing steps are recorded explicitly.
-Results are also uploaded to the existing `latentmas-analysis` MLflow experiment;
-the source collection run and its completion records are not changed.
+All complete readouts, including B boxed-only answers, contribute to correctness
+and adjacent distances. Distances exclude terminal EOS using `content_length`,
+collapse Unicode whitespace, preserve symbols/thinking tags and retokenize with
+`add_special_tokens=False`. Unit-cost Levenshtein is divided by maximum token
+length (empty/empty = 0). Gaps are never bridged. If the recorded local tokenizer
+is missing or has a different identity, token distance is unavailable while other
+analyses proceed. No downloads or new inference are performed.
 
-Distance peaks identify candidate output changes, including content changes, not
-necessarily formatting changes or reasoning improvements. Inspect the paired text,
-lengths, correctness and truncation. Whitespace-only layout changes are deliberately
-ignored. Sampling remains a source of output variability despite the shared sample
-seed. Readout comparisons include the adjacent step-0/step-1 pair when available; no condition-to-condition distance is computed.
+### Evaluator audit and optional human review
+
+Every analysis also writes `evaluation_audit.csv`: the current evaluator is run
+on each saved `evaluation_text` and compared with the recorded prediction and
+correctness. Missing evaluation text is unavailable, not an automatic disagreement.
+This verifies reproducibility of the evaluation path, not semantic correctness.
+
+For MedQA, `gold_audit.json` checks the saved question and gold against local
+`data/medqa.json` (override with `--medqa-data`). It checks exact option text and
+flags ambiguous substring mapping. Conservative explicit final-choice detection
+flags possible extraction disagreements without replacing stored scores. Source
+labels are taken from the dataset; this audit makes no medical judgment.
+
+`review_template.json` contains unique before/after readouts at correctness
+transitions. Copy it to a separate file and fill only judgments you have reviewed:
+
+```bash
+cp artifacts/latent_trajectory/TASK/MODEL/RUN/review_template.json /path/to/annotations.json
+just analyze-latent-trajectory SOURCE --continuations-only --annotations /path/to/annotations.json
+```
+
+Each entry identifies `source_run_id`, integer `sample_id`, `condition` and integer
+`step`. Optional judgments are `semantic_correct` (boolean), `reasoning_validity`
+(`valid`, `invalid`, `no_reasoning`, `undetermined`), `restart` (boolean), and human
+text in `reason_label`, `reasoning_progress`, `review_notes`. Null fields remain
+unreviewed; evaluator correctness is retained as a separate field. Duplicate keys,
+invalid values and unavailable identities are reported in `annotation_status.csv`
+without applying them. Source/gold mismatches are not silently merged. Reviewed
+fields are written to `readouts.csv` and review status appears in the case report.
+Generated candidates/templates can be refreshed, while supplied annotation files
+are preserved, including when the template itself is supplied as input.
+
+Thinking-boundary lengths count only tokens within explicit opening/closing
+markers, considering both prompt and readout prefill. C/D begin after a closing
+prefill; generated re-entry is counted separately through the same token scan.
+Zero boundary tokens does not establish absence of semantic reasoning. Evaluator
+correctness does not establish valid medical reasoning; all semantic labels start
+unreviewed and change only through supplied human annotations. Inferential tests/CI are deferred for the small pilot sample.
+
+Without `--continuations-only`, saved shared hidden/logit tensors produce:
+
+- `latent_features.csv`: one row per source/sample/shared trajectory/step, with
+  separate hidden/logits/geometry availability. Shared states are extracted once.
+- `readout_latent_features.csv`: A/C join without-think, B/D join with-think;
+  correctness/availability and human annotations retain readout identities.
+- `latent_events.csv`: adjacent correctness changes with current and preceding
+  state metrics. Duplicate shared states are not independent statistical samples.
+- `latent_summary.md`, per-trajectory time series and geometry PNGs: feature curves,
+  readout correctness, centered PCA and adjacent hidden-L2 versus logit-JS scatter.
+- Per-trajectory `.analysis.json` and `tensor_status.json`, all in the output tree.
+
+Hidden features include norm/mean/std/max absolute value, adjacent cosine/L2,
+step-0 distance/cosine and displacement-direction cosine. Step 0 is explicitly
+`prompt_hidden[-1]`; its absence leaves origin metrics unavailable while latent
+metrics continue. Centered PCA and singular-value-entropy effective rank are fitted
+once per shared trajectory using available states (including step 0 when present).
+Axes are local to each fit and must not be compared directly across runs.
+
+Raw-logit features include entropy, top-10 IDs/probabilities (token strings when
+the recorded tokenizer is available), concentration, adjacent KL(current||previous)
+and JS, JS from saved latent step 1, and thinking-marker logits/probabilities.
+Step 0 logits were not saved and are left unavailable; step 1 is explicitly the
+first saved logit reference, not a replacement for step 0. C/D share the same raw
+trajectory logits as A/B respectively; C/D actual post-closing-prefill start logits
+remain unavailable without LM-head weights. Conditional answer scoring and actual
+injected-vector/input-embedding comparison also remain unavailable.
+
+Missing/corrupt components do not suppress the other component. Tensor dimensions,
+step identities and finiteness are checked. Plots show unavailable data in gray or
+as gaps; no model inference or KV loading is performed. These descriptive links
+cannot establish latent reasoning or causality.
+MLflow report logging is opt-in with `--track`.
 
 Default completion is two 80-step hidden/logit artifacts, two full KV artifacts,
 and 324 continuation records
@@ -143,7 +202,7 @@ execution, and is not part of the unit suite.
 ## Qwen3-14B and MLflow
 
 The default 14B presets execute alignment OFF then ON. GSM8K selects indices
-`[0, 660]`; MedQA selects `[0, 145]`. Each `(alignment, sample)` is one independent MLflow run, giving four runs per
+`[0, 1288]`; MedQA selects `[0, 145]`. Each `(alignment, sample)` is one independent MLflow run, giving four runs per
 dataset preset. The model is loaded once per alignment and reused across samples. Both presets retain 80 latent steps and A/B/C/D
 readouts. The 8B GSM8K preset still defaults to one sample and alignment OFF.
 
