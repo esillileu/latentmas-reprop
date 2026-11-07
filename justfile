@@ -124,3 +124,7 @@ analyze-latent-kv *args:
 # Recorded LM-head starts and actual latent injection/embedding comparison
 analyze-latent-weights *args:
     uv run python -m src.run.latent_weight_analysis {{args}}
+
+# Explicit conditional scoring, attention and selected latent KV interventions
+analyze-latent-causal *args:
+    uv run python -m src.run.latent_causal_analysis {{args}}

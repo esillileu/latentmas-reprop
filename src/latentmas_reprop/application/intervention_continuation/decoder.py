@@ -64,6 +64,7 @@ def decode_tokens_with_hiddens(
     eos_ids: list[int] | None = None,
     termination_ids: list[int] | None = None,
     progress_position: int | None = None,
+    attention_mask: torch.Tensor | None = None,
 ) -> tuple[list[int], list[torch.Tensor], str, bool]:
     """Autoregressive explicit decoding recording the hidden state predicting each token."""
     lm_head = get_lm_head(model)
@@ -123,9 +124,13 @@ def decode_tokens_with_hiddens(
                 break
 
             next_tensor = torch.tensor([[next_id]], device=device, dtype=torch.long)
+            if attention_mask is not None:
+                attention_mask = torch.cat(
+                    [attention_mask, torch.ones_like(next_tensor)], dim=-1
+                )
             outputs = inner_model(
                 input_ids=next_tensor,
-                attention_mask=None,
+                attention_mask=attention_mask,
                 past_key_values=kv,
                 use_cache=True,
                 output_hidden_states=False,
