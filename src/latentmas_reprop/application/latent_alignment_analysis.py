@@ -2,7 +2,7 @@
 
 import json
 
-from .common.statistics import mcnemar
+from .common.statistics import mcnemar, paired_uncertainty
 from .intervention_continuation.outcomes import ConditionOutcome
 
 # Alignment is deliberately absent; all other inference settings must agree.
@@ -102,6 +102,7 @@ def compare_alignment(left_rows, right_rows, left_metadata, right_metadata):
                     stats = mcnemar(*outcomes)
                     result.update(
                         stats.contingency_table,
+                        **paired_uncertainty(stats),
                         n_pairs=len(ids),
                         accuracy_diff=stats.accuracy_diff,
                         sample_ids=json.dumps(ids),

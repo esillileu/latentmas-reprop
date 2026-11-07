@@ -64,7 +64,7 @@ def write_report(
         "Step accuracy uses available items; see step_accuracy.csv for denominators and item IDs.",
         "Within-item correct-step fractions are descriptive, not independent-item accuracy.",
         f"Human-reviewed readouts: {sum(r['review_status'] == 'reviewed' for r in rows)}; all others remain unreviewed. No LLM judge is used.",
-        "Condition comparisons use paired items at each step; inferential tests and confidence intervals are deferred for this small pilot.",
+        "Condition comparisons use paired items at each step. CSVs include exact McNemar p-values and conservative 95% paired-difference intervals (Bonferroni Clopper-Pearson discordant cells). These are exploratory pointwise intervals for selected items, without multiplicity adjustment across steps/conditions; they do not establish population accuracy or significance. Repeated steps are never pooled as independent items.",
         "Reasoning length counts tokens inside explicit thinking boundaries; it is not a semantic reasoning measure.",
         "",
     ]

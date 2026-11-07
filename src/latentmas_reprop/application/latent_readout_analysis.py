@@ -5,7 +5,7 @@ from itertools import combinations
 
 from ..domain.services.token_distance import token_levenshtein
 from ..infrastructure.storage import load_json
-from .common.statistics import mcnemar
+from .common.statistics import mcnemar, paired_uncertainty
 from .intervention_continuation.outcomes import ConditionOutcome
 from .latent_readout_features import readout_features, readout_text
 from .latent_trajectory_readout import is_readout_complete
@@ -206,7 +206,9 @@ def compare_conditions(rows):
                 ]
                 stats = mcnemar(*outcomes)
                 result.update(
-                    stats.contingency_table, accuracy_diff=stats.accuracy_diff
+                    stats.contingency_table,
+                    **paired_uncertainty(stats),
+                    accuracy_diff=stats.accuracy_diff,
                 )
             results.append(result)
     return results

@@ -181,3 +181,37 @@ def mcnemar(a: Any, b: Any) -> McNemarResult:
         p_value=p_val,
         statistic=stat,
     )
+
+
+def paired_uncertainty(result: McNemarResult, confidence: float = 0.95) -> dict:
+    """Conservative exact CI for P(A correct)-P(B correct).
+
+    Bound both discordant cell probabilities with Clopper-Pearson intervals
+    at Bonferroni-adjusted coverage. Their difference covers the paired effect
+    with at least the requested pointwise confidence, including zero discordance.
+    This uses items, never repeated steps, as the sampling unit.
+    """
+    if not 0 < confidence < 1:
+        raise ValueError("Confidence must lie strictly between zero and one")
+    n = result.n11 + result.n10 + result.n01 + result.n00
+    fields = {
+        "mcnemar_exact_p": None,
+        "accuracy_diff_ci_low": None,
+        "accuracy_diff_ci_high": None,
+        "confidence": confidence,
+        "ci_method": "bonferroni_clopper_pearson_discordant_cells",
+        "inference_scope": "exploratory_pointwise_selected_items",
+    }
+    if n:
+        positive, negative = [
+            binomtest(k, n).proportion_ci(
+                confidence_level=1 - (1 - confidence) / 2, method="exact"
+            )
+            for k in (result.n10, result.n01)
+        ]
+        fields.update(
+            mcnemar_exact_p=result.p_value,
+            accuracy_diff_ci_low=max(-1.0, positive.low - negative.high),
+            accuracy_diff_ci_high=min(1.0, positive.high - negative.low),
+        )
+    return fields
