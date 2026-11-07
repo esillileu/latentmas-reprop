@@ -161,6 +161,13 @@ def test_cli_without_tokenizer_or_tensors_still_reports(tmp_path, monkeypatch):
         "load_trajectory_tokenizer",
         lambda _: (_ for _ in ()).throw(OSError("not cached")),
     )
+    monkeypatch.setattr(
+        cli,
+        "audit_evaluations",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("Saved judgments must be trusted by default")
+        ),
+    )
     output = tmp_path / "report"
     cli.main([str(root), "--output-dir", str(output)])
     assert (output / "readouts.csv").exists()

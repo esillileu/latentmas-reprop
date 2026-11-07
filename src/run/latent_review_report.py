@@ -26,7 +26,11 @@ def write_review_report(
         "",
         "This checks recorded evaluation and source option mapping, not medical reasoning.",
         "",
-        f"Evaluator replay: verified={counts['verified']}, mismatch={counts['mismatch']}, unavailable={counts['unavailable']}.",
+        (
+            f"Evaluator replay: verified={counts['verified']}, mismatch={counts['mismatch']}, unavailable={counts['unavailable']}."
+            if evaluation_audit
+            else "Evaluator replay not requested; stored judgments are trusted."
+        ),
         f"MedQA source mapping: verified={labels['verified']}, invalid={labels['invalid']}, unavailable={labels['unavailable']}.",
         "",
     ]

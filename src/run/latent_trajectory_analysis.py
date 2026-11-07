@@ -49,6 +49,11 @@ def main(argv=None):
     )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument(
+        "--audit-evaluations",
+        action="store_true",
+        help="Explicitly replay the evaluator; saved judgments are trusted by default",
+    )
+    parser.add_argument(
         "--compare-directory", type=Path, help="Compare an opposite-alignment source"
     )
     parser.add_argument(
@@ -77,7 +82,11 @@ def main(argv=None):
         notes.append("Token distance not requested.")
     rows, records = load_readouts(directory, metadata, tokenizer)
     annotation_status = apply_annotations(rows, args.annotations)
-    evaluation_audit = audit_evaluations(rows, records, metadata["task"])
+    evaluation_audit = (
+        audit_evaluations(rows, records, metadata["task"])
+        if args.audit_evaluations
+        else []
+    )
     gold_audit = []
     if metadata["task"] == "medqa":
         gold_audit = medqa_gold_audit(
