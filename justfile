@@ -120,3 +120,7 @@ analyze-global-latent-pca *args:
 # Layer-wise saved KV structure (no model inference)
 analyze-latent-kv *args:
     uv run python -m src.run.latent_kv_analysis {{args}}
+
+# Recorded LM-head starts and actual latent injection/embedding comparison
+analyze-latent-weights *args:
+    uv run python -m src.run.latent_weight_analysis {{args}}
