@@ -123,9 +123,9 @@ analyses proceed. No downloads or new inference are performed.
 
 ### Evaluator audit and optional human review
 
-Every analysis also writes `evaluation_audit.csv`: the current evaluator is run
-on each saved `evaluation_text` and compared with the recorded prediction and
-correctness. Missing evaluation text is unavailable, not an automatic disagreement.
+Saved evaluator judgments are trusted by default. With `--audit-evaluations`,
+`evaluation_audit.csv` records an explicit replay of each saved `evaluation_text`
+and compares it with the recorded prediction and correctness. Missing evaluation text is unavailable, not an automatic disagreement.
 This verifies reproducibility of the evaluation path, not semantic correctness.
 
 For MedQA, `gold_audit.json` checks the saved question and gold against local
@@ -158,7 +158,8 @@ markers, considering both prompt and readout prefill. C/D begin after a closing
 prefill; generated re-entry is counted separately through the same token scan.
 Zero boundary tokens does not establish absence of semantic reasoning. Evaluator
 correctness does not establish valid medical reasoning; all semantic labels start
-unreviewed and change only through supplied human annotations. Inferential tests/CI are deferred for the small pilot sample.
+unreviewed and change only through supplied human annotations. Paired uncertainty
+is reported as exploratory pointwise intervals for selected items; see below.
 
 Without `--continuations-only`, saved shared hidden/logit tensors produce:
 
@@ -271,7 +272,7 @@ Vectors concatenate batch/heads per sequence position. Saved K retains positiona
 encoding/RoPE, so key similarity can reflect position. KV rank uses uncentered
 finite rows and is distinct from centered hidden PCA rank. Prompt cosine
 does not measure attention or causal usefulness. Attention collection (E5) and
-causal interventions (F2–F6) remain separate work requiring additional inference.
+causal interventions (F2–F6) use the separate explicit causal command below.
 
 Raw-logit features include entropy, top-10 IDs/probabilities (token strings when
 the recorded tokenizer is available), concentration, adjacent KL(current||previous)
@@ -279,8 +280,10 @@ and JS, JS from saved latent step 1, and thinking-marker logits/probabilities.
 Step 0 logits were not saved and are left unavailable; step 1 is explicitly the
 first saved logit reference, not a replacement for step 0. C/D share the same raw
 trajectory logits as A/B respectively; C/D actual post-closing-prefill start logits
-remain unavailable without LM-head weights. Conditional answer scoring and actual
-injected-vector/input-embedding comparison also remain unavailable.
+require LM-head weights. The separate weight command below supplies actual-start
+distributions and injected-vector/input-embedding comparisons; the causal command
+supplies conditional answer scoring. The lightweight saved-tensor analysis does
+not load model weights or perform those forward passes.
 
 Missing/corrupt components do not suppress the other component. Tensor dimensions,
 step identities and finiteness are checked. Plots show unavailable data in gray or
@@ -518,3 +521,109 @@ metrics again, recomputes summaries, and uploads all artifacts to the canonical
 sample run. MLflow parameters are immutable: an existing `latent_step_start=1`
 parameter remains, with the current value `0` recorded as a tag and in metadata.
 Use `--latent_step_start 1` to retain the previous readout range.
+
+
+ARC-Challenge and MBPP-Plus also have Qwen3-14B presets with alignment OFF/ON,
+80 latent steps and A/B/C/D readouts:
+
+| Preset | Easy ID | Hard ID |
+| --- | --- | --- |
+| `latent_trajectory/arc_challenge_q314` | `MCAS_2006_9_1` | `AKDE&ED_2008_8_3` |
+| `latent_trajectory/mbppplus_q314` | `127` | `239` |
+
+```bash
+just run-latent-trajectory -c latent_trajectory/arc_challenge_q314 --dry-run
+just run-latent-trajectory -c latent_trajectory/mbppplus_q314 --dry-run
+```
+
+`sample_ids` (or `--sample_ids ID ...`) selects original dataset IDs and overrides
+`max_samples`. Selection preserves dataset order and original numeric cache/run
+indices; missing IDs raise an error. CLI `--sample_indices` replaces preset IDs,
+and CLI `--sample_ids` replaces preset indices. The two options are mutually
+exclusive. ID-based dry runs show requested IDs; numeric indices and MLflow run
+names are resolved during collection. Both presets use the existing task-aware
+`single_agent` prompts and evaluators.
+
+
+MLflow publication errors (including exhausted retries during setup, step upload,
+or final promotion) disable further uploads for the current CLI invocation,
+including subsequent samples and alignments. Computation and local tensor/readout
+saving continue. The error is logged and saved as `upload_failure.json` in the
+sample directory; inference errors and interrupts still stop computation.
+Rerun the same command to retry publication from saved results.
+
+MBPP-Plus uses its source integer task IDs (`127`, `239`), written as quoted
+strings in `sample_ids`. Selection compares their string representations;
+loaders preserve the source ID values.
+
+### Recorded-weight and selected-case causal analysis
+
+Saved evaluator judgments are trusted by default. The readout CLI replays them
+only with the explicit `--audit-evaluations` option. Human B4–B6 labels remain in
+separate annotation files; neither these commands nor an LLM judge supply them.
+
+`condition_comparisons.csv` and `alignment_comparisons.csv` now include exact
+McNemar p-values and conservative 95% paired accuracy-difference intervals.
+Clopper–Pearson intervals bound both discordant cell probabilities with a
+Bonferroni correction, then subtract their endpoints. Each step uses paired
+**items**, never pooled steps. Coverage is pointwise and does not correct for
+searching many steps/conditions. With two selected cases per benchmark these are
+exploratory uncertainty summaries, not population performance or significance.
+
+```bash
+CUDA_VISIBLE_DEVICES=2 just analyze-latent-weights storage/experiments/latent_trajectory/arc_challenge/Qwen3-14B/d61ae9e14000e1c8
+CUDA_VISIBLE_DEVICES=2 just analyze-latent-causal storage/experiments/latent_trajectory/arc_challenge/Qwen3-14B/d61ae9e14000e1c8 --steps 80 --conditions c d --generate
+```
+
+Both commands accept multiple source directories. Recorded revision, tokenizer
+and dtype are used; weights must already be local. The weight command loads
+only input embeddings and LM head. It projects saved actual-start hidden states
+(C/D **after** closing prefill) and restores injection step k from hidden k-1,
+the recorded alignment matrix and target norm. The alignment digest must match.
+Step 0 raw prompt-state logits are available independently of readout completion
+in `weight_analysis/trajectory_origin_logits.csv`. Readout and injection outputs
+are `weight_analysis/readout_start_logits.csv` and
+`weight_analysis/injected_vectors.csv` under the collection's analysis directory.
+A missing readout remains missing; no generation is performed.
+
+The causal command loads the frozen model once and analyzes selected saved
+readouts (default steps 0/40/80, C/D). Conditional scoring forces an explicit
+answer prefix, then reports first-token, whole-string and per-token log
+probability separately. It excludes prefix likelihood and does not append EOS.
+Choice candidates are A–D. GSM8K uses the gold numeral and saved predictions;
+MBPP uses saved evaluator-extracted programs, never test assertions. Non-choice
+tasks use up to two shortest distinct candidates per evaluator class. Missing
+correct/incorrect alternatives leave the margin unavailable. Candidate string
+scores are not semantic answer probabilities and depend on forced context.
+
+E5 teacher-forces the closing token (C/D) and the first eight saved generated
+tokens. Attention replay uses the eager backend and recorded tokens; generation
+and conditional scoring use SDPA. Eager replay can differ numerically from the
+original SDPA computation. Each query/head/layer reports attention mass over
+prompt, latent and readout positions. A/B first-token prediction has no saved query; its replay
+starts at the first generated token, which predicts the next token. Attention
+mass does not establish useful information.
+
+F2–F5 run only C/D, whose common closing-token query recomputes the start state
+after KV intervention. Controls are original, exact self-transplant, persistent
+latent attention blocking, zero latent V, latent position shuffle and other-item
+latent KV transplant. `--region START END` restricts the half-open latent region.
+Physical cache length, position numbering, prompt KV, closing query, seed,
+sampling settings and original generation budget are fixed. Donor/shuffled K
+are rephased to destination RoPE positions; donor V preserves its original norm.
+The implementation supports full-attention Qwen3 dense KV. It creates one needed
+device prefix per branch, with no full source clone or duplicated KV artifacts.
+
+`--generate` additionally evaluates newly generated continuations with the
+existing evaluator. Original baselines are rerun under the same protocol and
+compared to self-transplant and perturbation controls. F6 records correctness
+and conditional candidate-margin deltas per case. A changed outcome can show
+latent-state sensitivity; it does not by itself establish newly computed or
+progressively accumulated reasoning. The same seed is not full sampling control.
+F1 uses existing stepwise readouts and is not recollected.
+
+Causal outputs are under `causal_analysis/PROTOCOL_HASH/`, with one result JSON
+and attention CSV per sample/condition/step, plus coverage and intervention
+tables. Region, query count and generation mode identify the protocol directory.
+Existing result JSONs are reused as authoritative without freshness checks or
+automatic reruns. Use a different explicit protocol for a different experiment.

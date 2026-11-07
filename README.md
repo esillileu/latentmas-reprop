@@ -174,3 +174,29 @@ indices `[0, 145]`. MedQA uses the existing local `data/medqa.json` loader and
 multiple-choice single-agent prompt. Collection logs runs, saved-result sample
 traces, metrics and raw tensor artifacts to `latentmas/latent/trajectory` in one
 run per alignment/sample. Progress shows samples, steps and token decoding.
+
+
+ARC-Challenge and MBPP-Plus also have Qwen3-14B presets with alignment OFF/ON,
+80 latent steps and A/B/C/D readouts:
+
+| Preset | Easy ID | Hard ID |
+| --- | --- | --- |
+| `latent_trajectory/arc_challenge_q314` | `MCAS_2006_9_1` | `AKDE&ED_2008_8_3` |
+| `latent_trajectory/mbppplus_q314` | `127` | `239` |
+
+```bash
+just run-latent-trajectory -c latent_trajectory/arc_challenge_q314 --dry-run
+just run-latent-trajectory -c latent_trajectory/mbppplus_q314 --dry-run
+```
+
+`sample_ids` (or `--sample_ids ID ...`) selects original dataset IDs and overrides
+`max_samples`. Selection preserves dataset order and original numeric cache/run
+indices; missing IDs raise an error. CLI `--sample_indices` replaces preset IDs,
+and CLI `--sample_ids` replaces preset indices. The two options are mutually
+exclusive. ID-based dry runs show requested IDs; numeric indices and MLflow run
+names are resolved during collection. Both presets use the existing task-aware
+`single_agent` prompts and evaluators.
+
+MBPP-Plus uses its source integer task IDs (`127`, `239`), written as quoted
+strings in `sample_ids`. Selection compares their string representations;
+loaders preserve the source ID values.
