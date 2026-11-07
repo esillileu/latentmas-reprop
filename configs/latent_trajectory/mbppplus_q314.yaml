@@ -1,0 +1,16 @@
+model_name: Qwen/Qwen3-14B
+task: mbppplus
+split: test
+prompt: sequential
+initial_input: rq
+initial_role: single_agent
+max_samples: 2
+sample_ids: ["127", "239"]
+latent_steps: 80
+latent_step_start: 0
+conditions: [a, b, c, d]
+max_new_tokens: 4096
+temperature: 0.6
+top_p: 0.95
+seed: 42
+latent_space_realign: [false, true]

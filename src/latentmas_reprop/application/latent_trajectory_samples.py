@@ -4,6 +4,24 @@ from itertools import islice
 
 
 def select_samples(dataset, args):
+    ids = getattr(args, "sample_ids", None)
+    indices = getattr(args, "sample_indices", None)
+    if ids is not None:
+        if indices is not None:
+            raise ValueError("sample_ids and sample_indices are mutually exclusive")
+        requested = set(ids)
+        if not requested or any(not sample_id for sample_id in requested):
+            raise ValueError("sample_ids must contain non-empty dataset IDs")
+        selected = []
+        missing = requested.copy()
+        for index, item in enumerate(dataset):
+            sample_id = str(item["id"]) if "id" in item else None
+            if sample_id in requested:
+                selected.append((index, item))
+                missing.discard(sample_id)
+                if not missing:
+                    return selected
+        raise ValueError(f"Sample IDs outside the dataset: {sorted(missing)}")
     indexed = enumerate(dataset)
     indices = getattr(args, "sample_indices", None)
     if indices is not None:

@@ -121,6 +121,7 @@ def load_arc_challenge(
         mapped_answer = _map_arc_label(raw_answer) if raw_answer else ""
         gold = normalize_answer(mapped_answer)
         yield {
+            "id": item["id"],
             "question": question,
             "solution": mapped_answer,
             "gold": gold,
@@ -165,6 +166,7 @@ Your answer will be tested on test cases like:
         answer = str(item["test"])
         gold = answer
         yield {
+            "id": item["task_id"],
             "question": question,
             "solution": answer,
             "gold": gold,

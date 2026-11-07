@@ -62,12 +62,17 @@ def main(argv=None):
     )
     parser.set_defaults(latent_space_realign=defaults["latent_space_realign"])
     parser.add_argument("--model_revision")
-    parser.add_argument(
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
         "--sample_indices",
         nargs="+",
         type=int,
-        default=defaults.get("sample_indices"),
         help="Zero-based dataset indices; overrides max_samples and runs in dataset order.",
+    )
+    selection.add_argument(
+        "--sample_ids",
+        nargs="+",
+        help="Dataset IDs; overrides max_samples and runs in dataset order.",
     )
     parser.add_argument(
         "--output_root",
@@ -77,6 +82,15 @@ def main(argv=None):
     parser.add_argument("--no_progress", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
+    if args.sample_ids is None and args.sample_indices is None:
+        args.sample_ids = defaults.get("sample_ids")
+        args.sample_indices = defaults.get("sample_indices")
+    if args.sample_ids is not None and args.sample_indices is not None:
+        parser.error("sample_ids and sample_indices are mutually exclusive")
+    if args.sample_ids is not None:
+        if not args.sample_ids or any(not value for value in args.sample_ids):
+            parser.error("sample_ids must contain non-empty dataset IDs")
+        args.sample_ids = list(dict.fromkeys(args.sample_ids))
     if args.sample_indices is not None:
         if not args.sample_indices or any(index < 0 for index in args.sample_indices):
             parser.error("sample_indices must contain non-negative dataset indices")
@@ -120,6 +134,7 @@ def run_plan(args):
             "max_samples",
             "conditions",
             "sample_indices",
+            "sample_ids",
         )
     }
     # Step zero extends the original readout range without changing its cache/run.
@@ -129,13 +144,16 @@ def run_plan(args):
     ).hexdigest()[:16]
     directory = args.output_root / args.task / args.model_name.split("/")[-1] / identity
     indices = args.sample_indices
-    if indices is None and args.max_samples > 0:
+    if args.sample_ids is not None:
+        indices = None
+    elif indices is None and args.max_samples > 0:
         indices = range(args.max_samples)
     return {
         "config": config,
         "conditions": args.conditions,
         "max_samples": args.max_samples,
         "sample_indices": args.sample_indices,
+        "sample_ids": args.sample_ids,
         "directory": str(directory),
         "mlflow_runs": [
             {"sample_index": index, "run_name": sample_run_name(directory, args, index)}

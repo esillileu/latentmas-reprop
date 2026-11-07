@@ -65,3 +65,50 @@ def test_cli_alignment_overrides_preset_and_separates_caches(tmp_path, capsys):
     with pytest.raises(SystemExit) as error:
         main(["--dry-run", "--latent_space_realign", "--no_latent_space_realign"])
     assert error.value.code == 2
+
+
+def test_id_selection_preserves_indices_and_rejects_missing_ids():
+    dataset = [{"id": value} for value in [0, 239, 127]]
+    args = SimpleNamespace(max_samples=1, sample_ids=["127", "239"])
+    assert select_samples(iter(dataset), args) == [(1, dataset[1]), (2, dataset[2])]
+    args.sample_ids = ["missing"]
+    with pytest.raises(ValueError, match="Sample IDs outside the dataset"):
+        select_samples(iter(dataset), args)
+
+
+@pytest.mark.parametrize(
+    "task,ids",
+    [
+        ("arc_challenge", ["MCAS_2006_9_1", "AKDE&ED_2008_8_3"]),
+        ("mbppplus", ["127", "239"]),
+    ],
+)
+def test_id_presets_and_index_override(task, ids, capsys):
+    main(["-c", f"latent_trajectory/{task}_q314", "--dry-run"])
+    plans = json.loads(capsys.readouterr().out)["runs"]
+    assert [p["config"]["latent_space_realign"] for p in plans] == [False, True]
+    assert all(p["sample_ids"] == ids and p["mlflow_runs"] is None for p in plans)
+    main(["-c", f"latent_trajectory/{task}_q314", "--sample_indices", "0", "--dry-run"])
+    overridden = json.loads(capsys.readouterr().out)["runs"]
+    assert all(
+        p["sample_ids"] is None and p["sample_indices"] == [0] for p in overridden
+    )
+
+
+@pytest.mark.parametrize("task", ["arc_challenge", "mbppplus"])
+def test_loaders_preserve_original_ids(monkeypatch, task):
+    from latentmas_reprop.infrastructure.datasets import loaders
+
+    record = {
+        "id": "MCAS_2006_9_1",
+        "task_id": 127,
+        "question": "Question",
+        "choices": {"label": ["A", "B"], "text": ["one", "two"]},
+        "answerKey": "A",
+        "prompt": "Write code",
+        "test_list": ["a", "b", "c"],
+        "test": "assert True",
+    }
+    monkeypatch.setattr(loaders, "load_dataset", lambda *a, **kw: [record])
+    item = next(getattr(loaders, f"load_{task}")())
+    assert item["id"] == (record["id"] if task == "arc_challenge" else 127)
