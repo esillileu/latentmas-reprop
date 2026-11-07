@@ -1,9 +1,11 @@
 """Publish locally saved latent trajectory results using the shared MLflow tracker."""
 
 import json
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from threading import Event
 
 from mlflow.entities import Metric
 
@@ -44,7 +46,52 @@ def publish_step(tracker, args, sample_dir, step):
 
 
 @contextmanager
-def tracked_sample(sample_dir, *, directory, args, config):
+def tracked_sample(sample_dir, *, directory, args, config, upload_disabled=None):
+    """Keep inference running after publication fails, until the next invocation."""
+    upload_disabled = upload_disabled if upload_disabled is not None else Event()
+    if upload_disabled.is_set():
+        yield lambda step: None
+        return
+    entered = False
+    failure = None
+
+    def disable(exc):
+        upload_disabled.set()
+        logging.getLogger(__name__).warning(
+            "MLflow upload stopped; local computation will continue: %s", exc
+        )
+        save_json_atomic(
+            sample_dir / "upload_failure.json",
+            {"type": type(exc).__name__, "message": str(exc)},
+        )
+
+    try:
+        with _tracked_sample(
+            sample_dir,
+            directory=directory,
+            args=args,
+            config=config,
+            upload_disabled=upload_disabled,
+            on_failure=disable,
+        ) as submit:
+            entered = True
+            try:
+                yield submit
+            except BaseException as exc:
+                failure = exc
+                raise
+    except Exception as exc:
+        if failure is not None:
+            raise failure from exc
+        disable(exc)
+        if not entered:
+            yield lambda step: None
+
+
+@contextmanager
+def _tracked_sample(
+    sample_dir, *, directory, args, config, upload_disabled, on_failure
+):
     tracker = MLflowTracker()
     sample_index = int(sample_dir.name)
     run_name = sample_run_name(directory, args, sample_index)
@@ -62,11 +109,16 @@ def tracked_sample(sample_dir, *, directory, args, config):
         "latent_space_realign": str(args.latent_space_realign),
         "rel_dir": f"{LATENT_TRAJECTORY}/{args.task}/{args.model_name}/{directory.name}/samples/{sample_dir.name}",
     }
-    tracker.start_staging_run(
-        experiment_name=mlflow_experiment_name(LATENT_TRAJECTORY),
-        run_name=run_name,
-        tags=tags,
-    )
+    try:
+        tracker.start_staging_run(
+            experiment_name=mlflow_experiment_name(LATENT_TRAJECTORY),
+            run_name=run_name,
+            tags=tags,
+        )
+    except BaseException:
+        with suppress(Exception):
+            tracker.discard_staging_run(status="FAILED")
+        raise
 
     def save_reference(run_id):
         save_json_atomic(
@@ -86,7 +138,18 @@ def tracked_sample(sample_dir, *, directory, args, config):
         save_reference(tracker.active_run_id)
         with ThreadPoolExecutor(max_workers=1) as uploads:
 
+            def upload(step):
+                if upload_disabled.is_set():
+                    return None
+                try:
+                    return publish_step(tracker, args, sample_dir, step)
+                except Exception as exc:
+                    on_failure(exc)
+                    return None
+
             def submit(step):
+                if upload_disabled.is_set():
+                    return
                 for future in futures.values():
                     if future.done():
                         future.result()
@@ -98,9 +161,7 @@ def tracked_sample(sample_dir, *, directory, args, config):
                     for c in args.conditions
                 )
                 if key not in futures and ready:
-                    futures[key] = uploads.submit(
-                        publish_step, tracker, args, sample_dir, step
-                    )
+                    futures[key] = uploads.submit(upload, step)
 
             try:
                 yield submit
@@ -126,9 +187,17 @@ def tracked_sample(sample_dir, *, directory, args, config):
                 history = []
                 for future in futures.values():
                     result = future.result()
+                    if result is None:
+                        continue
                     history.extend(result.pop("history"))
                     for key, value in result.items():
                         totals[key] += value
+        if upload_disabled.is_set():
+            with suppress(Exception):
+                tracker.discard_staging_run(status="FAILED")
+            if failure is not None:
+                raise failure
+            return
         totals["accuracy"] = totals["correct_continuations"] / max(
             totals["completed_continuations"], 1
         )
@@ -197,7 +266,8 @@ def tracked_sample(sample_dir, *, directory, args, config):
             )
         tracker.client.log_artifact(run.info.run_id, str(sample_dir / "tracking.json"))
     except BaseException:
-        tracker.discard_staging_run(status="FAILED")
+        with suppress(Exception):
+            tracker.discard_staging_run(status="FAILED")
         raise
     if failure is not None:
         raise failure

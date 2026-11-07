@@ -5,6 +5,7 @@ import hashlib
 import json
 from functools import partial
 from pathlib import Path
+from threading import Event
 
 import torch
 import yaml
@@ -116,7 +117,9 @@ def main(argv=None):
     if args.dry_run:
         print(json.dumps(plans[0] if len(plans) == 1 else {"runs": plans}, indent=2))
         return
+    upload_disabled = Event()
     for run_args, plan in zip(runs, plans, strict=True):
+        run_args.upload_disabled = upload_disabled
         run_collection(run_args, plan["config"], Path(plan["directory"]))
 
 
@@ -203,7 +206,11 @@ def run_collection(args, config, directory):
         DEFAULT_EVALUATOR,
         directory,
         sample_context=partial(
-            tracked_sample, directory=directory, args=args, config=config
+            tracked_sample,
+            directory=directory,
+            args=args,
+            config=config,
+            upload_disabled=getattr(args, "upload_disabled", None),
         ),
     )
     print(f"Collected {count} samples in {directory}")
